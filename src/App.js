@@ -1,11 +1,17 @@
 import "./App.css";
-import heroImg from "./assets/mental-health.png"; // Option 2 path
-import { googleLogin } from "./auth";
-
+import heroImg from "./assets/mental-health.png";
+import { signInWithGoogle } from "./auth"; // ✅ correct import
 
 export default function App() {
-  const goToGoogle = () => {
-    window.location.href = "https://www.google.com";
+  const handleGoogleLogin = async () => {
+    try {
+      const user = await signInWithGoogle();
+      alert(`Welcome, ${user.displayName || user.email}`);
+      console.log("Logged in user:", user);
+    } catch (err) {
+      console.error(err);
+      alert("Google Login Failed");
+    }
   };
 
   return (
@@ -55,9 +61,10 @@ export default function App() {
 
             <button className="btnLogin">Login</button>
 
-            <button className="btnGoogle" onClick={goToGoogle}>
+            {/* ✅ REAL GOOGLE LOGIN (Firebase) */}
+            <button className="btnGoogle" onClick={handleGoogleLogin}>
               <span className="gIcon">G</span>
-              <span>Login in with Google</span>
+              <span>Login with Google</span>
             </button>
 
             <p className="bottom">
