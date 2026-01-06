@@ -267,6 +267,7 @@ a, button, input{
 }
 
 /* RESPONSIVE */
+
 @media (max-width: 1000px){
   .content{
     flex-direction:column;
