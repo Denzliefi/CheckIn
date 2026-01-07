@@ -103,8 +103,8 @@ export default function Features() {
             <img
               src={starImg}
               alt="stars"
-              className="h-[22px]"
               draggable={false}
+              className="h-[40px] w-auto object-contain select-none"
             />
           </div>
         </div>
