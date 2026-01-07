@@ -1,3 +1,5 @@
+import { useEffect, useRef, useState } from "react";
+
 import guidanceImg from "../../assets/Guidance (1).png";
 import journalImg from "../../assets/Journal.png";
 import phqImg from "../../assets/Phq9.png";
@@ -6,6 +8,29 @@ import hotlineImg from "../../assets/Hotline.png";
 import starImg from "../../assets/stars.png";
 import arrowIcon from "../../assets/Icon.png";
 
+/** Fade-up on scroll (runs once) */
+function useInView(options = { threshold: 0.2 }) {
+  const ref = useRef(null);
+  const [inView, setInView] = useState(false);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+
+    const observer = new IntersectionObserver(([entry]) => {
+      if (entry.isIntersecting) {
+        setInView(true);
+        observer.unobserve(el);
+      }
+    }, options);
+
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [options]);
+
+  return [ref, inView];
+}
+
 function FeatureCard({
   variant = "gray",
   topLabel,
@@ -13,11 +38,15 @@ function FeatureCard({
   desc,
   img,
   scale = 1.1,
+  delay = 0,
 }) {
   const isGreen = variant === "green";
+  const [ref, inView] = useInView();
 
   return (
     <div
+      ref={ref}
+      style={{ transitionDelay: `${delay}ms` }}
       className={`
         w-full
         rounded-[24px]
@@ -26,8 +55,10 @@ function FeatureCard({
         flex flex-col
         ${isGreen ? "bg-[#B9FF66]" : "bg-[#E9ECE7]"}
         shadow-[0_10px_0_rgba(0,0,0,0.1)]
-        transition-all duration-200
+        transition-all duration-700 ease-out
         hover:scale-[1.02] hover:shadow-[0_16px_0_rgba(0,0,0,0.12)]
+
+        ${inView ? "opacity-100 translate-y-0" : "opacity-0 translate-y-10"}
       `}
     >
       {/* Top black strip */}
@@ -166,13 +197,15 @@ export default function Features() {
           </div>
 
           <p className="mt-4 mx-auto max-w-[70ch] text-[16px] sm:text-[18px] lg:text-[20px] text-black/70 leading-[1.5]">
-            Simple tools designed for mobile first, without sacrificing desktop clarity.
+            Simple tools designed for mobile first, without sacrificing desktop
+            clarity.
           </p>
         </div>
 
         {/* Grid: 1 column mobile, 2 columns md+ */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-8 lg:gap-12">
           <FeatureCard
+            delay={0}
             variant="gray"
             topLabel="Guidance"
             line2="Counseling"
@@ -181,6 +214,7 @@ export default function Features() {
           />
 
           <FeatureCard
+            delay={120}
             variant="green"
             topLabel="Journal"
             line2="Daily Notes"
@@ -189,6 +223,7 @@ export default function Features() {
           />
 
           <FeatureCard
+            delay={240}
             variant="gray"
             topLabel="Self-Check"
             line2="Assessment"
@@ -197,6 +232,7 @@ export default function Features() {
           />
 
           <FeatureCard
+            delay={360}
             variant="green"
             topLabel="Emergency"
             line2="Hotline"

@@ -4,15 +4,18 @@ import bottomParallaxImg from "../../assets/Parallax.png";
 
 export default function Hero() {
   const [offset, setOffset] = useState(0);
-  const rafRef = useRef(null);
+  const [visible, setVisible] = useState(false);
 
+  const rafRef = useRef(null);
+  const sectionRef = useRef(null);
+
+  /* ================= PARALLAX ================= */
   useEffect(() => {
     const onScroll = () => {
       if (rafRef.current) return;
 
       rafRef.current = requestAnimationFrame(() => {
-        const y = window.scrollY || 0;
-        setOffset(y * 0.12);
+        setOffset(window.scrollY || 0);
         rafRef.current = null;
       });
     };
@@ -26,49 +29,86 @@ export default function Hero() {
     };
   }, []);
 
+  /* ================= FADE-UP ================= */
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setVisible(true);
+          observer.disconnect();
+        }
+      },
+      { threshold: 0.25 }
+    );
+
+    if (sectionRef.current) observer.observe(sectionRef.current);
+    return () => observer.disconnect();
+  }, []);
+
+  const heroY = -(offset * 0.14);
+  const bottomY = offset * 0.22;
+
   return (
     <section
-      className="w-full bg-white overflow-hidden"
-      style={{ fontFamily: "Nunito, sans-serif" }}
+      ref={sectionRef}
+      className="w-full bg-white overflow-hidden font-nunito"
     >
-      {/* TOP HERO */}
-      <div className="mx-auto max-w-[1300px] px-10 py-14">
-        <div className="grid items-center gap-8 lg:grid-cols-2">
+      {/* ================= TOP HERO ================= */}
+      <div className="mx-auto max-w-[1500px] px-8 sm:px-14 lg:px-20 py-24 lg:py-32">
+        <div className="grid items-center gap-20 lg:grid-cols-2">
           {/* LEFT CONTENT */}
-          <div>
-            <h1 className="text-[40px] leading-[1.15] font-extrabold text-[#141414]">
+          <div
+            className={`
+              max-w-[720px]
+              transition-all duration-700 ease-out
+              ${visible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-12"}
+            `}
+          >
+            {/* ✅ HEADING MATCHING YOUR IMAGE */}
+            <h1
+              className="
+                font-lora
+                text-[44px] sm:text-[52px] lg:text-[60px]
+                leading-[1.05]
+                tracking-[-0.015em]
+                font-extrabold
+                text-[#141414]
+              "
+            >
               Take a Minute to Check In
               <br />
               With Yourself.
             </h1>
 
-            {/* SUBHEADING = BLACK */}
-            <p className="mt-4 max-w-[520px] text-[15px] leading-relaxed text-[#141414]">
+            <p
+              className="
+                mt-6
+                max-w-[640px]
+                text-[16px] sm:text-[17px] lg:text-[18px]
+                leading-[1.8]
+                text-[#1A1A1A]
+              "
+            >
               A quick, confidential PHQ-9 self-check designed to support your
               mental well-being. Because school is tough—and your mental health
               deserves attention too.
             </p>
 
-            {/* BUTTON — SAME DESIGN + BETTER HOVER */}
             <button
               className="
-                mt-7
+                mt-12
                 inline-flex items-center justify-center
-                rounded-lg
-                border border-[#9FE84B]
+                rounded-xl
+                border-2 border-black
                 bg-[#B9FF66]
-                px-8 py-4
-                text-[14px]
+                px-10 py-5
+                text-[15px]
                 font-extrabold
                 text-[#141414]
-                shadow-sm
-                transition-all
-                duration-200
-                ease-out
-                hover:-translate-y-[2px]
-                hover:shadow-[0_12px_28px_rgba(185,255,102,0.55)]
+                transition-all duration-200 ease-out
+                hover:-translate-y-[3px]
+                hover:shadow-[0_14px_30px_rgba(185,255,102,0.55)]
                 active:translate-y-0
-                active:shadow-[0_6px_18px_rgba(185,255,102,0.35)]
               "
             >
               Take an Assessment Now !
@@ -76,32 +116,31 @@ export default function Hero() {
           </div>
 
           {/* RIGHT IMAGE */}
-          <div className="relative flex justify-center lg:justify-end">
+          <div
+            className={`
+              relative flex justify-center lg:justify-end
+              transition-all duration-900 ease-out delay-150
+              ${visible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-16"}
+            `}
+          >
             {/* Floating plus icons */}
-            <div className="absolute right-6 top-8 flex flex-col gap-4 z-10">
-              <span className="grid h-10 w-10 place-items-center rounded-full bg-[#141414] text-[20px] font-black text-white">
-                +
-              </span>
-              <span className="grid h-10 w-10 place-items-center rounded-full bg-[#B9FF66] text-[20px] font-black text-[#141414]">
-                +
-              </span>
-              <span className="grid h-10 w-10 place-items-center rounded-full bg-[#141414] text-[20px] font-black text-white">
-                +
-              </span>
-            </div>
-
+            
             {/* PARALLAX HERO IMAGE */}
             <div
               className="will-change-transform"
               style={{
-                transform: `translate3d(0, ${-offset}px, 0)`,
-                transition: "transform 60ms linear",
+                transform: `translate3d(0, ${heroY}px, 0)`,
               }}
             >
               <img
                 src={heroImg}
                 alt="Mental Health Illustration"
-                className="w-full max-w-[620px] object-contain"
+                className="
+                  w-full
+                  max-w-[540px] sm:max-w-[680px] lg:max-w-[780px]
+                  object-contain
+                  select-none
+                "
                 draggable={false}
               />
             </div>
@@ -109,26 +148,28 @@ export default function Hero() {
         </div>
       </div>
 
-      {/* ✅ BOTTOM PARALLAX IMAGE SECTION (like your screenshot) */}
-      {/* ✅ FULL-WIDTH BOTTOM PARALLAX IMAGE */}
-<div className="relative w-screen overflow-hidden">
-  <div className="h-[260px] w-screen overflow-hidden">
-    <img
-      src={bottomParallaxImg}
-      alt="Parallax section"
-      className="h-full w-full object-cover will-change-transform"
-      style={{
-        transform: `translate3d(0, ${offset * 0.6}px, 0)`,
-        transition: "transform 60ms linear",
-      }}
-      draggable={false}
-    />
-  </div>
+      {/* ================= BOTTOM PARALLAX ================= */}
+      <div
+        className={`
+          relative w-screen overflow-hidden
+          transition-all duration-700 ease-out delay-300
+          ${visible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-12"}
+        `}
+      >
+        <div className="h-[280px] sm:h-[340px] lg:h-[420px] w-screen overflow-hidden">
+          <img
+            src={bottomParallaxImg}
+            alt="Parallax section"
+            className="h-full w-full object-cover will-change-transform select-none"
+            style={{
+              transform: `translate3d(0, ${bottomY}px, 0)`,
+            }}
+            draggable={false}
+          />
+        </div>
 
-  {/* subtle fade like the reference */}
-  <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-transparent to-white/20" />
-</div>
-
+        <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-transparent to-white/30" />
+      </div>
     </section>
   );
 }

@@ -4,9 +4,33 @@ import parallaxImg from "../../assets/Parallax-2.png";
 
 export default function LandingHero() {
   const [bgOffset, setBgOffset] = useState(0);
+  const [visible, setVisible] = useState(false);
+
   const rafRef = useRef(null);
+  const heroRef = useRef(null);
 
   useEffect(() => {
+    // ✅ Fade-up when hero enters viewport (runs once)
+    const el = heroRef.current;
+    if (!el) return;
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setVisible(true);
+          observer.disconnect(); // run once
+        }
+      },
+      { threshold: 0.2 }
+    );
+
+    observer.observe(el);
+
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    // ✅ Parallax strip scroll effect
     const onScroll = () => {
       if (rafRef.current) return;
       rafRef.current = requestAnimationFrame(() => {
@@ -27,16 +51,23 @@ export default function LandingHero() {
   return (
     <section className="w-full bg-white overflow-x-hidden">
       {/* MAIN HERO */}
-      <div className="w-full px-5 sm:px-8 md:px-[70px] pt-10 sm:pt-12 md:pt-[55px] pb-10 md:pb-[40px]">
+      <div
+        ref={heroRef}
+        className="w-full px-5 sm:px-8 md:px-[70px] pt-10 sm:pt-12 md:pt-[55px] pb-10 md:pb-[40px]"
+      >
         <div className="max-w-[1200px] mx-auto flex flex-col-reverse lg:flex-row items-center lg:items-start justify-between gap-10 lg:gap-14">
           {/* LEFT CONTENT */}
-          <div className="w-full max-w-[600px] text-center lg:text-left">
-            {/* TITLE — NUNITO */}
+          <div
+            className={`
+              w-full max-w-[600px] text-center lg:text-left
+              transition-all duration-[700ms] ease-out
+              ${visible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-10"}
+            `}
+          >
             <h1 className="font-nunito text-[32px] sm:text-[38px] md:text-[46px] font-extrabold leading-[1.15] text-black">
               Let’s make things happen.
             </h1>
 
-            {/* DESCRIPTION — LORA */}
             <p className="font-lora mt-4 sm:mt-5 text-[15px] sm:text-[16px] md:text-[18px] leading-[1.8] text-black/85 max-w-[560px] mx-auto lg:mx-0">
               Reach out to us for guidance, support, and mental wellness care.
               Through CheckIn, students can access guided assessments, reflect
@@ -44,7 +75,6 @@ export default function LandingHero() {
               safe and supportive space.
             </p>
 
-            {/* BUTTONS */}
             <div className="mt-7 sm:mt-8 md:mt-10 flex flex-col sm:flex-row items-stretch sm:items-center justify-center lg:justify-start gap-3 sm:gap-4 md:gap-6">
               <button className="h-[44px] sm:h-[42px] w-full sm:w-auto px-8 sm:px-10 rounded-[10px] bg-[#B9FF66] text-[15px] font-semibold text-black shadow hover:brightness-95 transition">
                 Register Now !
@@ -57,7 +87,13 @@ export default function LandingHero() {
           </div>
 
           {/* RIGHT IMAGE */}
-          <div className="w-full lg:w-auto flex justify-center lg:justify-end">
+          <div
+            className={`
+              w-full lg:w-auto flex justify-center lg:justify-end
+              transition-all duration-[900ms] ease-out delay-100
+              ${visible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-12"}
+            `}
+          >
             <img
               src={mentalImg}
               alt="Mental Health and Wellness"
