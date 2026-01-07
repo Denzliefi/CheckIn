@@ -18,7 +18,6 @@ export default function Signup() {
       const user = await signInWithGoogle();
       console.log("Google signup user:", user);
 
-      // ✅ after signup, go dashboard
       navigate("/dashboard");
     } catch (error) {
       console.error(error);

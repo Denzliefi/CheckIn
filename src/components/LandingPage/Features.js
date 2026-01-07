@@ -19,7 +19,7 @@ function FeatureCard({
     <div
       className={`
         w-full max-w-[620px]
-        min-h-[180px]                 /* ✅ allows card to grow if text grows */
+        h-[220px]                 /* ✅ ALL CARDS SAME HEIGHT */
         rounded-[16px]
         border-2 border-black
         grid grid-cols-2
@@ -27,11 +27,10 @@ function FeatureCard({
         ${isGreen ? "bg-[#B9FF66]" : "bg-[#E9ECE7]"}
       `}
     >
-      {/* LEFT SIDE — relative container so CTA can be pinned */}
-      <div className="relative px-10 py-8">
-        {/* TEXT AREA (takes space above the pinned CTA) */}
-        <div className="pr-2 pb-14">
-          {/* pb-14 reserves space so text never overlaps the CTA */}
+      {/* LEFT SIDE */}
+      <div className="relative px-10 py-8 flex flex-col h-full">
+        {/* ✅ TEXT AREA (can grow, but won't change card size) */}
+        <div className="flex-1 pr-2 overflow-hidden">
           <span
             className={`
               inline-block w-fit
@@ -46,13 +45,18 @@ function FeatureCard({
           </span>
 
           {line2 && (
-            <div className="mt-2 font-extrabold text-[24px] text-[#222] leading-tight">
+            <div
+              className="
+                mt-2 font-extrabold text-[24px] text-[#222] leading-tight
+                line-clamp-2
+              "
+            >
               {line2}
             </div>
           )}
         </div>
 
-        {/* ✅ PINNED Learn more (never moves) */}
+        {/* ✅ CTA pinned to bottom (never moves) */}
         <div className="absolute left-10 bottom-7">
           <div className="flex items-center gap-3">
             <span className="w-9 h-9 rounded-full bg-black flex items-center justify-center">
@@ -69,12 +73,12 @@ function FeatureCard({
       </div>
 
       {/* RIGHT SIDE — IMAGE */}
-      <div className="flex items-center justify-center overflow-visible">
+      <div className="flex items-center justify-center overflow-hidden">
         <img
           src={img}
           alt=""
           draggable={false}
-          style={{ transform: scale(${scale}) }}
+          style={{ transform: `scale(${scale})` }}
           className="
             h-[150px]
             w-auto
@@ -96,7 +100,12 @@ export default function Features() {
         <div className="text-center mb-14">
           <h2 className="text-[34px] font-extrabold">Features</h2>
           <div className="mt-2 flex justify-center">
-            <img src={starImg} alt="stars" className="h-[22px]" draggable={false} />
+            <img
+              src={starImg}
+              alt="stars"
+              className="h-[22px]"
+              draggable={false}
+            />
           </div>
         </div>
 
