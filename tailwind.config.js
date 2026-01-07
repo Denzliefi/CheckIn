@@ -11,7 +11,10 @@ module.exports = {
         border: "#e9e9e9",
       },
       fontFamily: {
-        poppins: ["Poppins", "system-ui", "sans-serif"],
+        poppins: ["Poppins", "system-ui", "sans-serif" ],
+        nunito: ["Nunito", "sans-serif"],
+        lora: ["Lora", "serif"],
+
       },
       keyframes: {
         slideIn: {
