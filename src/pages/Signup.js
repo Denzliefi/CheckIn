@@ -155,6 +155,21 @@ export default function Signup() {
   const navigate = useNavigate();
 
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  // ✅ form state (needed for backend POST)
+  const [form, setForm] = useState({
+    fullName: "",
+    email: "",
+    username: "",
+    studentNumber: "",
+    password: "",
+    confirmPassword: "",
+  });
+
+  const setField = (key) => (e) => {
+    setForm((p) => ({ ...p, [key]: e.target.value }));
+  };
 
   // terms flow
   const [showTerms, setShowTerms] = useState(false);
@@ -189,26 +204,94 @@ export default function Signup() {
   const handleGoogleSignup = async () => {
     await requireTermsThen(async () => {
       setLoading(true);
+      setError("");
+
       try {
-        const user = await signInWithGoogle();
-        console.log("Google signup user:", user);
+        const firebaseUser = await signInWithGoogle();
+
+        // Depending on your auth.js, firebaseUser may be user or result.user
+        const u = firebaseUser?.user || firebaseUser;
+
+        const payload = {
+          googleId: u?.uid,
+          email: u?.email,
+          fullName: u?.displayName || u?.email?.split("@")?.[0],
+        };
+
+        const res = await fetch("/api/auth/google", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+
+        const data = await res.json();
+
+        if (!res.ok) {
+          throw new Error(data.message || "Google signup failed (backend).");
+        }
+
+        if (data.token) localStorage.setItem("token", data.token);
+        if (data.user) localStorage.setItem("user", JSON.stringify(data.user));
 
         navigate("/dashboard");
       } catch (error) {
         console.error(error);
-        alert("Google sign up failed");
+        setError(error.message || "Google sign up failed");
       } finally {
         setLoading(false);
       }
     });
   };
 
+
+  // ✅ THIS NOW POSTS TO BACKEND -> MongoDB
   const handleCreateAccount = async (e) => {
     e.preventDefault();
 
     await requireTermsThen(async () => {
-      // TODO: add email/password signup here (Firebase createUserWithEmailAndPassword)
-      alert("Email/Password signup not added yet.");
+      setLoading(true);
+      setError("");
+
+      try {
+        // basic client-side checks
+        if (!form.fullName || !form.email || !form.username || !form.studentNumber || !form.password) {
+          throw new Error("Please fill in all required fields.");
+        }
+        if (form.password.length < 6) {
+          throw new Error("Password must be at least 6 characters.");
+        }
+        if (form.password !== form.confirmPassword) {
+          throw new Error("Passwords do not match.");
+        }
+
+        const res = await fetch("/api/auth/register", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            fullName: form.fullName,
+            email: form.email,
+            username: form.username,
+            studentNumber: form.studentNumber,
+            password: form.password,
+          }),
+        });
+
+        const data = await res.json();
+
+        if (!res.ok) {
+          throw new Error(data.message || "Signup failed.");
+        }
+
+        // Save session (JWT + user)
+        if (data.token) localStorage.setItem("token", data.token);
+        if (data.user) localStorage.setItem("user", JSON.stringify(data.user));
+
+        navigate("/dashboard");
+      } catch (err) {
+        setError(err.message || "Signup failed.");
+      } finally {
+        setLoading(false);
+      }
     });
   };
 
@@ -227,25 +310,61 @@ export default function Signup() {
       <div className="flex justify-between gap-[60px] px-[90px] pt-[70px] pb-10 lg:flex-row flex-col items-center">
         {/* LEFT: SIGNUP FORM */}
         <section className="w-[420px] mt-[18px] animate-slideIn max-w-[92vw]">
-          <h1 className="text-[34px] font-black tracking-[.26em] mb-3">
-            SIGN UP
-          </h1>
+          <h1 className="text-[34px] font-black tracking-[.26em] mb-3">SIGN UP</h1>
 
           <p className="text-[15px] text-muted mb-6">
             Create your account. It only takes a minute.
           </p>
 
+          {error && (
+            <div className="mb-4 rounded-[14px] border-2 border-black bg-red-50 px-4 py-3 text-[13px] text-black">
+              <span className="font-extrabold">Error:</span> {error}
+            </div>
+          )}
+
           <form className="flex flex-col gap-[6px]" onSubmit={handleCreateAccount}>
-            <TextInput label="Full Name" type="text" placeholder="Enter your full name" />
-            <TextInput label="Email" type="email" placeholder="Enter your email" />
-            <TextInput label="Username" type="text" placeholder="Enter your username" />
+            <TextInput
+              label="Full Name"
+              type="text"
+              placeholder="Enter your full name"
+              value={form.fullName}
+              onChange={setField("fullName")}
+            />
+            <TextInput
+              label="Email"
+              type="email"
+              placeholder="Enter your email"
+              value={form.email}
+              onChange={setField("email")}
+            />
+            <TextInput
+              label="Username"
+              type="text"
+              placeholder="Enter your username"
+              value={form.username}
+              onChange={setField("username")}
+            />
             <TextInput
               label="Student number"
               type="text"
               placeholder="Enter your student number"
+              value={form.studentNumber}
+              onChange={setField("studentNumber")}
             />
-            <TextInput label="Password" type="password" placeholder="********" />
-            <TextInput label="Confirm Password" type="password" placeholder="********" />
+            <TextInput
+              label="Password"
+              type="password"
+              placeholder="********"
+              value={form.password}
+              onChange={setField("password")}
+            />
+            <TextInput
+              label="Confirm Password"
+              type="password"
+              placeholder="********"
+              value={form.confirmPassword}
+              onChange={setField("confirmPassword")}
+            />
 
             {/* Terms row */}
             <div className="flex items-start gap-2 text-[13px] mt-2">
@@ -259,7 +378,6 @@ export default function Signup() {
                   if (!checked) {
                     localStorage.removeItem("termsAccepted");
                   } else {
-                    // if they tick it directly, show terms modal to make it valid
                     openTerms();
                   }
                 }}
@@ -278,7 +396,7 @@ export default function Signup() {
             </div>
 
             <PrimaryButton className="mt-4 w-full" type="submit" disabled={loading}>
-              Create Account
+              {loading ? "Creating..." : "Create Account"}
             </PrimaryButton>
 
             <GoogleButton onClick={handleGoogleSignup} loading={loading}>
