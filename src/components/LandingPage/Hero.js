@@ -148,28 +148,101 @@ export default function Hero() {
         </div>
       </div>
 
-      {/* ================= BOTTOM PARALLAX ================= */}
-      <div
-        className={`
-          relative w-screen overflow-hidden
-          transition-all duration-700 ease-out delay-300
-          ${visible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-12"}
-        `}
-      >
-        <div className="h-[280px] sm:h-[340px] lg:h-[420px] w-screen overflow-hidden">
+      {/* ================= BOTTOM PARALLAX (DESKTOP FIXED) ================= */}
+      <div className="relative w-full">
+        {/* Desktop: fixed background */}
+        <div className="hidden lg:block relative h-[420px] overflow-hidden">
+          {/* fixed background */}
+          <div
+            className="absolute inset-0"
+            style={{
+              backgroundImage: `url(${bottomParallaxImg})`,
+              backgroundSize: "cover",
+              backgroundPosition: "center",
+              backgroundAttachment: "fixed",
+            }}
+          />
+
+          {/* black overlay */}
+          <div className="absolute inset-0 bg-black/45" />
+
+          {/* TEXT CONTENT */}
+          <div className="relative z-10 h-full flex items-center justify-center text-center px-6">
+            <div className="max-w-[720px]">
+              <h2
+                className="
+                  font-lora
+                  text-white
+                  text-[32px] sm:text-[38px] lg:text-[44px]
+                  leading-[1.2]
+                  font-bold
+                "
+              >
+                It’s okay to pause.
+              </h2>
+
+              <p
+                className="
+                  mt-4
+                  font-nunito
+                  text-white/85
+                  text-[15px] sm:text-[16px] lg:text-[17px]
+                  leading-[1.8]
+                "
+              >
+                Checking in with yourself is a small step, but it can make a real
+                difference in how you feel today.
+              </p>
+            </div>
+          </div>
+        </div>
+
+
+        {/* ================= MOBILE / TABLET ================= */}
+        <div className="relative block lg:hidden h-[300px] sm:h-[360px] overflow-hidden">
+          {/* background image */}
           <img
             src={bottomParallaxImg}
             alt="Parallax section"
-            className="h-full w-full object-cover will-change-transform select-none"
-            style={{
-              transform: `translate3d(0, ${bottomY}px, 0)`,
-            }}
+            className="h-full w-full object-cover select-none"
             draggable={false}
           />
+
+          {/* black overlay */}
+          <div className="absolute inset-0 bg-black/45" />
+
+          {/* centered text */}
+          <div className="absolute inset-0 flex items-center justify-center px-6 text-center">
+            <div className="max-w-[520px]">
+              <h2
+                className="
+                  font-lora
+                  text-white
+                  text-[24px] sm:text-[28px]
+                  leading-[1.25]
+                  font-bold
+                "
+              >
+                It’s okay to pause.
+              </h2>
+
+              <p
+                className="
+                  mt-3
+                  font-nunito
+                  text-white/85
+                  text-[14.5px]
+                  leading-[1.7]
+                "
+              >
+                One honest check-in is enough for today.
+              </p>
+            </div>
+          </div>
         </div>
 
-        <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-transparent to-white/30" />
       </div>
+
     </section>
   );
 }
