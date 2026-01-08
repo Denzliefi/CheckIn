@@ -1,14 +1,18 @@
 import { useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import mentalImg from "../../assets/Mental.png";
 import parallaxImg from "../../assets/Parallax-2.png";
 
 export default function LandingHero() {
+  const navigate = useNavigate();
+
   const [bgOffset, setBgOffset] = useState(0);
   const [visible, setVisible] = useState(false);
 
   const rafRef = useRef(null);
   const heroRef = useRef(null);
 
+  /* ================= FADE-IN ON VIEW ================= */
   useEffect(() => {
     const el = heroRef.current;
     if (!el) return;
@@ -27,14 +31,14 @@ export default function LandingHero() {
     return () => observer.disconnect();
   }, []);
 
+  /* ================= MOBILE PARALLAX ================= */
   useEffect(() => {
     const onScroll = () => {
       if (rafRef.current) return;
 
       rafRef.current = requestAnimationFrame(() => {
-        // ✅ mobile parallax: smaller + clamped
-        const raw = (window.scrollY || 0) * 0.06; // was 0.18
-        const clamped = Math.max(-40, Math.min(40, raw)); // clamp to avoid slipping
+        const raw = (window.scrollY || 0) * 0.06;
+        const clamped = Math.max(-40, Math.min(40, raw));
         setBgOffset(clamped);
         rafRef.current = null;
       });
@@ -51,13 +55,13 @@ export default function LandingHero() {
 
   return (
     <section className="w-full bg-white overflow-x-hidden">
-      {/* MAIN HERO */}
+      {/* ================= HERO ================= */}
       <div
         ref={heroRef}
         className="w-full px-5 sm:px-8 md:px-[70px] pt-10 sm:pt-12 md:pt-[55px] pb-10 md:pb-[40px]"
       >
         <div className="max-w-[1200px] mx-auto flex flex-col-reverse lg:flex-row items-center lg:items-start justify-between gap-10 lg:gap-14">
-          {/* LEFT CONTENT */}
+          {/* LEFT */}
           <div
             className={`
               w-full max-w-[600px] text-center lg:text-left
@@ -65,12 +69,10 @@ export default function LandingHero() {
               ${visible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-10"}
             `}
           >
-            {/* ✅ recommended: Lora for heading */}
             <h1 className="font-lora text-[32px] sm:text-[38px] md:text-[46px] font-bold leading-[1.15] text-black">
               Let’s make things happen.
             </h1>
 
-            {/* ✅ recommended: Nunito for body */}
             <p className="font-nunito mt-4 sm:mt-5 text-[15px] sm:text-[16px] md:text-[18px] leading-[1.8] text-black/80 max-w-[560px] mx-auto lg:mx-0">
               Reach out to us for guidance, support, and mental wellness care.
               Through CheckIn, students can access guided assessments, reflect
@@ -78,12 +80,21 @@ export default function LandingHero() {
               safe and supportive space.
             </p>
 
+            {/* ✅ ACTION BUTTONS (MATCH YOUR ROUTES) */}
             <div className="mt-7 sm:mt-8 md:mt-10 flex flex-col sm:flex-row items-stretch sm:items-center justify-center lg:justify-start gap-3 sm:gap-4 md:gap-6">
-              <button className="h-[44px] sm:h-[42px] w-full sm:w-auto px-8 sm:px-10 rounded-[10px] bg-[#B9FF66] text-[15px] font-extrabold text-black border-2 border-black/70 hover:brightness-95 transition">
-                Register Now !
+              <button
+                type="button"
+                onClick={() => navigate("/sign-up")}  // ✅ your route is /sign-up
+                className="h-[44px] sm:h-[42px] w-full sm:w-auto px-8 sm:px-10 rounded-[10px] bg-[#B9FF66] text-[15px] font-extrabold text-black border-2 border-black/70 hover:brightness-95 transition"
+              >
+                Register Now!
               </button>
 
-              <button className="h-[44px] sm:h-[42px] w-full sm:w-auto px-10 sm:px-12 rounded-[10px] bg-white text-[15px] font-extrabold text-black border-2 border-black/70 hover:bg-black/5 transition">
+              <button
+                type="button"
+                onClick={() => navigate("/login")} // ✅ keep as /login if route is /login
+                className="h-[44px] sm:h-[42px] w-full sm:w-auto px-10 sm:px-12 rounded-[10px] bg-white text-[15px] font-extrabold text-black border-2 border-black/70 hover:bg-black/5 transition"
+              >
                 Login
               </button>
             </div>
@@ -107,11 +118,10 @@ export default function LandingHero() {
         </div>
       </div>
 
-      {/* PARALLAX STRIP */}
+      {/* ================= PARALLAX STRIP ================= */}
       <div className="relative w-full overflow-hidden">
-        {/* ================= DESKTOP ================= */}
+        {/* DESKTOP */}
         <div className="hidden lg:block relative h-[160px] overflow-hidden">
-          {/* fixed background */}
           <div
             className="absolute inset-0"
             style={{
@@ -122,17 +132,12 @@ export default function LandingHero() {
               backgroundAttachment: "fixed",
             }}
           />
-
-          {/* black overlay */}
           <div className="absolute inset-0 bg-black/35" />
-
-          {/* TEXT */}
           <div className="relative z-10 h-full flex items-center justify-center text-center px-6">
             <div>
-              <h2 className="font-lora text-white text-[26px] lg:text-[30px] font-bold leading-tight">
+              <h2 className="font-lora text-white text-[26px] lg:text-[30px] font-bold">
                 You’re doing better than you think.
               </h2>
-
               <p className="mt-2 font-nunito text-white/85 text-[14.5px]">
                 One step, one check-in, one moment at a time.
               </p>
@@ -140,7 +145,7 @@ export default function LandingHero() {
           </div>
         </div>
 
-        {/* ================= MOBILE / TABLET ================= */}
+        {/* MOBILE */}
         <div
           className="relative block lg:hidden h-[110px] sm:h-[140px] md:h-[160px]"
           style={{
@@ -150,16 +155,12 @@ export default function LandingHero() {
             backgroundPosition: `center calc(50% + ${bgOffset}px)`,
           }}
         >
-          {/* black overlay */}
           <div className="absolute inset-0 bg-black/40" />
-
-          {/* TEXT */}
           <div className="absolute inset-0 flex items-center justify-center px-6 text-center">
             <div>
-              <h2 className="font-lora text-white text-[20px] sm:text-[22px] font-bold leading-snug">
+              <h2 className="font-lora text-white text-[20px] sm:text-[22px] font-bold">
                 You’re doing better than you think.
               </h2>
-
               <p className="mt-1 font-nunito text-white/85 text-[13.5px]">
                 One step at a time.
               </p>
@@ -167,7 +168,6 @@ export default function LandingHero() {
           </div>
         </div>
       </div>
-
     </section>
   );
 }

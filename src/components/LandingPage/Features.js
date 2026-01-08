@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 
 import guidanceImg from "../../assets/Guidance (1).png";
 import journalImg from "../../assets/Journal.png";
@@ -39,6 +40,8 @@ function FeatureCard({
   img,
   scale = 1.1,
   delay = 0,
+  to,
+  onNavigate,
 }) {
   const isGreen = variant === "green";
   const [ref, inView] = useInView();
@@ -151,6 +154,9 @@ function FeatureCard({
 
           <button
             type="button"
+            onClick={() => {
+              if (to && onNavigate) onNavigate(to);
+            }}
             className="
               inline-flex items-center justify-center gap-3
               min-h-[52px]
@@ -178,6 +184,8 @@ function FeatureCard({
 }
 
 export default function Features() {
+  const navigate = useNavigate();
+
   return (
     <section className="w-full bg-white py-16 sm:py-20 lg:py-28 overflow-hidden font-sans">
       <div className="mx-auto w-full max-w-[1400px] px-6 sm:px-8 lg:px-10">
@@ -211,6 +219,8 @@ export default function Features() {
             line2="Counseling"
             desc="Connect with a counselor for support and safe conversations."
             img={guidanceImg}
+            to="/services/counseling"
+            onNavigate={navigate}
           />
 
           <FeatureCard
@@ -220,6 +230,8 @@ export default function Features() {
             line2="Daily Notes"
             desc="Write thoughts, track moods, and reflect with clarity."
             img={journalImg}
+            to="/services/journal"
+            onNavigate={navigate}
           />
 
           <FeatureCard
@@ -229,6 +241,8 @@ export default function Features() {
             line2="Assessment"
             desc="Answer a short check-in to understand how you’re feeling."
             img={phqImg}
+            to="/services/assessment"
+            onNavigate={navigate}
           />
 
           <FeatureCard
@@ -238,6 +252,8 @@ export default function Features() {
             line2="Hotline"
             desc="Quick access to help when you need it most."
             img={hotlineImg}
+            to="/services/emergency"
+            onNavigate={navigate}
           />
         </div>
       </div>

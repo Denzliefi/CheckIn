@@ -1,6 +1,5 @@
 import { Routes, Route } from "react-router-dom";
 import MainLayout from "../layouts/MainLayout";
-import AuthLayout from "../layouts/AuthLayout";
 
 import LandingPage from "../pages/LandingPage";
 import Login from "../pages/Login";
@@ -13,9 +12,14 @@ import Journal from "../pages/Services/Journal";
 import Assessment from "../pages/Services/Assessment";
 import Emergency from "../pages/Services/Emergency";
 
+import ScrollToTop from "../components/ScrollToTop";
+
 export default function AppRoutes() {
   return (
+    <>
+    <ScrollToTop/>
     <Routes>
+      
       {/* AUTH PAGES */}
       <Route element={<MainLayout/>}>
         <Route path="/login" element={<Login />} />
@@ -36,7 +40,7 @@ export default function AppRoutes() {
           <Route path="/services/emergency" element={<Emergency/>} />
  
         </Route>
-   
     </Routes>
+    </>
   );
 }
