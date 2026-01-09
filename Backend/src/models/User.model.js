@@ -3,33 +3,60 @@ const bcrypt = require("bcryptjs");
 
 const userSchema = new mongoose.Schema(
   {
-    fullName: { type: String, required: true, trim: true },
-    email: { type: String, required: true, unique: true, lowercase: true, trim: true },
-    username: { type: String, required: true, unique: true, trim: true },
-    studentNumber: { type: String, required: true, unique: true, trim: true },
-
-    // ✅ Role-based access control (RBAC)
-    role: {
+    fullName: {
       type: String,
-      enum: ["Admin", "Consultant", "Student"],
-      default: "Student",
       required: true,
+      trim: true,
     },
 
-    // Local auth
-    passwordHash: { type: String },
+    email: {
+      type: String,
+      required: true,
+      unique: true,
+      lowercase: true,
+      trim: true,
+    },
 
-    // Optional for Google users
-    googleId: { type: String },
-    authProvider: { type: String, enum: ["local", "google"], default: "local" },
+    username: {
+      type: String,
+      required: true,
+      unique: true,
+      trim: true,
+    },
+
+    studentNumber: {
+      type: String,
+      required: true,
+      unique: true,
+      trim: true,
+    },
+
+    role: {
+      type: String,
+      enum: ["Student", "Consultant", "Admin"],
+      default: "Student",
+    },
+
+    authProvider: {
+      type: String,
+      enum: ["local", "google"],
+      default: "local",
+    },
+
+    passwordHash: {
+      type: String,
+      required: function () {
+        return this.authProvider === "local";
+      },
+    },
   },
   { timestamps: true }
 );
 
-// Compare password helper
-userSchema.methods.matchPassword = async function (plainPassword) {
+// ✅ used during login
+userSchema.methods.matchPassword = async function (enteredPassword) {
   if (!this.passwordHash) return false;
-  return bcrypt.compare(plainPassword, this.passwordHash);
+  return bcrypt.compare(enteredPassword, this.passwordHash);
 };
 
 module.exports = mongoose.model("User", userSchema);

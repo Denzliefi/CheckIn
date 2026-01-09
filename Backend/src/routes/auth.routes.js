@@ -1,12 +1,16 @@
 const express = require("express");
 const router = express.Router();
 
+// ======================
 // Middleware
+// ======================
 const { validate } = require("../middleware/validate.middleware");
 const { protect } = require("../middleware/auth.middleware");
 const { requireRole } = require("../middleware/role.middleware");
 
-// Controller (✅ include googleAuth)
+// ======================
+// Controllers
+// ======================
 const {
   register,
   login,
@@ -21,7 +25,7 @@ const {
 
 /**
  * @route   POST /api/auth/register
- * @desc    Register new user (Student)
+ * @desc    Register new user (Student by default)
  * @access  Public
  */
 router.post(
@@ -32,7 +36,7 @@ router.post(
 
 /**
  * @route   POST /api/auth/login
- * @desc    Login user
+ * @desc    Login user (email OR username + password)
  * @access  Public
  */
 router.post(
@@ -64,7 +68,7 @@ router.post(
   "/create-user",
   protect,
   requireRole("Admin"),
-  validate(["fullName", "email", "role"]),
+  validate(["fullName", "email", "role", "username", "studentNumber"]),
   createUser
 );
 
