@@ -7,7 +7,7 @@ import twitter from "../../assets/Twitter.png";
 import instagram from "../../assets/Instagram.png";
 import linkedin from "../../assets/Linkedin.png";
 
-/* ---------------- Fade-up hook ---------------- */
+/* ---------------- Hi everything is okay now ---------------- */
 function useInView(options = { threshold: 0.15 }) {
   const ref = useRef(null);
   const [inView, setInView] = useState(false);
