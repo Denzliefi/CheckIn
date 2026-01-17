@@ -1,19 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
-import missionImg from "../../assets/Mission.png";
-import visionImg from "../../assets/Vision.png";
+import missionImg from "../../assets/mis.png";
+import visionImg from "../../assets/vis.png";
 import arrowIcon from "../../assets/Icon.png";
 import logoImg from "../../assets/logo.png";
 
 /** Reusable FadeUp wrapper (IntersectionObserver) */
-function FadeUp({
-  children,
-  delay = 0,
-  once = true,
-  className = "",
-  y = 18,
-}) {
+function FadeUp({ children, delay = 0, once = true, className = "", y = 18 }) {
   const ref = useRef(null);
   const [show, setShow] = useState(false);
 
@@ -67,12 +61,12 @@ export default function Miss() {
       <div className="pointer-events-none absolute bottom-0 left-0 w-full h-7 rotate-180 bg-[linear-gradient(135deg,#fff_25%,transparent_25%),linear-gradient(225deg,#fff_25%,transparent_25%)] bg-[length:26px_26px]" />
 
       <div className="mx-auto w-full max-w-[1280px] px-6">
-        {/* Logo */}
-        <FadeUp delay={0} className="flex justify-center mb-16">
+        {/* Logo (light, not boxed) */}
+        <FadeUp delay={0} className="flex justify-center mb-14">
           <img
             src={logoImg}
             alt="CheckIn"
-            className="h-[96px] md:h-[120px] lg:h-[140px] w-auto"
+            className="h-[96px] md:h-[120px] lg:h-[140px] w-auto drop-shadow-[0_12px_16px_rgba(0,0,0,0.18)]"
             draggable={false}
           />
         </FadeUp>
@@ -89,17 +83,20 @@ export default function Miss() {
                 Mission
               </h3>
 
-              <p className="text-[14px] leading-relaxed mx-auto max-w-[360px] mb-8">
+              <p className="text-[14px] leading-relaxed mx-auto max-w-[360px] mb-6">
                 To empower students to care for their mental well-being through
-                confidential self-checks and guided support.
+                confidential self-checks and guided.
               </p>
 
-              <img
-                src={missionImg}
-                alt="Mission illustration"
-                className="mt-auto mx-auto h-[220px] md:h-[240px] lg:h-[260px] w-auto object-contain"
-                draggable={false}
-              />
+              {/* NORMALIZED IMAGE HEIGHT */}
+              <div className="mt-auto flex items-end justify-center h-[260px]">
+                <img
+                  src={missionImg}
+                  alt="Mission illustration"
+                  className="h-[240px] w-auto object-contain"
+                  draggable={false}
+                />
+              </div>
             </div>
           </FadeUp>
 
@@ -113,29 +110,56 @@ export default function Miss() {
                 Vision
               </h3>
 
-              <p className="text-[14px] leading-relaxed mx-auto max-w-[360px] mb-8">
+              <p className="text-[14px] leading-relaxed mx-auto max-w-[360px] mb-6">
                 A campus where every student feels supported, heard, and mentally
                 well.
               </p>
 
-              <img
-                src={visionImg}
-                alt="Vision illustration"
-                className="mt-auto mx-auto h-[220px] md:h-[240px] lg:h-[260px] w-auto object-contain"
-                draggable={false}
-              />
+              {/* SAME NORMALIZED IMAGE HEIGHT */}
+              <div className="mt-auto flex items-end justify-center h-[260px]">
+                <img
+                  src={visionImg}
+                  alt="Vision illustration"
+                  className="h-[240px] w-auto object-contain"
+                  draggable={false}
+                />
+              </div>
             </div>
           </FadeUp>
         </div>
 
-        {/* Learn more */}
+        {/* Learn more (UPDATED ONLY) */}
         <FadeUp delay={380} y={16} className="flex justify-center mt-12">
           <button
             onClick={() => navigate("/about-us")}
-            className="flex items-center gap-2 text-[13px] font-semibold hover:opacity-80 transition"
+            className="
+              group flex items-center gap-3
+              rounded-full border-2 border-black
+              bg-[#DCE7D2]
+              px-6 py-3
+              text-[13px] font-semibold
+              shadow-[0_8px_0_rgba(0,0,0,0.15)]
+              transition-all duration-300
+              hover:-translate-y-0.5 hover:shadow-[0_12px_0_rgba(0,0,0,0.15)]
+              active:translate-y-0 active:shadow-[0_6px_0_rgba(0,0,0,0.15)]
+              focus:outline-none focus-visible:ring-4 focus-visible:ring-white/60
+            "
           >
             <span>Learn More</span>
-            <img src={arrowIcon} alt="arrow" className="w-6 h-6" />
+
+            <span
+              className="
+                flex items-center justify-center
+                w-7 h-7
+                rounded-full
+                border border-black
+                bg-black
+                transition-transform duration-300
+                group-hover:translate-x-0.5
+              "
+            >
+              <img src={arrowIcon} alt="arrow" className="w-4 h-4 invert" />
+            </span>
           </button>
         </FadeUp>
       </div>

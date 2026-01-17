@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom"; // ✅ add
-import heroImg from "../../assets/Hero.png";
+import { useNavigate } from "react-router-dom";
+import heroImg from "../../assets/first.png";
 import bottomParallaxImg from "../../assets/Parallax.png";
 
 export default function Hero() {
-  const navigate = useNavigate(); // ✅ add
+  const navigate = useNavigate();
 
   const [offset, setOffset] = useState(0);
   const [visible, setVisible] = useState(false);
@@ -64,14 +64,17 @@ export default function Hero() {
 
       {/* ================= TOP HERO CONTENT ================= */}
       <div className="relative z-10 mx-auto max-w-[1500px] px-5 sm:px-10 lg:px-16 xl:px-20 pt-12 sm:pt-14 lg:pt-16 pb-16 lg:pb-24">
-        <div className="grid items-center gap-10 sm:gap-12 lg:gap-16 xl:gap-20 lg:grid-cols-2">
-          {/* LEFT CONTENT */}
+        {/* ✅ items-stretch so both columns share the same height */}
+        <div className="grid items-stretch gap-10 sm:gap-12 lg:gap-16 xl:gap-20 lg:grid-cols-2">
+          {/* LEFT CONTENT (✅ make it flex so it can fill height if needed) */}
           <div
             className={`
+              flex flex-col justify-center
               transition-all duration-[850ms] ${easeSmooth}
               ${visible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-8"}
               text-center lg:text-left
               max-w-[860px] mx-auto lg:mx-0
+              h-full
             `}
             style={{ transitionDelay: visible ? "60ms" : "0ms" }}
           >
@@ -112,7 +115,7 @@ export default function Hero() {
 
             <div className="mt-10 flex justify-center lg:justify-start">
               <button
-               onClick={() => navigate("/services/assessment")}
+                onClick={() => navigate("/services/assessment")}
                 className="
                   inline-flex items-center justify-center
                   rounded-xl
@@ -132,33 +135,48 @@ export default function Hero() {
             </div>
           </div>
 
-          {/* RIGHT IMAGE */}
+          {/* RIGHT IMAGE (✅ flex + h-full so it matches left height) */}
           <div
             className={`
               relative
+              flex h-full items-center justify-center lg:justify-end
               transition-all duration-[1000ms] ${easeSmooth}
               ${visible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-10"}
-              flex justify-center lg:justify-end
             `}
             style={{ transitionDelay: visible ? "140ms" : "0ms" }}
           >
-            {/* Editorial bleed on ultra-wide */}
             <div
               className="
+                relative
                 will-change-transform
                 w-full
-                max-w-[520px] sm:max-w-[660px] md:max-w-[740px]
-                lg:max-w-[980px] xl:max-w-[1150px] 2xl:max-w-[1300px]
-                xl:-mr-10 2xl:-mr-28
+                h-full
+                flex items-center
+                max-w-[520px] sm:max-w-[640px] md:max-w-[720px]
+                lg:max-w-[880px] xl:max-w-[980px] 2xl:max-w-[1040px]
+                xl:-mr-8 2xl:-mr-20
               "
-              style={{
-                transform: `translate3d(0, ${heroY}px, 0)`,
-              }}
+              style={{ transform: `translate3d(0, ${heroY}px, 0)` }}
             >
+              {/* GREEN GRADIENT BACKDROP */}
+              <div className="pointer-events-none absolute -inset-8 sm:-inset-12">
+                <div className="absolute inset-0 rounded-full bg-gradient-to-br from-[#B9FF66]/45 via-[#EFFFCC]/40 to-transparent blur-3xl" />
+                <div className="absolute -top-6 left-10 h-[220px] w-[220px] rounded-full bg-[#B9FF66]/30 blur-3xl" />
+                <div className="absolute -bottom-10 right-6 h-[260px] w-[260px] rounded-full bg-[#EFFFCC]/55 blur-3xl" />
+              </div>
+
+              {/* ✅ IMAGE constrained by the column height */}
               <img
                 src={heroImg}
                 alt="Mental Health Illustration"
-                className="w-full h-auto object-contain select-none"
+                className="
+                  relative
+                  w-full
+                  h-full
+                  max-h-[560px] sm:max-h-[640px] lg:max-h-[720px]
+                  object-contain
+                  select-none
+                "
                 draggable={false}
               />
             </div>
@@ -179,6 +197,9 @@ export default function Hero() {
               backgroundAttachment: "fixed",
             }}
           />
+
+          {/* GREEN GRADIENT OVERLAY */}
+          <div className="absolute inset-0 bg-gradient-to-r from-[#B9FF66]/25 via-transparent to-[#EFFFCC]/25" />
           <div className="absolute inset-0 bg-black/45" />
 
           <div className="relative z-10 h-full flex items-center justify-center text-center px-6">
@@ -202,6 +223,9 @@ export default function Hero() {
             className="h-full w-full object-cover select-none"
             draggable={false}
           />
+
+          {/* GREEN GRADIENT OVERLAY */}
+          <div className="absolute inset-0 bg-gradient-to-r from-[#B9FF66]/25 via-transparent to-[#EFFFCC]/25" />
           <div className="absolute inset-0 bg-black/45" />
 
           <div className="absolute inset-0 flex items-center justify-center px-6 text-center">

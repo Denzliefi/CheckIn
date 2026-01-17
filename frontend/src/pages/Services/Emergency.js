@@ -23,7 +23,7 @@ function useInView(options = { threshold: 0.18 }) {
   return [ref, inView];
 }
 
-/** --- Minimal doodles (lighter + fewer) --- */
+/** --- Minimal doodles --- */
 function DoodleSpark({ className = "" }) {
   return (
     <svg
@@ -88,7 +88,7 @@ function DoodleHeart({ className = "" }) {
   );
 }
 
-/** Icons (simple, school-friendly) */
+/** Icons */
 function PhoneIcon({ className = "" }) {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true" className={className} fill="none">
@@ -132,17 +132,12 @@ function SchoolIcon({ className = "" }) {
         strokeWidth="2"
         strokeLinejoin="round"
       />
-      <path
-        d="M22 8v6"
-        stroke="#141414"
-        strokeWidth="2"
-        strokeLinecap="round"
-      />
+      <path d="M22 8v6" stroke="#141414" strokeWidth="2" strokeLinecap="round" />
     </svg>
   );
 }
 
-/** Minimal card (less “cardboard”) */
+/** Card */
 function Card({ children, className = "" }) {
   return (
     <div
@@ -159,15 +154,9 @@ function Card({ children, className = "" }) {
 
 function EmergencyCard({ item, delay = 0 }) {
   const [ref, inView] = useInView({ threshold: 0.25 });
-  const safeTel = (item.tel || item.number || "").replace(/[^\d+]/g, "");
 
-  const ctaHref =
-    item.href ||
-    (item.mode === "link" ? "#" : item.mode === "text" ? `sms:${safeTel}` : `tel:${safeTel}`);
-
-  const ctaLabel =
-    item.cta ||
-    (item.mode === "text" ? "Text now" : item.mode === "link" ? "Open" : "Call now");
+  const safeTel = (item.tel || "").replace(/[^\d+]/g, "");
+  const href = item.mode === "call" ? `tel:${safeTel}` : item.href || "#";
 
   return (
     <div
@@ -182,60 +171,73 @@ function EmergencyCard({ item, delay = 0 }) {
       }}
     >
       <Card className="overflow-hidden">
-        {/* tiny corner doodle only */}
         <DoodleSpark className="absolute -top-6 -right-6 w-[120px] opacity-[0.10] pointer-events-none" />
 
-        <div className="p-6 sm:p-7">
-          <div className="flex items-start gap-4">
+        {/* ✅ smaller padding on tiny screens */}
+        <div className="p-5 sm:p-7">
+          <div className="flex items-start gap-3 sm:gap-4">
             <div className="shrink-0">
-              <div className="w-[46px] h-[46px] rounded-[14px] border border-black/25 bg-[#B9FF66] flex items-center justify-center">
+              <div className="w-[44px] h-[44px] sm:w-[46px] sm:h-[46px] rounded-[14px] border border-black/25 bg-[#B9FF66] flex items-center justify-center">
                 {item.icon}
               </div>
             </div>
 
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <p
-                className="text-[12px] font-extrabold tracking-wide uppercase text-black/45"
+                className="text-[11px] sm:text-[12px] font-extrabold tracking-wide uppercase text-black/45"
                 style={{ fontFamily: "Nunito, system-ui, sans-serif" }}
               >
                 {item.tag}
               </p>
 
               <h3
-                className="text-[18px] sm:text-[20px] font-bold leading-tight text-[#141414]"
+                className="text-[16px] sm:text-[20px] font-bold leading-tight text-[#141414]"
                 style={{ fontFamily: "Lora, serif" }}
               >
                 {item.title}
               </h3>
 
+              {item.subtext ? (
+                <div className="mt-2">
+                  <span
+                    className="inline-flex items-center rounded-full border border-black/15 bg-[#B9FF66]/25 px-3 py-1 text-[12px] sm:text-[12.5px] font-extrabold text-[#141414]"
+                    style={{ fontFamily: "Nunito, system-ui, sans-serif" }}
+                  >
+                    {item.subtext}
+                  </span>
+                </div>
+              ) : null}
+
               <p
-                className="mt-2 text-[14px] text-black/65 leading-relaxed"
+                className="mt-2 text-[13px] sm:text-[14px] text-black/65 leading-relaxed break-words"
                 style={{ fontFamily: "Nunito, system-ui, sans-serif" }}
               >
                 {item.desc}
               </p>
 
-              <div className="mt-4 flex flex-wrap items-center gap-3">
+              {/* ✅ Responsive button: full width, max width so it won't become a circle */}
+              <div className="mt-4 flex">
                 <a
-                  href={ctaHref}
-                  className="inline-flex items-center gap-2 rounded-full border border-black/25 bg-[#B9FF66] px-4 py-2 text-[14px] font-extrabold text-[#141414] hover:brightness-[0.99] active:scale-[0.99] transition"
+                  href={href}
+                  className={[
+                    "w-full max-w-[360px] sm:w-auto sm:max-w-none",
+                    "inline-flex items-center justify-center gap-2",
+                    "rounded-full border border-black/25 bg-[#B9FF66]",
+                    "px-4 py-3",
+                    "text-[14px] font-extrabold text-[#141414]",
+                    "text-center leading-snug",
+                    "hover:-translate-y-[1px] hover:shadow-[0_14px_22px_rgba(0,0,0,0.10)] hover:brightness-[0.99]",
+                    "active:scale-[0.99] transition",
+                  ].join(" ")}
                   style={{ fontFamily: "Nunito, system-ui, sans-serif" }}
                 >
-                  <PhoneIcon className="w-5 h-5" />
-                  {item.number}
+                  <PhoneIcon className="w-5 h-5 shrink-0" />
+                  <span className="truncate sm:whitespace-nowrap">{item.primaryLabel}</span>
                 </a>
-
-                <span
-                  className="text-[13px] text-black/50"
-                  style={{ fontFamily: "Nunito, system-ui, sans-serif" }}
-                >
-                  {ctaLabel}
-                </span>
               </div>
             </div>
           </div>
 
-          {/* very light bottom accent */}
           <DoodleWave className="mt-5 w-[190px] opacity-[0.10]" />
         </div>
       </Card>
@@ -250,73 +252,80 @@ export default function Emergency() {
     () => [
       {
         title: "For students & campus concerns",
-        subtitle: "Start here if you're safe and need school-based support.",
+        subtitle: "Campus-based help when you're safe.",
         items: [
           {
             tag: "Campus Support",
-            title: "Guidance / Counselor Office",
-            number: "School Office",
-            href: "#",
-            mode: "link",
-            cta: "Update with your campus contact",
-            desc: "If you're feeling overwhelmed, anxious, or unsafe, reach out to your guidance office for support and referral.",
+            title: "Guidance / Counselor Office (AUP)",
+            subtext: "Student-first",
+            desc: "If you need support, reach out to the Guidance Office for counseling and referrals.",
             icon: <SchoolIcon className="w-6 h-6" />,
-          }
+            mode: "call",
+            tel: "85797295", // ✅ calls 8-579-72-95
+            primaryLabel: "Call Guidance", // ✅ NO number shown
+          },
         ],
       },
       {
-        title: "If it’s urgent or life-threatening",
-        subtitle: "Call immediately if someone is in immediate danger.",
+        title: "Urgent emergency",
+        subtitle: "Call now if someone is in immediate danger.",
         items: [
           {
             tag: "Emergency",
             title: "National Emergency Hotline",
-            number: "911",
-            tel: "911",
-            desc: "For urgent life-threatening situations. Share your exact location and follow instructions.",
+            subtext: "Immediate danger",
+            desc: "Call for life-threatening emergencies and share your location.",
             icon: <ShieldIcon className="w-6 h-6" />,
+            mode: "call",
+            tel: "911",
+            primaryLabel: "Call 911",
           },
         ],
       },
       {
         title: "Crisis & mental health support (PH)",
-        subtitle: "Confidential support when you need someone to talk to.",
+        subtitle: "Confidential support anytime you need it.",
         items: [
           {
             tag: "Mental Health",
             title: "NCMH Crisis Hotline",
-            number: "1553",
-            tel: "1553",
+            subtext: "24/7 support",
             desc:
-              "24/7 crisis support and referral. If you can’t connect, try again or use their mobile lines (Smart/TNT: 0919-057-1553; Globe/TM: 0917-899-8727).",
+              "Crisis support and referral. If you can’t connect: 0919-057-1553 (Smart/TNT) • 0917-899-8727 (Globe/TM).",
             icon: <DoodleHeart className="w-6 h-6" />,
+            mode: "call",
+            tel: "1553",
+            primaryLabel: "Call 1553",
           },
           {
             tag: "Crisis Support",
             title: "In Touch: Crisis Line",
-            number: "(02) 8893 7603",
-            tel: "+63288937603",
-            desc:
-              "Free, anonymous, and confidential emotional support with trained responders—helpful when you need someone to talk to right now.",
+            subtext: "Confidential",
+            desc: "Free and confidential emotional support with trained responders.",
             icon: <ShieldIcon className="w-6 h-6" />,
+            mode: "call",
+            tel: "+63288937603",
+            primaryLabel: "Call In Touch",
           },
           {
             tag: "Suicide Prevention",
             title: "HOPELINE",
-            number: "(02) 8804 4673",
-            tel: "+63288044673",
-            desc:
-              "Suicide prevention and emotional crisis support. You can also reach HOPELINE via 0917-558-4673 (Globe) or 0918-873-4673 (Smart).",
+            subtext: "Crisis support",
+            desc: "Suicide prevention support. Also: 0917-558-4673 • 0918-873-4673.",
             icon: <DoodleHeart className="w-6 h-6" />,
+            mode: "call",
+            tel: "+63288044673",
+            primaryLabel: "Call HOPELINE",
           },
           {
             tag: "Child Protection",
             title: "Bantay Bata Helpline",
-            number: "163",
-            tel: "163",
-            desc:
-              "For child-related concerns (abuse, neglect, violence, counseling, and guidance). If a child is in immediate danger, call emergency services too.",
+            subtext: "Child safety",
+            desc: "For child-related concerns (abuse, neglect, violence, guidance).",
             icon: <ShieldIcon className="w-6 h-6" />,
+            mode: "call",
+            tel: "163",
+            primaryLabel: "Call 163",
           },
         ],
       },
@@ -326,7 +335,6 @@ export default function Emergency() {
 
   return (
     <section className="relative w-full overflow-hidden bg-[#fbfbfb]">
-      {/* Minimal paper-ish background + few doodles */}
       <div className="pointer-events-none absolute inset-0">
         <div className="absolute top-0 left-0 right-0 h-[260px] bg-[#E9ECE7]" />
         <div className="absolute -top-10 -left-10 w-[180px] opacity-[0.10] rotate-[-10deg]">
@@ -340,8 +348,7 @@ export default function Emergency() {
         </div>
       </div>
 
-      <div className="relative mx-auto w-full max-w-[1200px] px-5 sm:px-8 md:px-[70px] py-12 sm:py-14">
-        {/* HERO (minimal + school/student tone) */}
+      <div className="relative mx-auto w-full max-w-[1200px] px-4 sm:px-8 md:px-[70px] py-12 sm:py-14">
         <div
           ref={heroRef}
           className="relative rounded-[22px] border border-black/20 bg-white/75 backdrop-blur-[1px]"
@@ -355,7 +362,7 @@ export default function Emergency() {
           <DoodleWave className="absolute -bottom-10 -left-10 w-[320px] opacity-[0.10] pointer-events-none" />
           <DoodleSpark className="absolute -top-8 -right-8 w-[160px] opacity-[0.10] pointer-events-none" />
 
-          <div className="p-7 sm:p-9 md:p-10">
+          <div className="p-6 sm:p-9 md:p-10">
             <p
               className="inline-flex items-center gap-2 rounded-full border border-black/20 bg-white px-4 py-2 text-[12.5px] font-extrabold text-[#141414]"
               style={{ fontFamily: "Nunito, system-ui, sans-serif" }}
@@ -365,63 +372,57 @@ export default function Emergency() {
             </p>
 
             <h1
-              className="mt-4 text-[30px] sm:text-[38px] md:text-[46px] leading-[1.08] font-bold text-[#141414]"
+              className="mt-4 text-[26px] sm:text-[38px] md:text-[46px] leading-[1.08] font-bold text-[#141414]"
               style={{ fontFamily: "Lora, serif" }}
             >
-              Quick help for school life — <br className="hidden sm:block" />
-              safety, crisis, and support.
+              Help is one tap away.
             </h1>
 
             <p
-              className="mt-4 text-[14.5px] sm:text-[16px] text-black/65 leading-relaxed max-w-[70ch]"
+              className="mt-4 text-[14px] sm:text-[16px] text-black/65 leading-relaxed max-w-[72ch]"
               style={{ fontFamily: "Nunito, system-ui, sans-serif" }}
             >
-              If you’re in immediate danger, call emergency services right away.
-              If you’re safe but struggling, start with campus support — you don’t
-              have to handle it alone.
+              If it’s an emergency, call 911. If you’re safe, reach out to campus support.
             </p>
 
-            <div className="mt-6 flex flex-wrap items-center gap-3">
+            <div className="mt-6">
               <a
                 href="tel:911"
-                className="inline-flex items-center gap-2 rounded-full border border-black/20 bg-[#B9FF66] px-5 py-3 text-[14px] font-extrabold text-[#141414] active:scale-[0.99] transition"
+                className={[
+                  "w-full max-w-[360px] sm:w-auto sm:max-w-none",
+                  "inline-flex items-center justify-center gap-2 rounded-full border border-black/20 bg-[#B9FF66]",
+                  "px-5 py-3 text-[14px] font-extrabold text-[#141414]",
+                  "hover:-translate-y-[1px] hover:shadow-[0_14px_22px_rgba(0,0,0,0.10)] hover:brightness-[0.99]",
+                  "active:scale-[0.99] transition",
+                ].join(" ")}
                 style={{ fontFamily: "Nunito, system-ui, sans-serif" }}
               >
                 <PhoneIcon className="w-5 h-5" />
                 Call 911
               </a>
-
-              <span
-                className="text-[12.5px] text-black/50"
-                style={{ fontFamily: "Nunito, system-ui, sans-serif" }}
-              >
-                Tip: share your location (building, floor, landmark).
-              </span>
             </div>
           </div>
         </div>
 
-        {/* SECTIONS */}
         <div className="mt-10 space-y-10">
           {sections.map((sec, sIdx) => (
             <div key={sIdx}>
               <div className="flex items-end justify-between gap-3">
                 <div>
                   <h2
-                    className="text-[22px] sm:text-[24px] font-bold text-[#141414]"
+                    className="text-[20px] sm:text-[24px] font-bold text-[#141414]"
                     style={{ fontFamily: "Lora, serif" }}
                   >
                     {sec.title}
                   </h2>
                   <p
-                    className="mt-1 text-[13.5px] text-black/55"
+                    className="mt-1 text-[13px] sm:text-[13.5px] text-black/55"
                     style={{ fontFamily: "Nunito, system-ui, sans-serif" }}
                   >
                     {sec.subtitle}
                   </p>
                 </div>
 
-                {/* tiny doodle label */}
                 <div className="hidden sm:flex items-center gap-2 opacity-80">
                   <DoodleSpark className="w-[38px]" />
                 </div>
@@ -435,14 +436,6 @@ export default function Emergency() {
             </div>
           ))}
         </div>
-
-        <p
-          className="mt-10 text-center text-[12px] text-black/45"
-          style={{ fontFamily: "Nunito, system-ui, sans-serif" }}
-        >
-          Replace the campus links with your real school contacts (guidance office,
-          adviser, security). Keep this page accessible for students.
-        </p>
       </div>
     </section>
   );

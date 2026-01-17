@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 
 // team images
-import johnImg from "../../assets/john.png";
-import jeremyImg from "../../assets/jeremy.png";
-import gerryImg from "../../assets/gerry.png";
-import kenjiImg from "../../assets/kenji.png";
+import johnImg from "../../assets/b.png";
+import jeremyImg from "../../assets/j.png";
+import gerryImg from "../../assets/g.png";
+import kenjiImg from "../../assets/k.png";
 
 /** Fade-up on scroll (runs once) */
 function useInView(options = { threshold: 0.2 }) {

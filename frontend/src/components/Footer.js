@@ -27,10 +27,10 @@ export default function Footer() {
     "transition-all duration-700 ease-out will-change-transform will-change-opacity";
 
   const socials = [
-    { icon: facebook, label: "Facebook", href: "#" },
-    { icon: twitter, label: "Twitter", href: "#" },
-    { icon: instagram, label: "Instagram", href: "#" },
-    { icon: linkedin, label: "LinkedIn", href: "#" },
+    { icon: facebook, label: "Facebook", href: "https://www.facebook.com/profile.php?id=61586209235539&rdid=p1enOBvaQIHQK7bl&share_url=https%3A%2F%2Fwww.facebook.com%2Fshare%2F1Ea23LhzS5%2F#" },
+    { icon: twitter, label: "Twitter", href: "https://x.com/CheckIn_AUABC?fbclid=IwY2xjawPQl95leHRuA2FlbQIxMQBzcnRjBmFwcF9pZAEwAAEeuIWwEmXicK7Q3wfNKNHwJE Dpi1n3-W3TE5SLM_6gG1j90tzhKbReD-4s1VQ_aem_IPXZcapEhSiSyA0gEJ4orQ" },
+    { icon: instagram, label: "Instagram", href: "https://www.instagram.com/checkin_auabc/?fbclid=IwY2xjawPQl-xleHRuA2FlbQIxMQBzcnRjBmFwcF9pZAEwAAEedlwwepgueKRZL3MKBwLAK9pLtAAq1TBBLgxUwP_2-04ZMgxr08ER9dIoI_E_aem_XMsYKGiYcfitsdyAUMJypw" },
+    { icon: linkedin, label: "LinkedIn", href: "https://www.linkedin.com/in/check-in-3386013a5/?fbclid=IwY2xjawPQl-NleHRuA2FlbQIxMQBzcnRjBmFwcF9pZAEwAAEefNj7dbKjDk67dOU2YDZ6zEEjLNCPJUMuikuadhcEw1_ygfvHD3BtpG0cxj0_aem_qT-PixUk2oWwa9w0xKZvmA" },
   ];
 
   return (

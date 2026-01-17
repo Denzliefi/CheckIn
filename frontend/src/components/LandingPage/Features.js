@@ -38,7 +38,6 @@ function FeatureCard({
   line2,
   desc,
   img,
-  scale = 1.1,
   delay = 0,
   to,
   onNavigate,
@@ -60,7 +59,6 @@ function FeatureCard({
         shadow-[0_10px_0_rgba(0,0,0,0.1)]
         transition-all duration-700 ease-out
         hover:scale-[1.02] hover:shadow-[0_16px_0_rgba(0,0,0,0.12)]
-
         ${inView ? "opacity-100 translate-y-0" : "opacity-0 translate-y-10"}
       `}
     >
@@ -69,7 +67,7 @@ function FeatureCard({
 
       {/* Content */}
       <div className="flex-1 p-6 sm:p-8 lg:p-10 flex flex-col items-center text-center">
-        {/* Image with playful tilt */}
+        {/* Image (FIXED FRAME so all icons look same size) */}
         <div className="relative mb-6">
           <div
             className={`
@@ -80,23 +78,34 @@ function FeatureCard({
               rotate-12
             `}
           />
-          <img
-            src={img}
-            alt={topLabel}
-            draggable={false}
-            style={{ transform: `scale(${scale})` }}
+
+          {/* This box enforces consistent icon sizing */}
+          <div
             className="
               relative
-              h-[120px] sm:h-[160px] lg:h-[200px]
-              w-auto object-contain
-              drop-shadow-[0_8px_0_rgba(0,0,0,0.16)]
+              flex items-center justify-center
+              h-[140px] w-[180px]
+              sm:h-[170px] sm:w-[220px]
+              lg:h-[200px] lg:w-[260px]
             "
-          />
+          >
+            <img
+              src={img}
+              alt={topLabel}
+              draggable={false}
+              className="
+                max-h-[120px] max-w-[160px]
+                sm:max-h-[150px] sm:max-w-[200px]
+                lg:max-h-[175px] lg:max-w-[240px]
+                object-contain
+                drop-shadow-[0_8px_0_rgba(0,0,0,0.16)]
+              "
+            />
+          </div>
         </div>
 
-        {/* Text content */}
+        {/* Text */}
         <div className="space-y-4 max-w-[48ch]">
-          {/* Top label */}
           <span
             className={`
               inline-flex items-center gap-2
@@ -112,7 +121,6 @@ function FeatureCard({
             <span className="w-3 h-3 rounded-full bg-black/70" />
           </span>
 
-          {/* Title */}
           {line2 && (
             <h3
               className="
@@ -127,7 +135,6 @@ function FeatureCard({
             </h3>
           )}
 
-          {/* Description */}
           {desc && (
             <p
               className="
@@ -141,17 +148,8 @@ function FeatureCard({
           )}
         </div>
 
-        {/* Bottom row: tags + CTA */}
-        <div className="mt-auto pt-8 w-full flex flex-col sm:flex-row sm:items-center sm:justify-between gap-6">
-          <div className="flex justify-center gap-3">
-            <span className="px-4 py-2 rounded-full border-4 border-black text-[13px] font-bold bg-white/70">
-              Private
-            </span>
-            <span className="px-4 py-2 rounded-full border-4 border-black text-[13px] font-bold bg-white/55">
-              Easy
-            </span>
-          </div>
-
+        {/* CTA ONLY */}
+        <div className="mt-auto pt-8 w-full flex justify-center sm:justify-end">
           <button
             type="button"
             onClick={() => {
@@ -210,10 +208,8 @@ export default function Features() {
           </p>
         </div>
 
-        {/* Grid: 1 column mobile, 2 columns md+ */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-8 lg:gap-12">
           <FeatureCard
-            delay={0}
             variant="gray"
             topLabel="Guidance"
             line2="Counseling"

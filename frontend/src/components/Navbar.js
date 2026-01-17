@@ -1,10 +1,11 @@
+// src/components/Navbar.js
 import { NavLink, useLocation } from "react-router-dom";
 import { useEffect, useRef, useState } from "react";
 
 // ✅ adjust path if needed
 import logoOutlined from "../assets/logo-outlined 1.png";
 
-// ✅ service images (as you requested)
+// ✅ service images
 import guidanceImg from "../assets/Guidance (1).png";
 import journalImg from "../assets/Journal.png";
 import phqImg from "../assets/Phq9.png";
@@ -17,6 +18,25 @@ function PhoneIcon({ className = "" }) {
       <path
         d="M6.6 10.8c1.7 3.2 3.4 4.9 6.6 6.6l2.2-2.2c.3-.3.8-.4 1.2-.2 1 .4 2.2.7 3.4.8.5.1.9.5.9 1v3.5c0 .6-.5 1-1.1 1C11 21.3 2.7 13 2.7 2.2c0-.6.4-1.1 1-1.1h3.5c.5 0 .9.4 1 .9.2 1.2.4 2.3.8 3.4.1.4 0 .9-.3 1.2L6.6 10.8z"
         fill="currentColor"
+      />
+    </svg>
+  );
+}
+
+/** Gear / Settings SVG */
+function SettingsIcon({ className = "" }) {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className={className} fill="none">
+      <path
+        d="M12 15.2a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4Z"
+        stroke="currentColor"
+        strokeWidth="2.2"
+      />
+      <path
+        d="M19.4 13.1c.05-.36.1-.73.1-1.1s-.05-.74-.1-1.1l1.7-1.3a.9.9 0 0 0 .2-1.2l-1.6-2.8a.9.9 0 0 0-1.1-.4l-2 .8a8 8 0 0 0-1.9-1.1l-.3-2.1A.9.9 0 0 0 13.5 1h-3a.9.9 0 0 0-.9.8l-.3 2.1c-.7.3-1.3.6-1.9 1.1l-2-.8a.9.9 0 0 0-1.1.4L2.7 7.4a.9.9 0 0 0 .2 1.2l1.7 1.3c-.05.36-.1.73-.1 1.1s.05.74.1 1.1L2.9 14.4a.9.9 0 0 0-.2 1.2l1.6 2.8c.2.4.7.5 1.1.4l2-.8c.6.5 1.2.8 1.9 1.1l.3 2.1c.1.4.5.8.9.8h3c.4 0 .8-.3.9-.8l.3-2.1c.7-.3 1.3-.6 1.9-1.1l2 .8c.4.1.9 0 1.1-.4l1.6-2.8a.9.9 0 0 0-.2-1.2l-1.7-1.3Z"
+        stroke="currentColor"
+        strokeWidth="2.2"
+        strokeLinejoin="round"
       />
     </svg>
   );
@@ -69,7 +89,6 @@ export default function Navbar() {
     setServicesMobileOpen(false);
   }, [pathname]);
 
-  // ✅ update these routes to match your AppRoutes
   const services = [
     {
       to: "/services/counseling",
@@ -101,10 +120,17 @@ export default function Navbar() {
     { to: "/", label: "Home", end: true },
     { to: "/about-us", label: "About us" },
     { to: "/privacy-policy", label: "Privacy Policy" },
-   
   ];
 
   const isServicesActive = pathname.startsWith("/services");
+
+  // ✅ route path for profile settings
+  const accountTo = "/profile-settings";
+
+  // ✅ Emergency number (911)
+  const EMERGENCY_TEL = "911";
+  // Use tel:911 (works on most mobile devices). Desktop browsers may not call.
+  const emergencyHref = `tel:${EMERGENCY_TEL}`;
 
   return (
     <header className="sticky top-0 z-50 w-full">
@@ -154,7 +180,7 @@ export default function Navbar() {
                   )}
                 </NavLink>
 
-                {/* SERVICES DROPDOWN (WIDER + WITH IMAGES) */}
+                {/* SERVICES DROPDOWN */}
                 <div
                   className="relative"
                   ref={servicesRef}
@@ -185,15 +211,11 @@ export default function Navbar() {
                     />
                   </button>
 
-                  {/* dropdown */}
                   <div className={`absolute left-0 top-full pt-3 ${servicesOpen ? "block" : "hidden"}`}>
                     <div className="w-[420px] rounded-2xl border border-black/10 bg-white shadow-xl overflow-hidden">
-                      {/* header */}
                       <div className="px-5 py-4 border-b border-black/5 flex items-center justify-between">
                         <div>
-                          <p className="text-[12px] font-extrabold text-black/60">
-                            Services
-                          </p>
+                          <p className="text-[12px] font-extrabold text-black/60">Services</p>
                           <p className="text-[12px] font-semibold text-black/45 -mt-[2px]">
                             Choose a module to open
                           </p>
@@ -204,7 +226,6 @@ export default function Navbar() {
                         </span>
                       </div>
 
-                      {/* items */}
                       <div className="p-3">
                         <div className="grid grid-cols-1 gap-2">
                           {services.map((s) => (
@@ -217,7 +238,6 @@ export default function Navbar() {
                                  hover:bg-black/5 ${isActive ? "bg-[#B9FF66]/45" : ""}`
                               }
                             >
-                              {/* icon */}
                               <div className="h-[54px] w-[54px] rounded-2xl bg-white border border-black/10 overflow-hidden flex items-center justify-center">
                                 <img
                                   src={s.img}
@@ -227,17 +247,13 @@ export default function Navbar() {
                                 />
                               </div>
 
-                              {/* text */}
                               <div className="flex-1 leading-tight">
                                 <div className="text-[14px] font-extrabold text-[#141414]">
                                   {s.label}
                                 </div>
-                                <div className="text-[12px] text-black/55 mt-1">
-                                  {s.desc}
-                                </div>
+                                <div className="text-[12px] text-black/55 mt-1">{s.desc}</div>
                               </div>
 
-                              {/* tiny arrow */}
                               <div className="text-black/40 group-hover:text-black/70 transition">
                                 <ChevronDown className="h-[18px] w-[18px] -rotate-90" />
                               </div>
@@ -246,7 +262,6 @@ export default function Navbar() {
                         </div>
                       </div>
 
-                      {/* footer */}
                       <div className="px-5 py-3 border-t border-black/5">
                         <p className="text-[12px] font-semibold text-black/45">
                           Confidential • Student-friendly • Fast access
@@ -282,8 +297,9 @@ export default function Navbar() {
                 ))}
               </nav>
 
-              {/* AUTH + CALL */}
+              {/* AUTH + SETTINGS + CALL */}
               <div className="flex items-center gap-3">
+                {/* login/sign-up pill */}
                 <div className="relative inline-flex h-10 rounded-full border-2 border-[#8b8b8b] bg-white overflow-hidden">
                   <div
                     className={`absolute top-0 bottom-0 w-1/2 bg-[#B9FF66] transition-transform duration-300 ease-out ${
@@ -296,12 +312,11 @@ export default function Navbar() {
                     to="/login"
                     end
                     className={({ isActive }) =>
-                      `relative z-10 inline-flex items-center justify-center gap-2 w-28 text-[14px] font-extrabold ${
+                      `relative z-10 inline-flex items-center justify-center w-28 text-[14px] font-extrabold ${
                         isActive ? "text-[#141414]" : "text-[#141414]/80"
                       }`
                     }
                   >
-                    {!isSignup && <span className="text-[16px]">✓</span>}
                     Login
                   </NavLink>
 
@@ -317,9 +332,31 @@ export default function Navbar() {
                   </NavLink>
                 </div>
 
+                {/* ✅ Account Settings icon (DESKTOP ONLY) */}
+                <NavLink
+                  to={accountTo}
+                  aria-label="Account settings"
+                  className="
+                    relative h-10 w-10
+                    rounded-full
+                    bg-[#B9FF66]
+                    flex items-center justify-center
+                    shadow-md
+                    transition-all duration-300
+                    hover:scale-110 hover:-translate-y-[1px]
+                    active:scale-95
+                    border border-black/10
+                  "
+                >
+                  <span className="relative z-10 text-black">
+                    <SettingsIcon className="h-[18px] w-[18px]" />
+                  </span>
+                </NavLink>
+
+                {/* ✅ Emergency call icon (911) */}
                 <a
-                  href="tel:+639000000000"
-                  aria-label="Call us"
+                  href={emergencyHref}
+                  aria-label={`Call emergency ${EMERGENCY_TEL}`}
                   className="
                     relative h-10 w-10
                     rounded-full
@@ -330,6 +367,7 @@ export default function Navbar() {
                     hover:scale-110 hover:-translate-y-[1px]
                     active:scale-95
                   "
+                  title={`Call ${EMERGENCY_TEL}`}
                 >
                   <span className="absolute inset-0 rounded-full bg-[#F59E0B]/30 animate-ping" />
                   <span className="relative z-10 text-white">
@@ -341,9 +379,12 @@ export default function Navbar() {
 
             {/* MOBILE RIGHT */}
             <div className="lg:hidden flex items-center gap-3">
+              {/* ✅ Settings icon hidden on Mobile/Tablet (removed) */}
+
+              {/* ✅ Emergency call icon (911) */}
               <a
-                href="tel:+639000000000"
-                aria-label="Call us"
+                href={emergencyHref}
+                aria-label={`Call emergency ${EMERGENCY_TEL}`}
                 className="
                   relative h-11 w-11
                   rounded-full
@@ -354,6 +395,7 @@ export default function Navbar() {
                   hover:scale-110 hover:-translate-y-[1px]
                   active:scale-95
                 "
+                title={`Call ${EMERGENCY_TEL}`}
               >
                 <span className="absolute inset-0 rounded-full bg-[#F59E0B]/30 animate-ping" />
                 <span className="relative z-10 text-white">
@@ -416,7 +458,7 @@ export default function Navbar() {
                   Home
                 </NavLink>
 
-                {/* SERVICES MOBILE ACCORDION + IMAGES */}
+                {/* SERVICES MOBILE ACCORDION */}
                 <button
                   type="button"
                   onClick={() => setServicesMobileOpen((v) => !v)}
@@ -479,6 +521,18 @@ export default function Navbar() {
                     {item.label}
                   </NavLink>
                 ))}
+
+                <NavLink
+                  to={accountTo}
+                  className={({ isActive }) =>
+                    `rounded-xl px-3 py-3 transition hover:bg-black/5 flex items-center justify-between ${
+                      isActive ? "bg-[#B9FF66]/60 font-extrabold" : ""
+                    }`
+                  }
+                >
+                  <span>Account settings</span>
+                  <SettingsIcon className="h-[18px] w-[18px] text-black/60" />
+                </NavLink>
               </nav>
 
               <div className="mt-4 grid grid-cols-2 gap-3">

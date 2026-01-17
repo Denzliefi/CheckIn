@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import mentalImg from "../../assets/Mental.png";
+import mentalImg from "../../assets/let.png";
 import parallaxImg from "../../assets/Parallax-2.png";
 
 export default function LandingHero() {
@@ -58,9 +58,14 @@ export default function LandingHero() {
       {/* ================= HERO ================= */}
       <div
         ref={heroRef}
-        className="w-full px-5 sm:px-8 md:px-[70px] pt-10 sm:pt-12 md:pt-[55px] pb-10 md:pb-[40px]"
+        className="
+          w-full
+          px-5 sm:px-8 md:px-[70px]
+          pt-16 sm:pt-20 md:pt-[90px]
+          pb-16 sm:pb-20 md:pb-[80px]
+        "
       >
-        <div className="max-w-[1200px] mx-auto flex flex-col-reverse lg:flex-row items-center lg:items-start justify-between gap-10 lg:gap-14">
+        <div className="max-w-[1200px] mx-auto flex flex-col-reverse lg:flex-row items-center lg:items-start justify-between gap-14 lg:gap-20">
           {/* LEFT */}
           <div
             className={`
@@ -69,56 +74,59 @@ export default function LandingHero() {
               ${visible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-10"}
             `}
           >
-            <h1 className="font-lora text-[32px] sm:text-[38px] md:text-[46px] font-bold leading-[1.15] text-black">
+            <h1 className="font-lora text-[34px] sm:text-[40px] md:text-[48px] font-bold leading-[1.2] text-black">
               Let’s make things happen.
             </h1>
 
-            <p className="font-nunito mt-4 sm:mt-5 text-[15px] sm:text-[16px] md:text-[18px] leading-[1.8] text-black/80 max-w-[560px] mx-auto lg:mx-0">
+            <p className="font-nunito mt-6 sm:mt-7 text-[16px] sm:text-[17px] md:text-[18px] leading-[1.9] text-black/80 max-w-[560px] mx-auto lg:mx-0">
               Reach out to us for guidance, support, and mental wellness care.
               Through CheckIn, students can access guided assessments, reflect
               on their well-being, and take steps toward appropriate help in a
               safe and supportive space.
             </p>
 
-            {/* ✅ ACTION BUTTONS (MATCH YOUR ROUTES) */}
-            <div className="mt-7 sm:mt-8 md:mt-10 flex flex-col sm:flex-row items-stretch sm:items-center justify-center lg:justify-start gap-3 sm:gap-4 md:gap-6">
+            {/* ACTION BUTTONS */}
+            <div className="mt-10 sm:mt-12 flex flex-col sm:flex-row items-stretch sm:items-center justify-center lg:justify-start gap-4 sm:gap-5">
               <button
                 type="button"
-                onClick={() => navigate("/sign-up")}  // ✅ your route is /sign-up
-                className="h-[44px] sm:h-[42px] w-full sm:w-auto px-8 sm:px-10 rounded-[10px] bg-[#B9FF66] text-[15px] font-extrabold text-black border-2 border-black/70 hover:brightness-95 transition"
+                onClick={() => navigate("/sign-up")}
+                className="h-[46px] px-10 rounded-[12px] bg-[#B9FF66] text-[15px] font-extrabold text-black border-2 border-black/70 hover:brightness-95 transition"
               >
                 Register Now!
               </button>
 
               <button
                 type="button"
-                onClick={() => navigate("/login")} // ✅ keep as /login if route is /login
-                className="h-[44px] sm:h-[42px] w-full sm:w-auto px-10 sm:px-12 rounded-[10px] bg-white text-[15px] font-extrabold text-black border-2 border-black/70 hover:bg-black/5 transition"
+                onClick={() => navigate("/login")}
+                className="h-[46px] px-12 rounded-[12px] bg-white text-[15px] font-extrabold text-black border-2 border-black/70 hover:bg-black/5 transition"
               >
                 Login
               </button>
             </div>
           </div>
 
-          {/* RIGHT IMAGE */}
+          {/* RIGHT IMAGE — redesigned with gradient */}
           <div
             className={`
-              w-full lg:w-auto flex justify-center lg:justify-end
+              relative w-full lg:w-auto flex justify-center lg:justify-end
               transition-all duration-[900ms] ease-out delay-100
               ${visible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-12"}
             `}
           >
+            {/* GRADIENT HALO */}
+            <div className="absolute -inset-6 sm:-inset-8 rounded-full bg-gradient-to-tr from-[#B9FF66]/60 via-[#DFFFAD]/40 to-transparent blur-2xl" />
+
             <img
               src={mentalImg}
               alt="Mental Health and Wellness"
-              className="w-[260px] sm:w-[320px] md:w-[400px] lg:w-[460px] h-auto object-contain"
+              className="relative z-10 w-[280px] sm:w-[340px] md:w-[420px] lg:w-[480px] h-auto object-contain"
               draggable="false"
             />
           </div>
         </div>
       </div>
 
-      {/* ================= PARALLAX STRIP ================= */}
+      {/* ================= PARALLAX STRIP (UNCHANGED) ================= */}
       <div className="relative w-full overflow-hidden">
         {/* DESKTOP */}
         <div className="hidden lg:block relative h-[160px] overflow-hidden">

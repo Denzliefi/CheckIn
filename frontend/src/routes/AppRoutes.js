@@ -5,6 +5,7 @@ import MainLayout from "../layouts/MainLayout";
 import LandingPage from "../pages/LandingPage";
 import Login from "../pages/Login";
 import Signup from "../pages/Signup";
+import ForgotPassword from "../pages/ForgotPassword";
 import AboutUs from "../pages/AboutUs";
 import PrivacyPolicy from "../pages/PrivacyPolicy";
 
@@ -18,7 +19,8 @@ import Emergency from "../pages/Services/Emergency";
 
 import ScrollToTop from "../components/ScrollToTop";
 
-// Guards
+
+
 
 import Unauthorized from "../pages/Unauthorized";
 
@@ -41,6 +43,8 @@ export default function AppRoutes() {
         <Route element={<MainLayout />}>
           <Route path="/login" element={<Login />} />
           <Route path="/sign-up" element={<Signup />} />
+          <Route path="/forgotpassword" element={<ForgotPassword />} />
+
           <Route path="/unauthorized" element={<Unauthorized />} />
         </Route>
 
@@ -63,8 +67,7 @@ export default function AppRoutes() {
             <Route path="/services/assessment" element={<Assessment />} />
             <Route path="/services/emergency" element={<Emergency />} />
 
-            <Route path="/student/profilesettings" element={<ProfileSettings/>} />
-            
+            <Route path="/profile-settings" element={<ProfileSettings />} />            
             {/* =======================
                 ROLE-BASED
                ======================= */}
