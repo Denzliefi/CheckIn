@@ -10,8 +10,10 @@ import AboutUs from "../pages/AboutUs";
 import PrivacyPolicy from "../pages/PrivacyPolicy";
 
 import GuidanceCounseling from "../pages/Services/GuidanceCounseling";
+// src/routes/AppRoutes.js
 import Request from "../pages/Services/SessionType/Request";
 import ViewRequest from "../pages/Services/SessionType/ViewRequest";
+
 
 import Journal from "../pages/Services/Journal";
 import Assessment from "../pages/Services/Assessment";

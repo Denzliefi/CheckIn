@@ -7,19 +7,25 @@ const CHECKIN_GREEN = "#B9FF66";
 const CHECKIN_DARK = "#141414";
 
 /** =========================
-    STORAGE (Journal Entry per date)
+    STORAGE
 ========================= */
 const ENTRIES_KEY = "journal_entries_v1";
+const TERMS_KEY = "journal_terms_accepted_v1";
 
 /** Notes limit */
 const NOTES_WORD_LIMIT = 100;
 
+/** Tracker days */
+const TRACKER_DAYS = 7;
+
+/** =========================
+    Storage helpers
+========================= */
 function loadEntries() {
   try {
     const raw = localStorage.getItem(ENTRIES_KEY);
     if (!raw) return {};
     const parsed = JSON.parse(raw);
-    // ✅ prevent crashes if storage is corrupted / not an object
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
     return parsed;
   } catch {
@@ -27,10 +33,26 @@ function loadEntries() {
   }
 }
 
-/** ✅ safer write (localStorage can throw) */
 function saveEntries(entries) {
   try {
     localStorage.setItem(ENTRIES_KEY, JSON.stringify(entries));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function loadTermsAccepted() {
+  try {
+    return localStorage.getItem(TERMS_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function saveTermsAccepted() {
+  try {
+    localStorage.setItem(TERMS_KEY, "1");
     return true;
   } catch {
     return false;
@@ -66,14 +88,16 @@ function ensureEntryShape(e) {
     },
   };
 }
-function getEntry(entries, date) {
-  return ensureEntryShape(entries?.[date]);
+
+function getEntry(entries, dateKey) {
+  return ensureEntryShape(entries?.[dateKey]);
 }
-function setEntry(entries, date, patch) {
-  const prev = getEntry(entries, date);
+
+function setEntry(entries, dateKey, patch) {
+  const prev = getEntry(entries, dateKey);
   return {
     ...entries,
-    [date]: {
+    [dateKey]: {
       ...prev,
       ...patch,
       phq: patch?.phq ? { ...prev.phq, ...patch.phq } : prev.phq,
@@ -100,18 +124,76 @@ function safeText(s) {
   const t = (s || "").trim();
   return t ? t : "—";
 }
-function todayKey() {
-  const d = new Date();
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${yyyy}-${mm}-${dd}`;
-}
+
 function isDateKey(k) {
   return /^\d{4}-\d{2}-\d{2}$/.test(k);
 }
 
-/** Personalized wellness tips based on Saved Mood/Reason/Notes (NOT PHQ requirement) */
+/**
+ * ✅ Local day key (consistent everywhere)
+ * Avoid mixing local “today” with UTC math.
+ */
+function getTodayKey() {
+  const d = new Date();
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+
+  // Ensure it uses local time consistently (no UTC-based discrepancies)
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function dateFromKeyLocal(key) {
+  const [y, m, d] = (key || "").split("-").map((x) => Number(x));
+  if (!y || !m || !d) return new Date();
+  return new Date(y, m - 1, d);
+}
+
+function keyFromDateLocal(dt) {
+  const yyyy = dt.getFullYear();
+  const mm = String(dt.getMonth() + 1).padStart(2, "0");
+  const dd = String(dt.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+/**
+ * ✅ Safe date rendering
+ * No Date.UTC(...) -> local shift risk removed.
+ */
+function formatNiceDate(dateKey) {
+  const [y, m, d] = (dateKey || "").split("-").map((x) => Number(x));
+  if (!y || !m || !d) return dateKey || "";
+  const dt = new Date(y, m - 1, d);
+  return dt.toLocaleDateString(undefined, { month: "short", day: "2-digit", year: "numeric" });
+}
+
+function formatNiceTime(iso) {
+  if (!iso) return "";
+  const dt = new Date(iso);
+  if (Number.isNaN(dt.getTime())) return "";
+  return dt.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+}
+
+/** Build tracker series (Saved moods only) — LOCAL date math */
+function buildTrackerSeries(entries, baseDateKey, days = TRACKER_DAYS) {
+  const list = [];
+  const base = dateFromKeyLocal(baseDateKey);
+
+  for (let i = 0; i < days; i++) {
+    const x = new Date(base);
+    x.setDate(base.getDate() - ((days - 1) - i));
+
+    const key = keyFromDateLocal(x);
+    const label = `${x.getMonth() + 1}/${x.getDate()}`;
+    const e = getEntry(entries, key);
+
+    const mood = e.daySubmitted ? (e.mood || null) : null;
+    list.push({ key, label, mood });
+  }
+  return list;
+}
+
+/** Wellness tips based on Saved Mood/Reason/Notes (NOT PHQ requirement) */
 function tipsForEntry(entry) {
   const isSubmitted = !!entry?.daySubmitted;
   if (!isSubmitted) {
@@ -119,7 +201,7 @@ function tipsForEntry(entry) {
       personalized: false,
       label: "Wellness Tips",
       tips: [
-        "Save today’s Mood, Reason, and Notes to unlock personalized tips.",
+        "Save today’s Mood + Reason to tailor your tips.",
         "Quick reset: slow inhale (4s), slower exhale (6–8s) × 5 breaths.",
         "Do one small win: 5–10 minutes only.",
       ],
@@ -137,14 +219,14 @@ function tipsForEntry(entry) {
   if (low) {
     core = [
       "Grounding: name 5 things you see, 4 you feel, 3 you hear.",
-      "Body reset: drink water + stretch shoulders/neck for 2 minutes.",
+      "Body reset: water + stretch shoulders/neck for 2 minutes.",
       "Pick ONE task only (smallest next step).",
     ];
   } else if (high) {
     core = [
       "Protect your good day: keep sleep + meals consistent.",
       "Share the energy: message one friend / family member.",
-      "Do a 5-minute tidy or walk to keep momentum.",
+      "5-minute tidy or walk to keep momentum.",
     ];
   } else {
     core = [
@@ -159,7 +241,7 @@ function tipsForEntry(entry) {
   if (reason === "Family") addOns.push("Family tip: set a small boundary (ex: “I need 10 minutes”).");
   if (reason === "Friends") addOns.push("Friends tip: clarify one thing with a short message instead of overthinking.");
   if (reason === "Health") addOns.push("Health tip: gentle routine (water, light food, rest).");
-  if (reason === "Other") addOns.push("Try naming the main trigger in 1 short sentence—clarity lowers stress.");
+  if (reason === "Other") addOns.push("Try naming the trigger in 1 short sentence—clarity lowers stress.");
 
   const noteAdd = notes ? ["Your note matters—re-read it and highlight one thing you did well."] : [];
 
@@ -184,6 +266,7 @@ function IconChevron({ className = "", down = true }) {
     </svg>
   );
 }
+
 function IconCalendar({ className = "" }) {
   return (
     <svg viewBox="0 0 24 24" className={className} fill="none" aria-hidden="true">
@@ -198,6 +281,7 @@ function IconCalendar({ className = "" }) {
     </svg>
   );
 }
+
 function IconWellness({ className = "" }) {
   return (
     <svg viewBox="0 0 24 24" className={className} fill="none" aria-hidden="true">
@@ -217,6 +301,7 @@ function IconWellness({ className = "" }) {
     </svg>
   );
 }
+
 function IconBolt({ className = "" }) {
   return (
     <svg viewBox="0 0 24 24" className={className} fill="none" aria-hidden="true">
@@ -230,34 +315,151 @@ function IconBolt({ className = "" }) {
     </svg>
   );
 }
+
 function IconCheck({ className = "" }) {
   return (
     <svg viewBox="0 0 24 24" className={className} fill="none" aria-hidden="true">
-      <path
-        d="M20 6 9 17l-5-5"
-        stroke="currentColor"
-        strokeWidth="2.4"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
+      <path d="M20 6 9 17l-5-5" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
 
+/** Step icons */
+function IconMood({ className = "" }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} fill="none" aria-hidden="true">
+      <path d="M12 21a9 9 0 1 0-9-9 9 9 0 0 0 9 9Z" stroke="currentColor" strokeWidth="2" />
+      <path d="M8.5 10.2h0.01M15.5 10.2h0.01" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+      <path d="M8.3 14.2c1.1 1.6 2.7 2.5 3.7 2.5s2.6-.9 3.7-2.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function IconReason({ className = "" }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} fill="none" aria-hidden="true">
+      <path d="M7 18l-3 3V6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H7Z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+      <path d="M8 9h8M8 12h6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function IconNotes({ className = "" }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} fill="none" aria-hidden="true">
+      <path d="M7 3h7l3 3v15a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+      <path d="M14 3v4a1 1 0 0 0 1 1h4" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+      <path d="M8 12h8M8 16h6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+/** Tiny animated SVG mascot (no assets) */
+function StepMascot({ show }) {
+  const reduce = useReducedMotion();
+  if (!show) return null;
+
+  return (
+    <motion.div className="absolute -top-2 -right-2" initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }}>
+      <motion.svg
+        width="22"
+        height="22"
+        viewBox="0 0 24 24"
+        fill="none"
+        aria-hidden="true"
+        animate={reduce ? {} : { y: [0, -4, 0], rotate: [0, -8, 8, 0] }}
+        transition={reduce ? {} : { duration: 1.1, repeat: Infinity, ease: "easeInOut" }}
+      >
+        <path
+          d="M12 2l1.4 4.1L18 7.5l-4.6 1.4L12 13l-1.4-4.1L6 7.5l4.6-1.4L12 2Z"
+          stroke="rgba(20,20,20,0.9)"
+          strokeWidth="1.8"
+          strokeLinejoin="round"
+        />
+        <circle cx="19" cy="5" r="1.2" fill="rgba(185,255,102,0.95)" stroke="rgba(0,0,0,0.35)" />
+      </motion.svg>
+    </motion.div>
+  );
+}
+
+/** Mobile step button */
+function MobileStepButton({ label, active, done, disabled, onClick, icon: Icon }) {
+  const wrapClass = done
+    ? "bg-[#B9FF66]/70 border-black/20 text-black"
+    : active
+    ? "bg-black/5 border-black/30 text-black"
+    : "bg-white border-black/10 text-black/50";
+
+  const bubbleClass = done
+    ? "bg-black text-white"
+    : active
+    ? "bg-[#B9FF66]/55 text-[#141414]"
+    : "bg-black/10 text-black/55";
+
+  const labelClass = done ? "text-black" : active ? "text-black" : "text-black/55";
+
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      className={[
+        "relative min-w-0",
+        "flex flex-col items-center justify-center",
+        "rounded-xl border px-2 py-2",
+        "transition",
+        disabled ? "opacity-60 cursor-not-allowed" : "hover:bg-black/[0.03]",
+        wrapClass,
+      ].join(" ")}
+      aria-current={active ? "step" : undefined}
+      aria-disabled={disabled ? "true" : undefined}
+    >
+      <StepMascot show={active && !done && !disabled} />
+
+      <div
+        className={[
+          "mb-1 rounded-full flex items-center justify-center",
+          "h-7 w-7 sm:h-8 sm:w-8",
+          bubbleClass,
+        ].join(" ")}
+        style={{ boxShadow: active && !done ? "0 10px 22px rgba(185,255,102,0.22)" : "none" }}
+      >
+        {done ? <IconCheck className="h-4 w-4" /> : <Icon className="h-4 w-4 sm:h-[18px] sm:w-[18px]" />}
+      </div>
+
+      {/* ✅ ONLY TEXT INCREASED HERE */}
+      <div
+        className={[
+          "w-full text-center font-extrabold leading-tight truncate",
+          "text-[clamp(13px,3vw,15px)]", // was ~10.5px–11px
+          labelClass,
+        ].join(" ")}
+      >
+        {label}
+      </div>
+    </button>
+  );
+}
+
+
 /** =========================
-    CUTER EMOTE
+    3D-ish EMOTE (SVG)
 ========================= */
 function MoodEmote({ mood = "Okay", size = 28, className = "" }) {
   const key = (mood || "Okay").toLowerCase();
+  const gid = useId();
+  const gradFace = `face-${gid}`;
+  const gradHi = `hi-${gid}`;
+  const glow = `glow-${gid}`;
 
   const palette =
     key === "angry"
-      ? { fill: "#FF6A3D", stroke: "#D74322", blush: "#FFB7A3" }
+      ? { a: "#FF5C3A", b: "#FFB39E", stroke: "#D74322" }
       : key === "sad" || key === "fear" || key === "disgust"
-      ? { fill: "#FFE28A", stroke: "#E2A700", blush: "#FFD0A6" }
+      ? { a: "#FFD470", b: "#FFF1C2", stroke: "#D5A200" }
       : key === "stressed"
-      ? { fill: "#FFD34D", stroke: "#E2A700", blush: "#FFD0A6" }
-      : { fill: "#FFD34D", stroke: "#E2A700", blush: "#FFD0A6" };
+      ? { a: "#FFCC3A", b: "#FFF0B8", stroke: "#D5A200" }
+      : { a: "#FFD34D", b: "#FFF4C8", stroke: "#D5A200" };
 
   const eyeMode = key === "calm" ? "closed" : key === "fear" || key === "surprise" ? "wide" : "normal";
   const tear = key === "sad";
@@ -298,15 +500,7 @@ function MoodEmote({ mood = "Okay", size = 28, className = "" }) {
 
   const Eye = ({ x, y, mode }) => {
     if (mode === "closed") {
-      return (
-        <path
-          d={`M${x - 2.2} ${y} Q ${x} ${y + 1.6} ${x + 2.2} ${y}`}
-          stroke="#171717"
-          strokeWidth="1.6"
-          strokeLinecap="round"
-          fill="none"
-        />
-      );
+      return <path d={`M${x - 2.2} ${y} Q ${x} ${y + 1.6} ${x + 2.2} ${y}`} stroke="#171717" strokeWidth="1.6" strokeLinecap="round" fill="none" />;
     }
     if (mode === "wide") {
       return (
@@ -327,139 +521,57 @@ function MoodEmote({ mood = "Okay", size = 28, className = "" }) {
 
   const Mouth = ({ kind }) => {
     if (kind === "o") return <circle cx="12" cy="16.2" r="1.6" fill="#171717" opacity="0.9" />;
-    if (kind === "tiny")
-      return (
-        <path
-          d="M10.6 16.1c1.0-0.7 1.8-0.7 2.8 0"
-          stroke="#171717"
-          strokeWidth="1.7"
-          strokeLinecap="round"
-          fill="none"
-        />
-      );
-    if (kind === "smile")
-      return (
-        <path
-          d="M8.2 15.0c1.9 2.5 5.7 2.5 7.6 0"
-          stroke="#171717"
-          strokeWidth="1.7"
-          strokeLinecap="round"
-          fill="none"
-        />
-      );
-    if (kind === "softsmile")
-      return (
-        <path
-          d="M8.7 15.5c1.6 1.2 5.0 1.2 6.6 0"
-          stroke="#171717"
-          strokeWidth="1.7"
-          strokeLinecap="round"
-          fill="none"
-        />
-      );
-    if (kind === "flat")
-      return <path d="M8.8 16.0h6.4" stroke="#171717" strokeWidth="1.7" strokeLinecap="round" fill="none" />;
-    if (kind === "zig")
-      return (
-        <path
-          d="M8.3 16.2c1.2-1.1 2.2 1.1 3.2 0 1.0-1.1 2.2-1.1 3.2 0"
-          stroke="#171717"
-          strokeWidth="1.7"
-          strokeLinecap="round"
-          fill="none"
-        />
-      );
-    if (kind === "frown")
-      return (
-        <path
-          d="M8.2 17.0c1.9-2.4 5.7-2.4 7.6 0"
-          stroke="#171717"
-          strokeWidth="1.7"
-          strokeLinecap="round"
-          fill="none"
-        />
-      );
-    if (kind === "angry")
-      return (
-        <path
-          d="M8.0 16.7c2.5-1.4 5.5-1.4 8.0 0"
-          stroke="#171717"
-          strokeWidth="1.7"
-          strokeLinecap="round"
-          fill="none"
-        />
-      );
-    if (kind === "tilt")
-      return (
-        <path
-          d="M9.0 16.4c1.4 1.1 2.4-1.1 3.6 0 1.2 1.1 2.2-1.1 3.4 0"
-          stroke="#171717"
-          strokeWidth="1.7"
-          strokeLinecap="round"
-          fill="none"
-        />
-      );
+    if (kind === "tiny") return <path d="M10.6 16.1c1.0-0.7 1.8-0.7 2.8 0" stroke="#171717" strokeWidth="1.7" strokeLinecap="round" fill="none" />;
+    if (kind === "smile") return <path d="M8.2 15.0c1.9 2.5 5.7 2.5 7.6 0" stroke="#171717" strokeWidth="1.7" strokeLinecap="round" fill="none" />;
+    if (kind === "softsmile") return <path d="M8.7 15.5c1.6 1.2 5.0 1.2 6.6 0" stroke="#171717" strokeWidth="1.7" strokeLinecap="round" fill="none" />;
+    if (kind === "flat") return <path d="M8.8 16.0h6.4" stroke="#171717" strokeWidth="1.7" strokeLinecap="round" fill="none" />;
+    if (kind === "zig") return <path d="M8.3 16.2c1.2-1.1 2.2 1.1 3.2 0 1.0-1.1 2.2-1.1 3.2 0" stroke="#171717" strokeWidth="1.7" strokeLinecap="round" fill="none" />;
+    if (kind === "frown") return <path d="M8.2 17.0c1.9-2.4 5.7-2.4 7.6 0" stroke="#171717" strokeWidth="1.7" strokeLinecap="round" fill="none" />;
+    if (kind === "angry") return <path d="M8.0 16.7c2.5-1.4 5.5-1.4 8.0 0" stroke="#171717" strokeWidth="1.7" strokeLinecap="round" fill="none" />;
+    if (kind === "tilt") return <path d="M9.0 16.4c1.4 1.1 2.4-1.1 3.6 0 1.2 1.1 2.2-1.1 3.4 0" stroke="#171717" strokeWidth="1.7" strokeLinecap="round" fill="none" />;
     return null;
   };
 
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" className={className} aria-hidden="true">
-      <circle cx="12" cy="12" r="9.3" fill={palette.fill} stroke={palette.stroke} strokeWidth="1.4" />
-      <circle cx="7.7" cy="14.2" r="1.2" fill={palette.blush} opacity="0.55" />
-      <circle cx="16.3" cy="14.2" r="1.2" fill={palette.blush} opacity="0.55" />
+      <defs>
+        <radialGradient id={gradFace} cx="30%" cy="25%" r="75%">
+          <stop offset="0%" stopColor={palette.b} />
+          <stop offset="55%" stopColor={palette.a} />
+          <stop offset="100%" stopColor={palette.a} />
+        </radialGradient>
+        <radialGradient id={gradHi} cx="25%" cy="20%" r="55%">
+          <stop offset="0%" stopColor="#FFFFFF" stopOpacity="0.75" />
+          <stop offset="65%" stopColor="#FFFFFF" stopOpacity="0.0" />
+        </radialGradient>
+        <filter id={glow} x="-40%" y="-40%" width="180%" height="180%">
+          <feDropShadow dx="0" dy="1.6" stdDeviation="1.2" floodColor="rgba(0,0,0,0.28)" />
+        </filter>
+      </defs>
+
+      <g filter={`url(#${glow})`}>
+        <circle cx="12" cy="12" r="9.3" fill={`url(#${gradFace})`} stroke={palette.stroke} strokeWidth="1.4" />
+        <circle cx="9.2" cy="14.4" r="1.3" fill="#FFB7A3" opacity="0.30" />
+        <circle cx="14.8" cy="14.4" r="1.3" fill="#FFB7A3" opacity="0.30" />
+        <circle cx="10.3" cy="7.6" r="7.1" fill={`url(#${gradHi})`} opacity="0.55" />
+      </g>
+
       <path d={brows[0]} stroke="#171717" strokeWidth="1.6" strokeLinecap="round" fill="none" />
       <path d={brows[1]} stroke="#171717" strokeWidth="1.6" strokeLinecap="round" fill="none" />
       <Eye x={9.2} y={12} mode={eyeMode} />
       <Eye x={14.8} y={12} mode={eyeMode} />
       <Mouth kind={mouth.kind} />
-      {tear && (
-        <path
-          d="M7.1 14.2c1.0 1.4 1.0 2.5 0 3.7-1.0-1.2-1.0-2.3 0-3.7Z"
-          fill="#4DA3FF"
-          stroke="#2B7FE6"
-          strokeWidth="0.7"
-          strokeLinejoin="round"
-        />
-      )}
+
+      {tear && <path d="M7.1 14.2c1.0 1.4 1.0 2.5 0 3.7-1.0-1.2-1.0-2.3 0-3.7Z" fill="#4DA3FF" stroke="#2B7FE6" strokeWidth="0.7" strokeLinejoin="round" />}
     </svg>
   );
 }
 
-/** Doodles */
+/** Doodles (kept minimal + light) */
 function DoodleSpark({ className = "" }) {
   return (
     <svg viewBox="0 0 120 120" className={className} fill="none" aria-hidden="true">
-      <path
-        d="M60 10l7 18 18 7-18 7-7 18-7-18-18-7 18-7 7-18Z"
-        stroke="currentColor"
-        strokeWidth="3"
-        strokeLinejoin="round"
-      />
-      <path d="M20 70c12-10 24-10 36 0s24 10 36 0" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
-    </svg>
-  );
-}
-function DoodleSquiggle({ className = "" }) {
-  return (
-    <svg viewBox="0 0 140 60" className={className} fill="none" aria-hidden="true">
-      <path
-        d="M5 35c12-18 22 18 34 0s22 18 34 0 22 18 34 0 22 18 34 0"
-        stroke="currentColor"
-        strokeWidth="3"
-        strokeLinecap="round"
-      />
-    </svg>
-  );
-}
-function DoodleHeart({ className = "" }) {
-  return (
-    <svg viewBox="0 0 64 64" className={className} fill="none" aria-hidden="true">
-      <path
-        d="M32 54S10 40 10 24c0-7 5-12 12-12 6 0 9 3 10 6 1-3 4-6 10-6 7 0 12 5 12 12 0 16-22 30-22 30Z"
-        stroke="currentColor"
-        strokeWidth="3"
-        strokeLinejoin="round"
-      />
+      <path d="M60 10l7 18 18 7-18 7-7 18-7-18-18-7 18-7 7-18Z" stroke="currentColor" strokeWidth="3" strokeLinejoin="round" />
     </svg>
   );
 }
@@ -477,27 +589,32 @@ function Pill({ children, tone = "light" }) {
 
   return (
     <span
-      className="inline-flex items-center rounded-full border px-3 py-1 text-[11px] font-extrabold"
+      className="inline-flex items-center rounded-full border px-3 py-1 text-[12px] font-extrabold"
       style={{ background: styles.background, borderColor: styles.border, color: styles.color }}
     >
       {children}
     </span>
   );
 }
+
+
 function Card({ title, right, children, className = "" }) {
   return (
-    <div
-      className={`rounded-[26px] border border-black/10 bg-white/80 backdrop-blur-xl shadow-[0_18px_60px_rgba(0,0,0,0.08)] overflow-hidden ${className}`}
-    >
-      <div className="px-5 py-4 bg-black/[0.025] flex items-center justify-between">
-        <div className="text-[14px] font-extrabold text-[#141414] flex items-center gap-2">{title}</div>
+    <div className={`rounded-[26px] border border-black/10 bg-white/85 backdrop-blur-xl shadow-[0_18px_60px_rgba(0,0,0,0.08)] overflow-hidden ${className}`}>
+      <div className="px-5 py-4 bg-black/[0.02] flex items-center justify-between gap-3">
+        <div
+          className="text-[16px] sm:text-[17px] lg:text-[18px] font-extrabold text-[#141414] flex items-center gap-2"
+          style={{ fontFamily: "Lora, serif" }}
+        >
+          {title}
+        </div>
         {right}
       </div>
-
-      <div className="p-5">{children}</div>
+      <div className="p-5 lg:p-6">{children}</div>
     </div>
   );
 }
+
 function Chip({ active, children, onClick, left, disabled }) {
   return (
     <motion.button
@@ -507,7 +624,7 @@ function Chip({ active, children, onClick, left, disabled }) {
       whileTap={{ scale: disabled ? 1 : 0.97 }}
       whileHover={disabled ? {} : { y: -1 }}
       className="
-        px-3.5 py-2.5 rounded-full border text-[12px] font-extrabold transition
+        px-3.5 py-2.5 rounded-full border text-[13px] lg:text-[14px] font-extrabold transition
         inline-flex items-center gap-2
         disabled:opacity-50 disabled:cursor-not-allowed
         focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/30 focus-visible:ring-offset-2
@@ -516,132 +633,17 @@ function Chip({ active, children, onClick, left, disabled }) {
         borderColor: active ? "rgba(0,0,0,0.30)" : "rgba(0,0,0,0.14)",
         background: active
           ? "linear-gradient(180deg, rgba(185,255,102,0.60), rgba(185,255,102,0.30))"
-          : "rgba(255,255,255,0.85)",
+          : "rgba(255,255,255,0.90)",
         color: CHECKIN_DARK,
         boxShadow: active ? "0 14px 40px rgba(0,0,0,0.10)" : "0 8px 24px rgba(0,0,0,0.05)",
       }}
+      aria-pressed={active ? "true" : "false"}
     >
       {left}
       {children}
     </motion.button>
   );
 }
-
-/** =========================
-    DUOLINGO-STYLE: Progress + Stepper
-========================= */
-function ProgressBar({ value = 0, labelLeft, labelRight }) {
-  const reduce = useReducedMotion();
-  const v = Math.max(0, Math.min(100, value));
-
-  return (
-    <div className="w-full">
-      <div className="flex items-center justify-between text-[11px] font-extrabold text-black/55">
-        <span className="inline-flex items-center gap-1">
-          <IconBolt className="h-4 w-4 text-black/45" />
-          {labelLeft}
-        </span>
-        <span>{labelRight}</span>
-      </div>
-
-      <div className="mt-2 h-3 rounded-full bg-black/10 overflow-hidden border border-black/10">
-        <motion.div
-          className="h-full rounded-full"
-          style={{
-            background:
-              "linear-gradient(180deg, rgba(185,255,102,1), rgba(185,255,102,0.70))",
-          }}
-          initial={{ width: 0 }}
-          animate={{ width: `${v}%` }}
-          transition={reduce ? { duration: 0 } : { type: "spring", stiffness: 220, damping: 26 }}
-        />
-      </div>
-    </div>
-  );
-}
-
-function StepDot({ done, active, label, index }) {
-  return (
-    <div className="flex items-center gap-2">
-      <div
-        className="h-7 w-7 rounded-full border flex items-center justify-center"
-        style={{
-          background: done
-            ? CHECKIN_GREEN
-            : active
-            ? "rgba(0,0,0,0.07)"
-            : "rgba(255,255,255,0.85)",
-          borderColor: done
-            ? "rgba(0,0,0,0.18)"
-            : active
-            ? "rgba(0,0,0,0.22)"
-            : "rgba(0,0,0,0.12)",
-          boxShadow: done ? "0 14px 40px rgba(185,255,102,0.30)" : active ? "0 10px 26px rgba(0,0,0,0.06)" : "none",
-        }}
-      >
-        {done ? (
-          <IconCheck className="h-4 w-4 text-black" />
-        ) : (
-          <span className="text-[11px] font-black text-black/60">{index + 1}</span>
-        )}
-      </div>
-
-      <div
-        className="text-[12px] font-extrabold"
-        style={{ color: active ? "#141414" : "rgba(0,0,0,0.45)" }}
-      >
-        {label}
-      </div>
-    </div>
-  );
-}
-
-function Stepper({ step, dayLocked, onJump }) {
-  const steps = [
-    { key: "mood", label: "Mood" },
-    { key: "reason", label: "Reason" },
-    { key: "notes", label: "Notes" },
-    { key: "save", label: "Finish" },
-  ];
-
-  return (
-    <div className="flex flex-wrap items-center gap-3">
-      {steps.map((s, idx) => {
-        const isActive = step === s.key;
-
-        const isDone =
-          dayLocked ||
-          (s.key === "mood"
-            ? ["reason", "notes", "save"].includes(step)
-            : s.key === "reason"
-            ? ["notes", "save"].includes(step)
-            : s.key === "notes"
-            ? ["save"].includes(step)
-            : false);
-
-        return (
-          <button
-            key={s.key}
-            type="button"
-            onClick={() => onJump?.(s.key)}
-            disabled={dayLocked}
-            className="
-              group flex items-center gap-3 rounded-full px-3 py-2
-              border border-black/10 bg-white/70 hover:bg-white transition
-              disabled:opacity-60 disabled:cursor-not-allowed
-            "
-          >
-            <StepDot done={isDone} active={isActive} label={s.label} index={idx} />
-            {idx !== steps.length - 1 && (
-              <span className="hidden sm:inline text-black/20 font-black">→</span>
-            )}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
 
 
 /** Mood mapping for tracker */
@@ -678,16 +680,19 @@ function buildSmoothPath(pts) {
   return d.join(" ");
 }
 
-function MoodTracker({ series, title = "Mood Tracker", subtitle = "Saved mood for the last 14 days.", compact = false }) {
-  const w = 980;
+function MoodTracker({ series, todayKey, title = "Mood Tracker", subtitle = "Saved mood for the last 7 days.", compact = false }) {
+  const clamp = (n, min, max) => Math.min(max, Math.max(min, n));
+
+  const w = 860;
   const h = compact ? 128 : 160;
-  const padX = 36;
-  const padYTop = 32;
+  const padX = 34;
+  const padYTop = 30;
   const padYBottom = 30;
 
   const shouldReduceMotion = useReducedMotion();
   const gid = useId();
   const gradId = `g1-${gid}`;
+  const bandId = `bands-${gid}`;
 
   const days = series.length;
   const step = days > 1 ? (w - padX * 2) / (days - 1) : 0;
@@ -700,69 +705,47 @@ function MoodTracker({ series, title = "Mood Tracker", subtitle = "Saved mood fo
   const points = useMemo(() => {
     return series.map((d, i) => {
       const lvl = moodToLevel(d.mood);
-      return {
-        ...d,
-        i,
-        x: padX + i * step,
-        y: lvl === null ? null : yForLevel(lvl),
-      };
+      return { ...d, i, x: padX + i * step, y: lvl === null ? null : yForLevel(lvl) };
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [series, step]);
 
   const path = useMemo(() => buildSmoothPath(points), [points]);
   const lineTransition = shouldReduceMotion ? { duration: 0 } : { duration: 0.9, ease: "easeOut" };
+  const hasAny = useMemo(() => points.some((p) => p.y !== null), [points]);
 
   return (
     <div className="rounded-[24px] border border-black/10 bg-white shadow-[0_14px_40px_rgba(0,0,0,0.07)] overflow-hidden">
       <div className="px-5 pt-4 pb-2">
-        <div className="text-[15px] font-extrabold text-[#141414] flex items-center gap-2">
+        <div className="text-[15px] lg:text-[16px] font-extrabold text-[#141414] flex items-center gap-2" style={{ fontFamily: "Lora, serif" }}>
           {title}
-          <span className="text-[11px] font-extrabold text-black/35">• last 14 days</span>
+          <span className="text-[11px] font-extrabold text-black/35"></span>
         </div>
         {!compact && <div className="text-[12px] text-black/45 mt-1">{subtitle}</div>}
       </div>
 
       <div className="px-3 pb-4">
-        <div className="w-full overflow-x-auto">
-          <svg viewBox={`0 0 ${w} ${h}`} className="w-full min-w-[720px]">
+        <div className="w-full overflow-x-auto md:overflow-visible">
+          <svg viewBox={`0 0 ${w} ${h}`} className="w-full min-w-[520px] md:min-w-0">
             <defs>
               <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="rgba(185,255,102,0.30)" />
+                <stop offset="0%" stopColor="rgba(185,255,102,0.26)" />
                 <stop offset="100%" stopColor="rgba(185,255,102,0.00)" />
+              </linearGradient>
+              <linearGradient id={bandId} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="rgba(0,0,0,0.03)" />
+                <stop offset="33%" stopColor="rgba(0,0,0,0.01)" />
+                <stop offset="66%" stopColor="rgba(0,0,0,0.02)" />
+                <stop offset="100%" stopColor="rgba(0,0,0,0.03)" />
               </linearGradient>
             </defs>
 
-            <rect
-              x={padX}
-              y={padYTop}
-              width={w - padX * 2}
-              height={h - padYTop - padYBottom}
-              rx="14"
-              fill={`url(#${gradId})`}
-              opacity="0.55"
-            />
+            <rect x={padX} y={padYTop} width={w - padX * 2} height={h - padYTop - padYBottom} rx="14" fill={`url(#${bandId})`} opacity="0.9" />
+            <rect x={padX} y={padYTop} width={w - padX * 2} height={h - padYTop - padYBottom} rx="14" fill={`url(#${gradId})`} opacity="0.50" />
 
-            <line
-              x1={padX}
-              y1={h - padYBottom}
-              x2={w - padX}
-              y2={h - padYBottom}
-              stroke="rgba(0,0,0,0.10)"
-              strokeWidth="2"
-            />
+            <line x1={padX} y1={h - padYBottom} x2={w - padX} y2={h - padYBottom} stroke="rgba(0,0,0,0.10)" strokeWidth="2" />
 
             {points.map((p) => (
-              <line
-                key={`grid-${p.i}`}
-                x1={p.x}
-                y1={h - padYBottom}
-                x2={p.x}
-                y2={padYTop + 10}
-                stroke="rgba(0,0,0,0.06)"
-                strokeWidth="2"
-                strokeLinecap="round"
-              />
+              <line key={`grid-${p.i}`} x1={p.x} y1={h - padYBottom} x2={p.x} y2={padYTop + 10} stroke="rgba(0,0,0,0.06)" strokeWidth="2" strokeLinecap="round" />
             ))}
 
             {path && (
@@ -790,51 +773,82 @@ function MoodTracker({ series, title = "Mood Tracker", subtitle = "Saved mood fo
               </>
             )}
 
-            {points.map((p) => (
-              <g key={p.key}>
-                {p.y !== null ? (
-                  <>
-                    <motion.circle
-                      cx={p.x}
-                      cy={p.y}
-                      r="8"
-                      fill="rgba(185,255,102,0.35)"
-                      initial={{ scale: shouldReduceMotion ? 1 : 0 }}
-                      animate={{ scale: 1 }}
-                      transition={{ duration: shouldReduceMotion ? 0 : 0.25 }}
-                    />
-                    <motion.circle
-                      cx={p.x}
-                      cy={p.y}
-                      r="4.5"
-                      fill="rgba(20,20,20,0.9)"
-                      initial={{ scale: shouldReduceMotion ? 1 : 0 }}
-                      animate={{ scale: 1 }}
-                      transition={{ duration: shouldReduceMotion ? 0 : 0.25 }}
-                    />
-                    <g transform={`translate(${p.x - 14}, ${p.y - 30})`}>
-                      <MoodEmote mood={p.mood} size={28} />
-                    </g>
-                  </>
-                ) : (
-                  <circle cx={p.x} cy={h - padYBottom} r="3.5" fill="rgba(0,0,0,0.18)" />
-                )}
+            {points.map((p) => {
+              const isToday = todayKey && p.key === todayKey;
+              return (
+                <g key={p.key}>
+                  {p.y !== null ? (
+                    <>
+                      <motion.circle
+                        cx={p.x}
+                        cy={p.y}
+                        r={isToday ? 12 : 8}
+                        fill={isToday ? "rgba(185,255,102,0.30)" : "rgba(185,255,102,0.22)"}
+                        initial={{ scale: shouldReduceMotion ? 1 : 0 }}
+                        animate={{ scale: 1 }}
+                        transition={{ duration: shouldReduceMotion ? 0 : 0.25 }}
+                      />
+                      <motion.circle
+                        cx={p.x}
+                        cy={p.y}
+                        r={isToday ? 6 : 4.5}
+                        fill="rgba(20,20,20,0.9)"
+                        initial={{ scale: shouldReduceMotion ? 1 : 0 }}
+                        animate={{ scale: 1 }}
+                        transition={{ duration: shouldReduceMotion ? 0 : 0.25 }}
+                      />
 
-                {p.label && (
-                  <text
-                    x={p.x}
-                    y={h - 9}
-                    textAnchor="middle"
-                    fontSize="12"
-                    fill="rgba(0,0,0,0.55)"
-                    fontWeight="800"
-                    className={p.i % 2 === 1 ? "hidden sm:block" : ""}
-                  >
-                    {p.label}
-                  </text>
-                )}
+                      <g transform={`translate(${p.x - 14}, ${p.y - 32})`}>
+                        <MoodEmote mood={p.mood} size={28} />
+                      </g>
+
+                      {/* ✅ Today badge now follows the point (no more floating top-right) */}
+                      {isToday && (() => {
+  const badgeW = 46;
+  const badgeH = 18;
+
+  // Calculate horizontal position to center it based on the mood point (p.x)
+  const rawX = p.x - badgeW / 2;
+  const tx = clamp(rawX, 6, w - badgeW - 6);
+
+  // Move the "Today" badge above the mood emotes (Happy/Calm), making sure it's not overlapping
+  const ty = p.y - 70;  // Adjusted position to place the "Today" badge above the mood emotes
+
+  // Return the "Today" badge at the adjusted position
+  
+                      })()}
+                    </>
+                  ) : (
+                    <circle cx={p.x} cy={h - padYBottom} r="3.5" fill="rgba(0,0,0,0.18)" />
+                  )}
+
+                  {p.label && (
+                    <text
+                      x={p.x}
+                      y={h - 9}
+                      textAnchor="middle"
+                      fontSize="12"
+                      fill="rgba(0,0,0,0.55)"
+                      fontWeight="800"
+                      className={p.i % 2 === 1 ? "hidden sm:block" : ""}
+                    >
+                      {p.label}
+                    </text>
+                  )}
+                </g>
+              );
+            })}
+
+            {!hasAny && (
+              <g>
+                <text x={w / 2} y={h / 2} textAnchor="middle" fontSize="14" fill="rgba(0,0,0,0.55)" fontWeight="800">
+                  No saved moods yet
+                </text>
+                <text x={w / 2} y={h / 2 + 18} textAnchor="middle" fontSize="12" fill="rgba(0,0,0,0.45)" fontWeight="700">
+                  Pick a mood and press Save to start tracking
+                </text>
               </g>
-            ))}
+            )}
           </svg>
         </div>
       </div>
@@ -842,332 +856,450 @@ function MoodTracker({ series, title = "Mood Tracker", subtitle = "Saved mood fo
   );
 }
 
-      /** History */
-      function HistoryModal({
-        open,
-        onClose,
-        items,
-        entries,
-        trackerSeriesForDate,
-        initialSelectedDate = null,
-      }) {
-        const [page, setPage] = useState("list");
-        const [selectedDate, setSelectedDate] = useState(null);
+/** =========================
+    History Modal
+========================= */
+/** =========================
+    History Modal (Responsive + Footer Actions)
+========================= */
+function HistoryModal({ open, onClose, items, entries, trackerSeriesForDate, todayKey }) {
+  const [page, setPage] = useState("list");
+  const [selectedDate, setSelectedDate] = useState(null);
 
-        const listScrollRef = useRef(null);
-        const detailScrollRef = useRef(null);
+  const listScrollRef = useRef(null);
+  const detailScrollRef = useRef(null);
 
-        const scrollListTop = () => {
-          requestAnimationFrame(() => {
-            if (listScrollRef.current) listScrollRef.current.scrollTop = 0;
-          });
-        };
-        const scrollDetailTop = () => {
-          requestAnimationFrame(() => {
-            if (detailScrollRef.current) detailScrollRef.current.scrollTop = 0;
-          });
-        };
+  useEffect(() => {
+    if (!open) return;
+    setPage("list");
+    setSelectedDate(null);
+    requestAnimationFrame(() => {
+      if (listScrollRef.current) listScrollRef.current.scrollTop = 0;
+    });
+  }, [open]);
 
-        // open behavior
-        useEffect(() => {
-          if (!open) return;
+  const detailEntry = useMemo(() => (selectedDate ? getEntry(entries, selectedDate) : null), [entries, selectedDate]);
+  const detailTracker = useMemo(() => (selectedDate ? trackerSeriesForDate?.(selectedDate) || [] : []), [selectedDate, trackerSeriesForDate]);
 
-          const first = items?.[0]?.date || null;
-          const initDate = initialSelectedDate || first;
+  function goDetail(date) {
+    setSelectedDate(date);
+    setPage("detail");
+    requestAnimationFrame(() => {
+      if (detailScrollRef.current) detailScrollRef.current.scrollTop = 0;
+    });
+  }
 
-          setSelectedDate(initDate);
+  function goList() {
+    setPage("list");
+    requestAnimationFrame(() => {
+      if (listScrollRef.current) listScrollRef.current.scrollTop = 0;
+    });
+  }
 
-          if (initialSelectedDate) {
-            setPage("detail");
-            scrollDetailTop();
-          } else {
-            setPage("list");
-            scrollListTop();
-          }
-        }, [open, items, initialSelectedDate]);
+  return (
+    <AnimatePresence>
+      {open && (
+        <motion.div
+          className="fixed inset-0 z-[999] flex items-center justify-center px-2 sm:px-4"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+        >
+          <div className="absolute inset-0 bg-black/40" onClick={onClose} />
 
-        useEffect(() => {
-          if (!open) return;
-          const onKey = (e) => e.key === "Escape" && onClose();
-          window.addEventListener("keydown", onKey);
-          return () => window.removeEventListener("keydown", onKey);
-        }, [open, onClose]);
-
-        const detailEntry = useMemo(
-          () => (selectedDate ? getEntry(entries, selectedDate) : null),
-          [entries, selectedDate]
-        );
-
-        const detailTracker = useMemo(
-          () => (selectedDate ? trackerSeriesForDate?.(selectedDate) || [] : []),
-          [selectedDate, trackerSeriesForDate]
-        );
-
-        function goDetail(date) {
-          setSelectedDate(date);
-          setPage("detail");
-          scrollDetailTop();
-        }
-
-        function goList() {
-          setPage("list");
-          scrollListTop();
-        }
-
-      return (
-      <AnimatePresence>
-          {open && (
-           <motion.div
-             className="fixed inset-0 z-[999] flex items-center justify-center px-4"
-             initial={{ opacity: 0 }}
-             animate={{ opacity: 1 }}
-             exit={{ opacity: 0 }}
-              >
-            <div className="absolute inset-0 bg-black/40" onClick={onClose} />
-
-            <motion.div
-             role="dialog"
-             aria-modal="true"
-             aria-label="History"
-             initial={{ y: 18, opacity: 0, scale: 0.98 }}
-             animate={{ y: 0, opacity: 1, scale: 1 }}
-             exit={{ y: 18, opacity: 0, scale: 0.98 }}
-             transition={{ duration: 0.2 }}
-             className="relative w-full max-w-3xl rounded-[24px] border border-black/10 bg-white shadow-xl overflow-hidden"
-             >
-            {/* HEADER */}
+          <motion.div
+            role="dialog"
+            aria-modal="true"
+            aria-label="History"
+            initial={{ y: 18, opacity: 0, scale: 0.98 }}
+            animate={{ y: 0, opacity: 1, scale: 1 }}
+            exit={{ y: 18, opacity: 0, scale: 0.98 }}
+            transition={{ duration: 0.2 }}
+            className="
+              relative
+              w-[calc(100vw-12px)] sm:w-[calc(100vw-24px)]
+              max-w-3xl
+              rounded-[20px] sm:rounded-[24px]
+              border border-black/10
+              bg-white
+              shadow-xl
+              overflow-hidden
+            "
+          >
+            {/* HEADER (no buttons here) */}
             <div
-             className="p-6 flex items-start justify-between gap-3"
+              className="p-4 sm:p-6"
               style={{
-               background: `radial-gradient(900px 260px at 15% 0%, ${CHECKIN_GREEN} 0%, transparent 62%)`,
-                }}
-                >
-            <div>
-              <div className="text-[16px] font-extrabold text-[#141414]">
-              {page === "list" ? "History" : "History detail"}
-           </div>
-              <div className="text-[13px] text-black/60 mt-1">
-              {page === "list"
-              ? "Tap a date to open details."
-              : "Tap Back to return."}
+                background: `radial-gradient(900px 260px at 15% 0%, ${CHECKIN_GREEN} 0%, transparent 62%)`,
+              }}
+            >
+              <div className="text-[15px] sm:text-[16px] font-extrabold text-[#141414]" style={{ fontFamily: "Lora, serif" }}>
+                {page === "list" ? "History" : "History detail"}
+              </div>
+              <div className="mt-1 text-[12px] sm:text-[13px] text-black/60 font-semibold">
+                {page === "list" ? "Tap a date to view it." : "Review the saved entry."}
+              </div>
             </div>
-        </div>
 
-           <div className="flex items-center gap-2">
-             {page === "detail" && (
-              <button
-              type="button"
-              onClick={goList}
-              className="h-9 rounded-full border border-black/15 bg-white px-3 text-[12px] font-extrabold text-black/70 hover:bg-black/5 transition"
-              >
-              Back
-              </button>
-              )}
-              <button
-              onClick={onClose}
-              className="text-black/60 hover:text-black font-bold"
-              aria-label="Close"
-              >
-              ✕
-            </button>
-        </div>
-    </div>
-
-            {/* BODY */}
-          <div className="p-4">
-            {page === "list" ? (
-            <div className="w-full">
-            {items.length === 0 ? (
-            <div className="rounded-2xl border border-black/10 bg-black/[0.02] p-4 text-[13px] text-black/60">
-             No saved entries yet.
-            </div>
-         ) : (
-         <div
-                            ref={listScrollRef}
-                            className="max-h-[65vh] overflow-auto rounded-2xl border border-black/10"
-                          >
-                            {items.map((it, idx) => (
-                              <button
-                                key={it.date}
-                                type="button"
-                                onClick={() => goDetail(it.date)}
-                                className="w-full text-left px-4 py-3 hover:bg-black/[0.03] transition"
-                              >
-                                <div className="flex items-center justify-between gap-3">
-                                  <div className="text-[13px] font-extrabold text-[#141414]">
-                                    {it.date}
-                                  </div>
-                                  <div className="text-[12px] text-black/55 font-semibold">
-                                    {it.dayLocked ? "Saved (locked)" : "Draft"}
-                                  </div>
-                                </div>
-
-                                <div className="mt-2 flex flex-wrap items-center gap-2 text-[12px] text-black/65">
-                                  <span className="inline-flex items-center gap-2 rounded-full border px-3 py-1" style={{ borderColor: "rgba(0,0,0,0.12)" }}>
-                                    <span className="font-extrabold">Mood:</span> {it.mood || "—"}
-                                  </span>
-                                  <span className="inline-flex items-center gap-2 rounded-full border px-3 py-1" style={{ borderColor: "rgba(0,0,0,0.12)" }}>
-                                    <span className="font-extrabold">Reason:</span> {it.reason || "—"}
-                                  </span>
-                                  {it.notesPreview && (
-                                    <span className="inline-flex items-center gap-2 rounded-full border px-3 py-1" style={{ borderColor: "rgba(0,0,0,0.12)" }}>
-                                      <span className="font-extrabold">Note:</span> {it.notesPreview}
-                                    </span>
-                                  )}
-                                </div>
-
-                                <div className="mt-2 text-[12px] text-black/45 font-semibold">
-                                  Tap to view details →
-                                </div>
-
-                                {idx !== items.length - 1 && <div className="mt-3 h-px bg-black/10" />}
-                              </button>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    ) : (
-                      <div className="w-full">
-                        {!selectedDate || !detailEntry ? (
-                          <div className="rounded-2xl border border-black/10 bg-black/[0.02] p-4 text-[13px] text-black/60">
-                            No date selected.
-                          </div>
-                        ) : (
-                          <div
-                            ref={detailScrollRef}
-                            className="max-h-[65vh] overflow-auto rounded-2xl border border-black/10 bg-white"
-                          >
-                            <div className="p-4 border-b border-black/10" style={{ background: "rgba(0,0,0,0.02)" }}>
-                              <div className="flex items-center justify-between gap-3">
-                                <div>
-                                  <div className="text-[13px] font-extrabold text-[#141414]">{selectedDate}</div>
-                                  <div className="text-[12px] text-black/55 font-semibold mt-1">
-                                    {detailEntry.daySubmitted ? "Saved (locked)" : "Draft"}
-                                  </div>
-                                </div>
-
-                                <div
-                                  className="h-9 rounded-full px-3 text-[12px] font-extrabold inline-flex items-center"
-                                  style={{
-                                    backgroundColor: CHECKIN_GREEN,
-                                    color: CHECKIN_DARK,
-                                    border: "1px solid rgba(0,0,0,0.15)",
-                                  }}
-                                >
-                                  View only
-                                </div>
-                              </div>
-
-                              <div className="mt-3 flex flex-wrap items-center gap-2 text-[12px] text-black/65">
-                                <span className="inline-flex items-center gap-2 rounded-full border px-3 py-1" style={{ borderColor: "rgba(0,0,0,0.12)" }}>
-                                  <span className="font-extrabold">Mood:</span> {safeText(detailEntry.mood)}
-                                </span>
-                                <span className="inline-flex items-center gap-2 rounded-full border px-3 py-1" style={{ borderColor: "rgba(0,0,0,0.12)" }}>
-                                  <span className="font-extrabold">Reason:</span> {safeText(detailEntry.reason)}
-                                </span>
-                                {detailEntry.daySubmitted && <Pill tone="dark">Locked</Pill>}
-                              </div>
-                            </div>
-
-                            <div className="p-4 border-b border-black/10">
-                              <div className="text-[12px] font-extrabold text-black/70">Notes</div>
-                              <div className="mt-2 rounded-2xl border border-black/10 bg-black/[0.02] p-3 text-[13px] text-black/70 whitespace-pre-wrap">
-                                {safeText(detailEntry.notes)}
-                              </div>
-                            </div>
-
-                            <div className="p-4">
-                              <MoodTracker series={detailTracker} title="Mood Tracker" compact />
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    <div className="mt-4 flex justify-end">
-                      <button
-                        onClick={onClose}
-                        className="rounded-full px-4 py-2 text-[12px] font-extrabold"
-                        style={{ backgroundColor: CHECKIN_DARK, color: "white" }}
-                      >
-                        Close
-                      </button>
+            {/* BODY (extra bottom padding so footer won't cover content) */}
+            <div className="p-3 sm:p-4">
+              {page === "list" ? (
+                <div className="w-full">
+                  {items.length === 0 ? (
+                    <div className="rounded-2xl border border-black/10 bg-black/[0.02] p-4 text-[13px] text-black/60">
+                      No saved entries yet.
                     </div>
-                  </div>
-                </motion.div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        );
-      }
+                  ) : (
+                    <div
+                      ref={listScrollRef}
+                      className="
+                        max-h-[62vh] sm:max-h-[65vh]
+                        overflow-auto
+                        rounded-2xl
+                        border border-black/10
+                        pb-20 sm:pb-24
+                      "
+                    >
+                      {items.map((it, idx) => (
+                        <button
+                          key={it.date}
+                          type="button"
+                          onClick={() => goDetail(it.date)}
+                          className="w-full text-left px-3 sm:px-4 py-3 hover:bg-black/[0.03] transition"
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="text-[13px] font-extrabold text-[#141414] flex items-center gap-2">
+                              {it.mood ? (
+                                <span className="inline-flex items-center justify-center h-7 w-7 rounded-xl border border-black/10 bg-white">
+                                  <MoodEmote mood={it.mood} size={18} />
+                                </span>
+                              ) : null}
+                              {formatNiceDate(it.date)}
+                            </div>
+                            <div className="text-[12px] text-black/55 font-semibold">{it.dayLocked ? "Saved" : "Draft"}</div>
+                          </div>
 
+                          <div className="mt-2 flex flex-wrap items-center gap-2 text-[12px] text-black/65">
+                            <span className="inline-flex items-center gap-2 rounded-full border px-3 py-1" style={{ borderColor: "rgba(0,0,0,0.12)" }}>
+                              <span className="font-extrabold">Mood:</span> {it.mood || "—"}
+                            </span>
+                            <span className="inline-flex items-center gap-2 rounded-full border px-3 py-1" style={{ borderColor: "rgba(0,0,0,0.12)" }}>
+                              <span className="font-extrabold">Reason:</span> {it.reason || "—"}
+                            </span>
 
+                            {/* ✅ PHQ-only badge removed by your request: do NOT show PHQ-only days/badge */}
+                            {/* {it.phqOnly && ... } */}
 
-      function NotesCard({ notes, setNotes, disabled = false }) {
-        const [copied, setCopied] = useState(false);
+                            {it.notesPreview && (
+                              <span className="inline-flex items-center gap-2 rounded-full border px-3 py-1" style={{ borderColor: "rgba(0,0,0,0.12)" }}>
+                                <span className="font-extrabold">Note:</span> {it.notesPreview}
+                              </span>
+                            )}
+                          </div>
 
-        const words = useMemo(() => {
-          const trimmed = (notes || "").trim();
-          if (!trimmed) return 0;
-          return trimmed.split(/\s+/).filter(Boolean).length;
-        }, [notes]);
+                          {idx !== items.length - 1 && <div className="mt-3 h-px bg-black/10" />}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="w-full">
+                  {!selectedDate || !detailEntry ? (
+                    <div className="rounded-2xl border border-black/10 bg-black/[0.02] p-4 text-[13px] text-black/60">
+                      No date selected.
+                    </div>
+                  ) : (
+                    <div
+                      ref={detailScrollRef}
+                      className="
+                        max-h-[62vh] sm:max-h-[65vh]
+                        overflow-auto
+                        rounded-2xl
+                        border border-black/10
+                        bg-white
+                        pb-20 sm:pb-24
+                      "
+                    >
+                      <div className="p-4 border-b border-black/10" style={{ background: "rgba(0,0,0,0.02)" }}>
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <div className="text-[13px] font-extrabold text-[#141414]">{formatNiceDate(selectedDate)}</div>
+                            <div className="text-[12px] text-black/55 font-semibold mt-1">{detailEntry.daySubmitted ? "Saved" : "Draft"}</div>
+                          </div>
 
-        async function copyNotes() {
-          try {
-            await navigator.clipboard.writeText(notes || "");
-            setCopied(true);
-            setTimeout(() => setCopied(false), 1200);
-          } catch {
-            // ignore
-          }
-        }
+                          <div
+                            className="h-9 rounded-full px-3 text-[12px] font-extrabold inline-flex items-center"
+                            style={{ backgroundColor: CHECKIN_GREEN, color: CHECKIN_DARK, border: "1px solid rgba(0,0,0,0.15)" }}
+                          >
+                            View only
+                          </div>
+                        </div>
 
-        function onChange(e) {
-          if (disabled) return;
-          const value = e.target.value ?? "";
-          const tokens = value.match(/\S+/g) || [];
-          if (tokens.length <= NOTES_WORD_LIMIT) {
-            setNotes(value);
-            return;
-          }
+                        <div className="mt-3 flex flex-wrap items-center gap-2 text-[12px] text-black/65">
+                          <span className="inline-flex items-center gap-2 rounded-full border px-3 py-1" style={{ borderColor: "rgba(0,0,0,0.12)" }}>
+                            <span className="font-extrabold">Mood:</span> {safeText(detailEntry.mood)}
+                          </span>
+                          <span className="inline-flex items-center gap-2 rounded-full border px-3 py-1" style={{ borderColor: "rgba(0,0,0,0.12)" }}>
+                            <span className="font-extrabold">Reason:</span> {safeText(detailEntry.reason)}
+                          </span>
+                        </div>
+                      </div>
 
-          // clamp to first N words (preserve spacing as much as possible)
-          let count = 0;
-          let i = 0;
-          const len = value.length;
-          while (i < len) {
-            while (i < len && /\s/.test(value[i])) i++;
-            if (i >= len) break;
-            while (i < len && !/\s/.test(value[i])) i++;
-            count++;
-            if (count >= NOTES_WORD_LIMIT) break;
-          }
-          const clamped = value.slice(0, i).replace(/\s+$/g, "");
-          setNotes(clamped);
-        }
+                      <div className="p-4 border-b border-black/10">
+                        <div className="text-[12px] font-extrabold text-black/70">Notes</div>
+                        <div className="mt-2 rounded-2xl border border-black/10 bg-black/[0.02] p-3 text-[13px] text-black/70 whitespace-pre-wrap">
+                          {safeText(detailEntry.notes)}
+                        </div>
+                      </div>
+
+                      {/* ✅ Wellness Tips appear in history detail */}
+                      <div className="p-4 border-b border-black/10">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="text-[12px] font-extrabold text-black/70 flex items-center gap-2">
+                            <IconWellness className="h-4 w-4 text-black/55" />
+                            Wellness Tips
+                          </div>
+
+                          {(() => {
+                            const w = tipsForEntry(detailEntry);
+                            return w.personalized ? <Pill tone="green">For you</Pill> : <Pill>General</Pill>;
+                          })()}
+                        </div>
+
+                        {(() => {
+                          const w = tipsForEntry(detailEntry);
+                          return (
+                            <div className="mt-3 rounded-2xl border border-black/10 bg-black/[0.02] p-4">
+                              {w.personalized && <div className="text-[12px] text-black/55 font-semibold mb-2">Based on your mood + reason for this day.</div>}
+                              <ul className="text-[13px] text-black/70 leading-relaxed space-y-2">
+                                {w.tips.map((t, i) => (
+                                  <li key={i} className="flex items-start gap-2">
+                                    <span className="mt-[6px] h-2.5 w-2.5 rounded-full" style={{ backgroundColor: CHECKIN_GREEN }} />
+                                    <span>{t}</span>
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          );
+                        })()}
+                      </div>
+
+                      <div className="p-4">
+                        <MoodTracker series={detailTracker} todayKey={todayKey} title="Mood Tracker" compact subtitle="Saved mood for the last 7 days." />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* FOOTER ACTIONS (Bottom Right, responsive) */}
+            <div
+              className="
+                absolute bottom-0 left-0 right-0
+                border-t border-black/10
+                bg-white/92 backdrop-blur
+                px-3 sm:px-4
+                py-3
+              "
+            >
+              <div className="flex items-center justify-end gap-2 flex-wrap">
+                {page === "detail" && (
+                  <button
+                    type="button"
+                    onClick={goList}
+                    className="
+                      h-9 sm:h-10
+                      rounded-full
+                      border border-black/15
+                      bg-white
+                      px-3 sm:px-4
+                      text-[12px] sm:text-[13px]
+                      font-extrabold
+                      text-black/70
+                      hover:bg-black/5
+                      transition
+                    "
+                  >
+                    Back
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="
+                    h-9 sm:h-10
+                    rounded-full
+                    px-3 sm:px-4
+                    text-[12px] sm:text-[13px]
+                    font-extrabold
+                    transition
+                  "
+                  style={{ backgroundColor: CHECKIN_DARK, color: "white" }}
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+}
+
+/** =========================
+    Terms Modal (MANDATORY)
+========================= */
+function TermsModal({ open, onAgree }) {
+  const reduce = useReducedMotion();
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e) => {
+      if (e.key === "Escape") e.preventDefault();
+    };
+    window.addEventListener("keydown", onKey, { passive: false });
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open]);
+
+  return (
+    <AnimatePresence>
+      {open && (
+        <motion.div className="fixed inset-0 z-[1000] flex items-center justify-center px-4" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+          <div className="absolute inset-0 bg-black/45" />
+
+          <motion.div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Terms and Conditions"
+            initial={{ y: 18, opacity: 0, scale: 0.985 }}
+            animate={{ y: 0, opacity: 1, scale: 1 }}
+            exit={{ y: 18, opacity: 0, scale: 0.985 }}
+            transition={reduce ? { duration: 0 } : { duration: 0.2 }}
+            className="relative w-full max-w-2xl rounded-[24px] border border-black/10 bg-white shadow-xl overflow-hidden"
+          >
+            <div className="p-6" style={{ background: `radial-gradient(900px 260px at 15% 0%, ${CHECKIN_GREEN} 0%, transparent 62%)` }}>
+              <div className="text-[18px] sm:text-[20px] font-black text-[#141414]" style={{ fontFamily: "Lora, serif" }}>
+                Terms & Conditions
+              </div>
+              <div className="mt-2 text-[13px] text-black/65 font-semibold">You must accept to use the Journal and Mood Tracker.</div>
+            </div>
+
+            <div className="p-6 pt-4">
+              <div className="max-h-[55vh] overflow-auto rounded-2xl border border-black/10 bg-black/[0.02] p-4 text-[13px] text-black/75 leading-relaxed">
+                <ul className="space-y-2">
+                  <li>
+                    <span className="font-extrabold text-black/80">Purpose:</span> This Journal is for daily reflection and mood tracking.
+                  </li>
+                  <li>
+                    <span className="font-extrabold text-black/80">Not medical advice:</span> This tool is not a substitute for professional help.
+                  </li>
+                  <li>
+                    <span className="font-extrabold text-black/80">Respect & privacy:</span> Keep your notes respectful and avoid sharing sensitive info you don’t want stored on this device.
+                  </li>
+                  <li>
+                    <span className="font-extrabold text-black/80">Responsibility:</span> You are responsible for how you use this feature and your device access.
+                  </li>
+                </ul>
+
+                <div className="mt-4 rounded-xl border border-black/10 bg-white/80 p-3">
+                  <div className="text-[12px] font-extrabold text-black/70">Emergency note</div>
+                  <div className="mt-1 text-[12px] text-black/65">If you feel unsafe or in immediate danger, contact local emergency services or a trusted person right away.</div>
+                </div>
+              </div>
+
+              {/* Adjusted bottom positioning of the button */}
+              <div className="mt-10 flex justify-end"> {/* Increased the margin-top here */}
+                <button
+                  type="button"
+                  onClick={onAgree}
+                  className="h-11 rounded-full px-6 text-[13px] font-extrabold"
+                  style={{
+                    backgroundColor: CHECKIN_DARK,
+                    color: "white",
+                    textTransform: "none", // Ensure no transformations on text
+                    writingMode: "horizontal-tb", // Ensures normal horizontal text orientation
+                    paddingRight: "20px", // Adjust padding to fix button's right text position
+                    paddingLeft: "20px", // Ensure padding on both sides is balanced
+                  }}
+                >
+                  Agree & Continue
+                </button>
+              </div>
+
+              <div className="mt-3 text-[11px] text-black/55 font-semibold">You cannot proceed without accepting.</div>
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+}
+
+/** Notes card */
+function NotesCard({ notes, setNotes, disabled = false }) {
+  const [copied, setCopied] = useState(false);
+
+  const words = useMemo(() => {
+    const trimmed = (notes || "").trim();
+    if (!trimmed) return 0;
+    return trimmed.split(/\s+/).filter(Boolean).length;
+  }, [notes]);
+
+  async function copyNotes() {
+    try {
+      await navigator.clipboard.writeText(notes || "");
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    } catch {
+      // ignore
+    }
+  }
+
+  function onChange(e) {
+    if (disabled) return;
+    const value = e.target.value ?? "";
+    const tokens = value.match(/\S+/g) || [];
+    if (tokens.length <= NOTES_WORD_LIMIT) {
+      setNotes(value);
+      return;
+    }
+
+    let count = 0;
+    let i = 0;
+    const len = value.length;
+    while (i < len) {
+      while (i < len && /\s/.test(value[i])) i++;
+      if (i >= len) break;
+      while (i < len && !/\s/.test(value[i])) i++;
+      count++;
+      if (count >= NOTES_WORD_LIMIT) break;
+    }
+    const clamped = value.slice(0, i).replace(/\s+$/g, "");
+    setNotes(clamped);
+  }
 
   return (
     <div className="rounded-[24px] border border-black/10 bg-white shadow-[0_14px_40px_rgba(0,0,0,0.07)] overflow-hidden">
-      <div className="px-5 py-4 bg-black/[0.03] flex items-center justify-between">
-        <div className="text-[14px] font-extrabold text-[#141414] flex items-center gap-2">
+      <div className="px-5 py-4 bg-black/[0.02] flex items-center justify-between gap-2">
+        <div className="text-[14px] lg:text-[16px] font-extrabold text-[#141414] flex items-center gap-2" style={{ fontFamily: "Lora, serif" }}>
           Notes
-          {disabled && <span className="text-[11px] font-extrabold text-black/60">• Read-only</span>}
+          <span className="text-[11px] font-extrabold text-black/35">(optional)</span>
         </div>
 
         <div className="flex items-center gap-2">
           <div className="text-[12px] font-extrabold text-black/65">
-            {words}/{NOTES_WORD_LIMIT} words
+            {words}/{NOTES_WORD_LIMIT}
           </div>
 
           {disabled && (
             <button
               type="button"
               onClick={copyNotes}
-              className="
-                h-9 rounded-full border border-black/15 bg-white px-3
-                text-[12px] font-extrabold text-black/75 hover:bg-black/5 transition
-                focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/30 focus-visible:ring-offset-2
-              "
+              className="h-9 rounded-full border border-black/15 bg-white px-3 text-[12px] font-extrabold text-black/75 hover:bg-black/5 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/30 focus-visible:ring-offset-2"
             >
               {copied ? "Copied ✓" : "Copy"}
             </button>
@@ -1175,17 +1307,13 @@ function MoodTracker({ series, title = "Mood Tracker", subtitle = "Saved mood fo
         </div>
       </div>
 
-      <div className="p-5">
+      <div className="p-5 lg:p-6">
         {disabled ? (
           <>
-            <div
-              className="rounded-2xl border border-black/10 bg-black/[0.02] p-4 text-[13px] text-black/80 whitespace-pre-wrap"
-              style={{ overflowWrap: "anywhere", wordBreak: "break-word" }}
-            >
+            <div className="rounded-2xl border border-black/10 bg-black/[0.02] p-4 text-[13px] text-black/80 whitespace-pre-wrap" style={{ overflowWrap: "anywhere", wordBreak: "break-word" }}>
               {safeText(notes)}
             </div>
-
-            <div className="mt-3 text-[12px] text-black/60">Read-only: you already saved today.</div>
+            <div className="mt-3 text-[12px] text-black/60">Saved today — notes are view-only.</div>
           </>
         ) : (
           <>
@@ -1193,14 +1321,10 @@ function MoodTracker({ series, title = "Mood Tracker", subtitle = "Saved mood fo
               value={notes}
               onChange={onChange}
               disabled={disabled}
-              placeholder="Write a short note about your day (max 100 words)…"
-              className="
-                w-full min-h-[140px] rounded-2xl border border-black/10 bg-white px-4 py-3
-                text-[13px] text-black/80 outline-none focus:border-black/25
-                focus-visible:ring-2 focus-visible:ring-black/20 focus-visible:ring-offset-2
-              "
+              placeholder="One sentence is enough — what happened today?"
+              className="w-full min-h-[150px] lg:min-h-[180px] rounded-2xl border border-black/10 bg-white px-4 py-3 text-[13px] lg:text-[14px] text-black/80 outline-none focus:border-black/25 focus-visible:ring-2 focus-visible:ring-black/20 focus-visible:ring-offset-2"
             />
-            <div className="mt-3 text-[12px] text-black/60">Keep it short: what happened + what helped.</div>
+            <div className="mt-3 text-[12px] text-black/60">Optional, but helpful for reflection.</div>
           </>
         )}
       </div>
@@ -1210,32 +1334,43 @@ function MoodTracker({ series, title = "Mood Tracker", subtitle = "Saved mood fo
 
 /** =========================
     Main Journal Page
-    ✅ Duolingo-style step flow
-    ✅ Progress bar
-    ✅ More “gamey” micro-interactions
 ========================= */
 export default function Journal() {
   const shouldReduceMotion = useReducedMotion();
 
-  const [TODAY, setTODAY] = useState(() => todayKey());
+  const [todayKey, setTodayKey] = useState(() => getTodayKey());
+  const [termsAccepted, setTermsAccepted] = useState(() => loadTermsAccepted());
 
+  /** ✅ Refresh “Today” on focus + at local midnight (no interval spam) */
   useEffect(() => {
-    const tick = () => setTODAY(todayKey());
-    tick();
-    const id = setInterval(tick, 60 * 1000);
+    const tick = () => {
+      const next = getTodayKey();
+      setTodayKey((prev) => (prev === next ? prev : next));
+    };
+
+    const scheduleMidnight = () => {
+      const now = new Date();
+      const nextMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 1, 0);
+      const ms = Math.max(250, nextMidnight.getTime() - now.getTime());
+      return window.setTimeout(() => {
+        tick();
+      }, ms);
+    };
+
     window.addEventListener("focus", tick);
+    const midnightTimer = scheduleMidnight();
+
     return () => {
-      clearInterval(id);
       window.removeEventListener("focus", tick);
+      window.clearTimeout(midnightTimer);
     };
   }, []);
 
   const [entries, setEntries] = useState(() => loadEntries());
-
-  const savedEntry = useMemo(() => getEntry(entries, TODAY), [entries, TODAY]);
+  const savedEntry = useMemo(() => getEntry(entries, todayKey), [entries, todayKey]);
 
   const dayLocked = !!savedEntry.daySubmitted;
-  const inputsDisabled = dayLocked;
+  const inputsDisabled = dayLocked || !termsAccepted;
 
   const [mood, setMood] = useState(savedEntry.mood || "");
   const [reason, setReason] = useState(savedEntry.reason || "");
@@ -1244,26 +1379,27 @@ export default function Journal() {
 
   const [historyOpen, setHistoryOpen] = useState(false);
   const [savedPulse, setSavedPulse] = useState(false);
+  const [saveFailed, setSaveFailed] = useState(false);
   const saveTimer = useRef(null);
-  const [storageError, setStorageError] = useState(false);
 
-  // ✅ Duolingo-like “step”
+  /** ✅ Notes are optional */
   const step = useMemo(() => {
+    if (!termsAccepted) return "terms";
     if (dayLocked) return "save";
     if (!mood) return "mood";
     if (!reason) return "reason";
-    if ((notes || "").trim().length < 1) return "notes";
     return "save";
-  }, [dayLocked, mood, reason, notes]);
+  }, [termsAccepted, dayLocked, mood, reason]);
 
   const progress = useMemo(() => {
+    if (!termsAccepted) return 0;
     let p = 0;
     if (mood) p += 34;
     if (reason) p += 33;
     if ((notes || "").trim().length > 0) p += 33;
     if (dayLocked) p = 100;
     return Math.min(100, p);
-  }, [mood, reason, notes, dayLocked]);
+  }, [termsAccepted, mood, reason, notes, dayLocked]);
 
   const focusMoodRef = useRef(null);
   const focusReasonRef = useRef(null);
@@ -1283,12 +1419,15 @@ export default function Journal() {
     [inputsDisabled]
   );
 
+  /** keep inputs synced when day changes */
   useEffect(() => {
-    const e = getEntry(entries, TODAY);
+    const e = getEntry(entries, todayKey);
     setMood(e.mood || "");
     setReason(e.reason || "");
     setNotes(e.notes || "");
-  }, [TODAY, entries]);
+    setSaveFailed(false);
+    setMoodCollapsed(false);
+  }, [todayKey, entries]);
 
   const isDirty = useMemo(() => {
     if (inputsDisabled) return false;
@@ -1311,104 +1450,82 @@ export default function Journal() {
     saveTimer.current = setTimeout(() => setSavedPulse(false), 1100);
   }
 
+  /** ✅ No side-effects inside setEntries updater */
+  function commitEntries(next, { pulse = false } = {}) {
+    const ok = saveEntries(next);
+    setSaveFailed(!ok);
+    if (ok && pulse) pulseSaved();
+    setEntries(next);
+  }
+
   function saveNow() {
-    if (dayLocked) return;
+    if (dayLocked || !termsAccepted) return;
+    const prevSaved = getEntry(entries, todayKey);
+    const nowISO = new Date().toISOString();
 
-    setEntries((prev) => {
-      const prevSaved = getEntry(prev, TODAY);
-      const nowISO = new Date().toISOString();
-
-      const next = setEntry(prev, TODAY, {
-        mood: (mood || "").trim(),
-        reason: (reason || "").trim(),
-        notes: notes ?? "",
-        daySubmitted: true,
-        daySubmittedAt: prevSaved.daySubmittedAt || nowISO,
-      });
-
-      const ok = saveEntries(next);
-      setStorageError(!ok);
-      return next;
+    const next = setEntry(entries, todayKey, {
+      mood: (mood || "").trim(),
+      reason: (reason || "").trim(),
+      notes: notes ?? "",
+      daySubmitted: true,
+      daySubmittedAt: prevSaved.daySubmittedAt || nowISO,
     });
 
-    pulseSaved();
+    commitEntries(next, { pulse: true });
   }
 
   function clearTodayDraft() {
-    if (dayLocked) return;
+    if (dayLocked || !termsAccepted) return;
 
     setMood("");
     setReason("");
     setNotes("");
     setMoodCollapsed(false);
+    setSaveFailed(false);
 
-    setEntries((prev) => {
-      const next = setEntry(prev, TODAY, {
-        mood: "",
-        reason: "",
-        notes: "",
-        daySubmitted: false,
-        daySubmittedAt: null,
-      });
-
-      const ok = saveEntries(next);
-      setStorageError(!ok);
-      return next;
-    });
+    const next = setEntry(entries, todayKey, { mood: "", reason: "", notes: "", daySubmitted: false, daySubmittedAt: null });
+    commitEntries(next);
   }
 
-  const trackerSeries = useMemo(() => {
-    const list = [];
-    const d = new Date(TODAY);
-    for (let i = 0; i < 14; i++) {
-      const x = new Date(d);
-      x.setDate(d.getDate() - (13 - i));
-      const yyyy = x.getFullYear();
-      const mm = String(x.getMonth() + 1).padStart(2, "0");
-      const dd = String(x.getDate()).padStart(2, "0");
-      const key = `${yyyy}-${mm}-${dd}`;
-      const label = `${Number(mm)}/${Number(dd)}`;
-      const e = getEntry(entries, key);
-      list.push({ key, label, mood: e.mood || null });
-    }
-    return list;
-  }, [entries, TODAY]);
-
-  const trackerSeriesForDate = useCallback(
-    (baseDate) => {
-      const list = [];
-      const d = new Date(baseDate);
-      for (let i = 0; i < 14; i++) {
-        const x = new Date(d);
-        x.setDate(d.getDate() - (13 - i));
-        const yyyy = x.getFullYear();
-        const mm = String(x.getMonth() + 1).padStart(2, "0");
-        const dd = String(x.getDate()).padStart(2, "0");
-        const key = `${yyyy}-${mm}-${dd}`;
-        const label = `${Number(mm)}/${Number(dd)}`;
-        const e = getEntry(entries, key);
-        list.push({ key, label, mood: e.mood || null });
-      }
-      return list;
-    },
-    [entries]
-  );
+  const trackerSeries = useMemo(() => buildTrackerSeries(entries, todayKey, TRACKER_DAYS), [entries, todayKey]);
+  const trackerSeriesForDate = useCallback((baseDate) => buildTrackerSeries(entries, baseDate, TRACKER_DAYS), [entries]);
 
   const moods = ["Happy", "Calm", "Okay", "Stressed", "Sad", "Angry", "Fear", "Surprise", "Disgust"];
   const reasons = ["School", "Family", "Friends", "Health", "Other"];
 
+  /** ✅ History: Mood/Reason/Notes only (NO PHQ-only days) + includes Wellness preview */
   const historyItems = useMemo(() => {
     const keys = Object.keys(entries || {}).filter(isDateKey);
+
+    const truncate = (s, n = 52) => {
+      const t = (s || "").trim();
+      if (!t) return "";
+      return t.length > n ? `${t.slice(0, n)}…` : t;
+    };
+
     return keys
       .map((k) => {
         const e = getEntry(entries, k);
-        const hasAnything = !!e.mood || !!e.reason || !!e.notes;
-        if (!hasAnything) return null;
+
+        // ✅ Only show days that cover mood tracker content
+        const hasText = !!(e.mood || e.reason || (e.notes || "").trim());
+        if (!hasText) return null; // ❌ removes PHQ-only days
 
         const noteTrim = (e.notes || "").trim();
         const notesPreview = noteTrim ? (noteTrim.length > 22 ? `${noteTrim.slice(0, 22)}…` : noteTrim) : "";
 
-        return { date: k, mood: e.mood || "", reason: e.reason || "", notesPreview, dayLocked: !!e.daySubmitted };
+        const w = tipsForEntry(e);
+        const wellnessPreview = truncate(w?.tips?.[0] || "");
+
+        return {
+          date: k,
+          mood: e.mood || "",
+          reason: e.reason || "",
+          notesPreview,
+          dayLocked: !!e.daySubmitted,
+          phqSubmitted: !!e?.phq?.submitted, // optional badge
+          wellnessPreview, // ✅ wellness tip appears in history list
+        };
       })
       .filter(Boolean)
       .sort((a, b) => (a.date < b.date ? 1 : -1));
@@ -1421,27 +1538,47 @@ export default function Journal() {
   }, []);
 
   const nudgeText = useMemo(() => {
+    if (!termsAccepted) return "Please accept Terms & Conditions to continue.";
     if (dayLocked) return "Nice work — you’ve completed today’s check-in!";
-    if (!mood) return "Step 1: pick your mood 👇";
-    if (!reason) return "Step 2: pick the reason 👇";
-    if (!(notes || "").trim()) return "Step 3: add a short note (even 1 sentence) ✍️";
-    return "Final step: Save to lock today ✅";
-  }, [dayLocked, mood, reason, notes]);
+    if (!mood) return "Step 1: choose your mood.";
+    if (!reason) return "Step 2: choose the reason.";
+    if (!(notes || "").trim()) return "Optional: add a short note — or Save to lock today.";
+    return "Final step: Save to lock today.";
+  }, [termsAccepted, dayLocked, mood, reason, notes]);
+
+  const savedTimeLabel = useMemo(() => (savedEntry?.daySubmittedAt ? formatNiceTime(savedEntry.daySubmittedAt) : ""), [savedEntry]);
+
+  /** subtle emote delight: float the selected chip emote */
+  const activeEmoteAnim = useMemo(() => (shouldReduceMotion ? {} : { y: [0, -2, 0] }), [shouldReduceMotion]);
 
   return (
     <div
       className="min-h-screen relative overflow-hidden"
       style={{
+        fontFamily: "Nunito, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif",
         background:
-          "radial-gradient(1200px 520px at 18% 0%, rgba(185,255,102,0.38) 0%, rgba(185,255,102,0.0) 55%), linear-gradient(180deg, #F8FAFC 0%, #FFFFFF 60%, #F7F7F7 100%)",
+  `
+  radial-gradient(1100px 520px at 18% 0%, rgba(185,255,102,0.48) 0%, rgba(185,255,102,0.00) 58%),
+  radial-gradient(980px 480px at 70% 6%, rgba(218,252,182,0.55) 0%, rgba(218,252,182,0.00) 62%),
+  radial-gradient(900px 420px at 30% 28%, rgba(211,243,176,0.40) 0%, rgba(211,243,176,0.00) 60%),
+  radial-gradient(760px 360px at 82% 36%, rgba(224,252,193,0.28) 0%, rgba(224,252,193,0.00) 62%),
+  radial-gradient(820px 420px at 12% 62%, rgba(199,227,168,0.25) 0%, rgba(199,227,168,0.00) 62%),
+  linear-gradient(180deg, #F8FAFC 0%, #FFFFFF 58%, #F7F7F7 100%)
+  `,
       }}
     >
-      <BackgroundFX />
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&family=Lora:wght@400;600;700&display=swap');`}</style>
 
-      <DoodleSpark className="absolute -top-8 -left-8 h-28 w-28 text-black/10 rotate-12" />
-      <DoodleSquiggle className="absolute top-24 right-[-20px] h-16 w-44 text-black/10 rotate-[-8deg]" />
-      <DoodleHeart className="absolute bottom-16 left-8 h-16 w-16 text-black/10" />
-      <DoodleSpark className="absolute bottom-[-20px] right-10 h-24 w-24 text-black/10 -rotate-12" />
+      <BackgroundFX />
+      <DoodleSpark className="absolute -top-10 -left-10 h-24 w-24 sm:h-28 sm:w-28 text-black/10 rotate-12" />
+
+      <TermsModal
+        open={!termsAccepted}
+        onAgree={() => {
+          const ok = saveTermsAccepted();
+          if (ok) setTermsAccepted(true);
+        }}
+      />
 
       <HistoryModal
         open={historyOpen}
@@ -1449,25 +1586,17 @@ export default function Journal() {
         items={historyItems}
         entries={entries}
         trackerSeriesForDate={trackerSeriesForDate}
+        todayKey={todayKey}
       />
 
-      <div className="pt-[60px] sm:pt-[66px] pb-10 relative z-[1]">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6">
-          {/* ✅ STICKY TOP BAR (Duolingo-ish) */}
-          <div className="sticky top-[72px] z-20 -mx-4 sm:-mx-6 px-4 sm:px-6 pt-3 pb-3">
+      <div className="pt-[56px] sm:pt-[66px] pb-10 relative z-[1]">
+        <div className="max-w-6xl mx-auto px-3 sm:px-6">
+          <div className="sticky top-[68px] sm:top-[72px] z-20 -mx-3 sm:-mx-6 px-3 sm:px-6 pt-3 pb-3">
             <motion.div
               initial={{ opacity: 0, y: -6 }}
               animate={{ opacity: 1, y: 0 }}
               transition={shouldReduceMotion ? { duration: 0 } : { duration: 0.25, ease: "easeOut" }}
-              className="
-                relative rounded-[28px]
-                border border-black/10
-                bg-white/75 backdrop-blur-xl
-                shadow-[0_22px_70px_rgba(0,0,0,0.10)]
-                p-6
-                flex flex-col gap-4
-                overflow-hidden
-              "
+              className="relative rounded-[28px] border border-black/10 bg-white/78 backdrop-blur-xl shadow-[0_22px_70px_rgba(0,0,0,0.10)] p-5 sm:p-6 lg:p-7 flex flex-col gap-4 overflow-hidden"
             >
               <div
                 className="absolute inset-0 opacity-35"
@@ -1478,7 +1607,7 @@ export default function Journal() {
               />
 
               <motion.div
-                className="absolute inset-0 opacity-[0.12]"
+                className="absolute inset-0 opacity-[0.10]"
                 style={{
                   backgroundImage: "radial-gradient(rgba(0,0,0,0.35) 1px, transparent 1px)",
                   backgroundSize: "24px 24px",
@@ -1489,11 +1618,11 @@ export default function Journal() {
                 transition={shouldReduceMotion ? {} : { duration: 10, repeat: Infinity, ease: "linear" }}
               />
 
-              {/* Header row */}
-                 <div className="relative flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+              <div className="relative flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
                 <div className="relative">
-                  <div className="text-[26px] font-black text-[#141414] leading-tight">How are you today?</div>
-                  <div className="text-[13px] text-black/55 font-semibold mt-1">Quick check-in. Today only.</div>
+                  <div className="text-[22px] sm:text-[26px] lg:text-[30px] font-black text-[#141414] leading-tight" style={{ fontFamily: "Lora, serif" }}>
+                    How are you today?
+                  </div>
 
                   <AnimatePresence mode="wait">
                     <motion.div
@@ -1502,52 +1631,27 @@ export default function Journal() {
                       animate={{ opacity: 1, y: 0 }}
                       exit={{ opacity: 0, y: -8 }}
                       transition={shouldReduceMotion ? { duration: 0 } : { duration: 0.18 }}
-                      className="mt-2 text-[12px] font-extrabold text-black/60"
+                      className="mt-2 text-[12px] lg:text-[13px] font-extrabold text-black/60"
                     >
                       {nudgeText}
                     </motion.div>
                   </AnimatePresence>
 
-                  {storageError && (
-                    <div className="mt-2 text-[11px] font-semibold text-red-600">
-                      Storage error: couldn’t save on this device.
-                    </div>
-                  )}
+                  {saveFailed && <div className="mt-2 text-[11px] font-semibold text-red-600">Storage error: couldn’t save on this device.</div>}
                 </div>
 
-                  <div className="relative flex flex-wrap items-center gap-2 justify-start lg:justify-end">
-                  <div className="relative">
-                    <IconCalendar className="h-5 w-5 text-black/45 absolute left-4 top-1/2 -translate-y-1/2" />
-                    <input
-                      type="date"
-                      value={TODAY}
-                      min={TODAY}
-                      max={TODAY}
-                      onChange={() => {}}
-                      className="
-                        h-10 w-[190px] sm:w-auto
-                        rounded-full
-                        border border-black/15
-                        bg-white/80 backdrop-blur
-                        pl-11 pr-4
-                        text-[13px] font-semibold text-black/70
-                        cursor-not-allowed
-                      "
-                      disabled
-                    />
+                <div className="relative flex flex-wrap items-center gap-2 justify-start lg:justify-end">
+                  <div className="inline-flex items-center gap-2 h-10 rounded-full border border-black/15 bg-white/85 backdrop-blur px-4 text-[13px] font-extrabold text-black/70">
+                    <IconCalendar className="h-5 w-5 text-black/45" />
+                    <span>Today</span>
+                    <span className="text-black/35">•</span>
+                    <span className="font-black text-black/75">{formatNiceDate(todayKey)}</span>
                   </div>
 
                   <button
                     type="button"
                     onClick={() => setHistoryOpen(true)}
-                    className="
-                      h-10 rounded-full
-                      border border-black/15
-                      bg-white/80 backdrop-blur
-                      px-4
-                      text-[13px] font-extrabold text-black/70
-                      hover:bg-black/5 transition
-                    "
+                    className="h-10 rounded-full border border-black/15 bg-white/85 backdrop-blur px-4 text-[13px] font-extrabold text-black/70 hover:bg-black/5 transition"
                   >
                     History
                   </button>
@@ -1556,15 +1660,7 @@ export default function Journal() {
                     type="button"
                     onClick={clearTodayDraft}
                     disabled={inputsDisabled || (!mood && !reason && !notes)}
-                    className="
-                      h-10 rounded-full
-                      border border-black/15
-                      bg-white/80 backdrop-blur
-                      px-4
-                      text-[13px] font-extrabold text-black/70
-                      hover:bg-black/5 transition
-                      disabled:opacity-50 disabled:cursor-not-allowed
-                    "
+                    className="h-10 rounded-full border border-black/15 bg-white/85 backdrop-blur px-4 text-[13px] font-extrabold text-black/70 hover:bg-black/5 transition disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     Clear
                   </button>
@@ -1575,11 +1671,7 @@ export default function Journal() {
                     disabled={inputsDisabled || !isDirty || !canSave}
                     whileHover={inputsDisabled || !isDirty || !canSave ? {} : { y: -1 }}
                     whileTap={inputsDisabled || !isDirty || !canSave ? {} : { scale: 0.98 }}
-                    className="
-                      h-10 rounded-full px-4
-                      text-[13px] font-extrabold transition
-                      disabled:opacity-50 disabled:cursor-not-allowed
-                    "
+                    className="h-10 rounded-full px-4 text-[13px] font-extrabold transition disabled:opacity-50 disabled:cursor-not-allowed"
                     style={{
                       backgroundColor: !inputsDisabled && isDirty && canSave ? CHECKIN_GREEN : "rgba(0,0,0,0.05)",
                       color: CHECKIN_DARK,
@@ -1587,13 +1679,13 @@ export default function Journal() {
                       boxShadow: !inputsDisabled && isDirty && canSave ? "0 18px 50px rgba(185,255,102,0.45)" : "none",
                     }}
                   >
-                    Save
+                    {dayLocked ? "Saved ✓" : "Save"}
                   </motion.button>
 
                   <div className="ml-1" aria-live="polite">
                     <AnimatePresence mode="wait">
                       <motion.div
-                        key={savedPulse ? "saved" : dayLocked ? "locked" : isDirty ? "dirty" : "idle"}
+                        key={savedPulse ? "saved" : dayLocked ? "locked" : inputsDisabled ? "disabled" : isDirty ? "dirty" : "idle"}
                         initial={{ opacity: 0, y: 6 }}
                         animate={{ opacity: 1, y: 0 }}
                         exit={{ opacity: 0, y: -6 }}
@@ -1602,7 +1694,9 @@ export default function Journal() {
                         {savedPulse ? (
                           <Pill tone="green">Thank you 💚</Pill>
                         ) : dayLocked ? (
-                          <Pill tone="dark">Locked today</Pill>
+                          <Pill tone="dark">{savedTimeLabel ? `Saved • ${savedTimeLabel}` : "Saved today"}</Pill>
+                        ) : !termsAccepted ? (
+                          <Pill tone="warn">Accept Terms</Pill>
                         ) : isDirty ? (
                           <Pill tone="warn">Unsaved</Pill>
                         ) : (
@@ -1614,105 +1708,61 @@ export default function Journal() {
                 </div>
               </div>
 
-                  {/* Progress + Stepper */}
-          {/* =========================
-              PROGRESS + STEPS (MOBILE SAFE)
-          ========================= */}
-          <div className="mt-4 rounded-[20px] border border-black/10 bg-white/90 p-4 shadow-sm">
-            {/* Progress */}
-            <div className="mb-4">
-              <div className="flex items-center justify-between text-[12px] font-bold text-black/60">
-                <span>Daily progress</span>
-                <span>{progress}%</span>
-              </div>
+              <div className="mt-2 rounded-[20px] border border-black/10 bg-white/90 p-4 lg:p-5 shadow-sm">
+                <div className="mb-4">
+                  <div className="flex items-center justify-between text-[12px] lg:text-[13px] font-bold text-black/60">
+                    <span className="inline-flex items-center gap-2">
+                      <IconBolt className="h-4 w-4 text-black/45" />
+                      Daily progress
+                    </span>
+                    <span>{progress}%</span>
+                  </div>
 
-              <div className="mt-2 h-3 w-full overflow-hidden rounded-full bg-black/10">
-                <div
-                  className="h-full rounded-full transition-all duration-300"
-                  style={{
-                    width: `${progress}%`,
-                    background: "linear-gradient(180deg, #B9FF66, #A3F635)",
-                  }}
-                />
-              </div>
-            </div>
-
-            {/* Steps */}
-            <div className="grid grid-cols-4 gap-2">
-              {[
-                { key: "mood", label: "Mood" },
-                { key: "reason", label: "Reason" },
-                { key: "notes", label: "Notes" },
-                { key: "save", label: "Done" },
-              ].map((s) => {
-                const isActive = step === s.key;
-                const isDone =
-                  dayLocked ||
-                  (s.key === "mood" && ["reason", "notes", "save"].includes(step)) ||
-                  (s.key === "reason" && ["notes", "save"].includes(step)) ||
-                  (s.key === "notes" && step === "save");
-
-                return (
-                  <button
-                    key={s.key}
-                    type="button"
-                    disabled={dayLocked}
-                    onClick={() => jumpToStep(s.key)}
-                    className={`
-                      flex flex-col items-center justify-center
-                      rounded-xl border px-2 py-2 text-[11px] font-bold
-                      transition
-                      ${
-                        isDone
-                          ? "bg-[#B9FF66]/70 border-black/20 text-black"
-                          : isActive
-                          ? "bg-black/5 border-black/30 text-black"
-                          : "bg-white border-black/10 text-black/50"
-                      }
-                      disabled:opacity-60
-                    `}
-                  >
-                    <div
-                      className={`mb-1 h-6 w-6 rounded-full flex items-center justify-center text-[12px] font-black ${
-                        isDone ? "bg-black text-white" : "bg-black/10 text-black/60"
-                      }`}
-                    >
-                      {isDone ? "✓" : "•"}
-                    </div>
-                    {s.label}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-
-              {!inputsDisabled && !canSave && (
-                <div className="relative text-[11px] text-black/45 font-semibold">
-                  Select <span className="font-extrabold text-black">Mood</span> and{" "}
-                  <span className="font-extrabold text-black">Reason</span> to enable Save.
+                  <div className="mt-2 h-3 w-full overflow-hidden rounded-full bg-black/10">
+                    <div className="h-full rounded-full transition-all duration-300" style={{ width: `${progress}%`, background: "linear-gradient(180deg, #B9FF66, #A3F635)" }} />
+                  </div>
                 </div>
-              )}
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {[
+                    { key: "mood", label: "Mood", icon: IconMood, done: !!mood },
+                    { key: "reason", label: "Reason", icon: IconReason, done: !!reason },
+                    { key: "notes", label: "Notes", icon: IconNotes, done: !!(notes || "").trim() },
+                    { key: "save", label: "Done", icon: IconBolt, done: dayLocked },
+                  ].map((s) => {
+                    const isActive = step === s.key;
+                    const isDone = dayLocked ? true : s.done;
+
+                    return (
+                      <MobileStepButton
+                        key={s.key}
+                        label={s.label}
+                        active={isActive}
+                        done={isDone}
+                        disabled={inputsDisabled}
+                        onClick={() => jumpToStep(s.key)}
+                        icon={s.icon}
+                      />
+                    );
+                  })}
+                </div>
+
+                {!termsAccepted && <div className="mt-3 text-[12px] text-black/60 font-semibold">Accept Terms & Conditions to unlock the Journal.</div>}
+              </div>
             </motion.div>
           </div>
 
-          {/* Mood tracker */}
-          <div className="mt-2">
-            <MoodTracker series={trackerSeries} />
+          <div className="mt-3">
+            <MoodTracker series={trackerSeries} todayKey={todayKey} subtitle="Saved mood for the last 7 days." />
           </div>
 
           <div className="mt-4 grid grid-cols-1 xl:grid-cols-2 gap-4">
-            {/* Left */}
             <div className="flex flex-col gap-4">
-              {/* MOOD */}
               <div ref={focusMoodRef} />
               <Card
                 title={
                   <span className="flex items-center gap-2">
-                    Mood{" "}
-                    <span className="text-black/40 text-[12px] font-extrabold">(collapsible)</span>{" "}
-                    {inputsDisabled && <Pill>Locked</Pill>}
-                    {!inputsDisabled && step === "mood" && <Pill tone="warn">Start</Pill>}
+                    Mood {inputsDisabled && <Pill>Locked</Pill>}
                   </span>
                 }
                 right={
@@ -1722,7 +1772,7 @@ export default function Journal() {
                     onClick={() => setMoodCollapsed((v) => !v)}
                     className="inline-flex items-center gap-2 rounded-full border px-3 py-2 text-[12px] font-extrabold disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    {moodCollapsed ? "Open" : "Close"}
+                    {moodCollapsed ? "Expand" : "Collapse"}
                     <IconChevron className="h-4 w-4" down={moodCollapsed} />
                   </button>
                 }
@@ -1730,17 +1780,10 @@ export default function Journal() {
                 <motion.div
                   className="rounded-2xl border border-black/10 bg-black/[0.02] p-4 flex items-center gap-3"
                   initial={false}
-                  animate={
-                    !inputsDisabled && step === "mood"
-                      ? { boxShadow: "0 0 0 4px rgba(185,255,102,0.35)" }
-                      : { boxShadow: "0 0 0 0px rgba(0,0,0,0)" }
-                  }
+                  animate={!inputsDisabled && step === "mood" ? { boxShadow: "0 0 0 4px rgba(185,255,102,0.35)" } : { boxShadow: "0 0 0 0px rgba(0,0,0,0)" }}
                   transition={shouldReduceMotion ? { duration: 0 } : { duration: 0.22, ease: "easeOut" }}
                 >
-                  <div
-                    className="h-12 w-12 rounded-2xl border border-black/10 bg-white flex items-center justify-center overflow-hidden"
-                    style={{ boxShadow: "0 10px 24px rgba(0,0,0,0.05)" }}
-                  >
+                  <div className="h-12 w-12 lg:h-14 lg:w-14 rounded-2xl border border-black/10 bg-white flex items-center justify-center overflow-hidden" style={{ boxShadow: "0 10px 24px rgba(0,0,0,0.05)" }}>
                     <AnimatePresence mode="wait">
                       {mood ? (
                         <motion.div
@@ -1750,16 +1793,10 @@ export default function Journal() {
                           exit={{ opacity: 0, scale: 0.88, rotate: 8, y: -6 }}
                           transition={shouldReduceMotion ? { duration: 0 } : { duration: 0.24, ease: "easeOut" }}
                         >
-                          <MoodEmote mood={mood} size={36} />
+                          <MoodEmote mood={mood} size={40} />
                         </motion.div>
                       ) : (
-                        <motion.div
-                          key="empty"
-                          className="text-[12px] font-extrabold text-black/40"
-                          initial={{ opacity: 0 }}
-                          animate={{ opacity: 1 }}
-                          exit={{ opacity: 0 }}
-                        >
+                        <motion.div key="empty" className="text-[12px] font-extrabold text-black/40" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
                           —
                         </motion.div>
                       )}
@@ -1768,18 +1805,10 @@ export default function Journal() {
 
                   <div className="flex-1">
                     <div className="text-[12px] font-extrabold text-black/70">Current mood</div>
-
-                    <div className="text-[14px] font-extrabold text-[#141414] mt-1">{mood || "Not selected"}</div>
-
+                    <div className="text-[14px] lg:text-[16px] font-extrabold text-[#141414] mt-1">{mood || "Not selected"}</div>
                     <div className="text-[12px] text-black/55 font-semibold mt-1">
-                      {(mood || "").trim()
-                        ? MOOD_MESSAGE[(mood || "").trim()] || "Thanks for checking in."
-                        : "Pick a mood to begin."}
+                      {(mood || "").trim() ? MOOD_MESSAGE[(mood || "").trim()] || "Thanks for checking in." : "Pick a mood to begin."}
                     </div>
-                  </div>
-
-                  <div className="hidden sm:block">
-                    <Pill>today only</Pill>
                   </div>
                 </motion.div>
 
@@ -1800,14 +1829,24 @@ export default function Journal() {
                             onClick={() => {
                               if (inputsDisabled) return;
                               setMood(m);
-                              // “Duolingo feel”: auto-open next
-                        
                             }}
                             left={
                               <motion.span
                                 initial={{ scale: 0.9 }}
-                                animate={{ scale: mood === m ? 1.06 : 1 }}
-                                transition={shouldReduceMotion ? { duration: 0 } : { type: "spring", stiffness: 300, damping: 18 }}
+                                animate={
+                                  shouldReduceMotion
+                                    ? { scale: mood === m ? 1.06 : 1 }
+                                    : mood === m
+                                    ? { scale: 1.08, ...activeEmoteAnim }
+                                    : { scale: 1 }
+                                }
+                                transition={
+                                  shouldReduceMotion
+                                    ? { duration: 0 }
+                                    : mood === m
+                                    ? { duration: 1.2, repeat: Infinity, ease: "easeInOut" }
+                                    : { type: "spring", stiffness: 300, damping: 18 }
+                                }
                               >
                                 <MoodEmote mood={m} size={18} />
                               </motion.span>
@@ -1819,40 +1858,17 @@ export default function Journal() {
                         ))}
                       </div>
 
-                      <div className="mt-3 text-[12px] text-black/50">
-                        {inputsDisabled ? (
-                          <>
-                            This day is <span className="font-extrabold text-black">locked</span>. You can’t edit.
-                          </>
-                        ) : (
-                          <>
-                            Changes are a <span className="font-extrabold text-black">draft</span> until you hit{" "}
-                            <span className="font-extrabold text-black">Save</span>.
-                          </>
-                        )}
-                      </div>
+                      {!termsAccepted && <div className="mt-3 text-[12px] text-black/55 font-semibold">Accept Terms to unlock selections.</div>}
                     </motion.div>
                   )}
                 </AnimatePresence>
               </Card>
 
-              {/* REASON */}
               <div ref={focusReasonRef} />
-              <Card
-                title={
-                  <span className="flex items-center gap-2">
-                    Reason {inputsDisabled && <Pill>Locked</Pill>}
-                    {!inputsDisabled && step === "reason" && <Pill tone="warn">Next</Pill>}
-                  </span>
-                }
-              >
+              <Card title={<span className="flex items-center gap-2">Reason {inputsDisabled && <Pill>Locked</Pill>}</span>}>
                 <motion.div
                   initial={false}
-                  animate={
-                    !inputsDisabled && step === "reason"
-                      ? { boxShadow: "0 0 0 4px rgba(185,255,102,0.35)" }
-                      : { boxShadow: "0 0 0 0px rgba(0,0,0,0)" }
-                  }
+                  animate={!inputsDisabled && step === "reason" ? { boxShadow: "0 0 0 4px rgba(185,255,102,0.35)" } : { boxShadow: "0 0 0 0px rgba(0,0,0,0)" }}
                   transition={shouldReduceMotion ? { duration: 0 } : { duration: 0.22, ease: "easeOut" }}
                   className="rounded-2xl"
                 >
@@ -1864,7 +1880,6 @@ export default function Journal() {
                         onClick={() => {
                           if (inputsDisabled) return;
                           setReason(r);
-                         
                         }}
                         disabled={inputsDisabled}
                       >
@@ -1874,36 +1889,19 @@ export default function Journal() {
                   </div>
                 </motion.div>
 
-                <div className="mt-3 text-[12px] text-black/50">
-                  {inputsDisabled ? (
-                    <>
-                      This day is <span className="font-extrabold text-black">locked</span>. You can’t edit.
-                    </>
-                  ) : (
-                    <>
-                      Changes are a <span className="font-extrabold text-black">draft</span> until you hit{" "}
-                      <span className="font-extrabold text-black">Save</span>.
-                    </>
-                  )}
-                </div>
+                {!termsAccepted && <div className="mt-3 text-[12px] text-black/55 font-semibold">Accept Terms to unlock selections.</div>}
               </Card>
 
-              {/* NOTES */}
               <div ref={focusNotesRef} />
               <motion.div
                 initial={false}
-                animate={
-                  !inputsDisabled && step === "notes"
-                    ? { boxShadow: "0 0 0 4px rgba(185,255,102,0.35)", borderRadius: 28 }
-                    : { boxShadow: "0 0 0 0px rgba(0,0,0,0)", borderRadius: 28 }
-                }
+                animate={!inputsDisabled && step === "notes" ? { boxShadow: "0 0 0 4px rgba(185,255,102,0.35)", borderRadius: 28 } : { boxShadow: "0 0 0 0px rgba(0,0,0,0)", borderRadius: 28 }}
                 transition={shouldReduceMotion ? { duration: 0 } : { duration: 0.22, ease: "easeOut" }}
               >
                 <NotesCard notes={notes} setNotes={setNotes} disabled={inputsDisabled} />
               </motion.div>
             </div>
 
-            {/* Right */}
             <div className="flex flex-col gap-4">
               <Card
                 title={
@@ -1912,16 +1910,17 @@ export default function Journal() {
                     Wellness Tips
                   </span>
                 }
-                right={wellness.personalized ? <Pill tone="green">Personalized</Pill> : <Pill>General</Pill>}
+                right={wellness.personalized ? <Pill tone="green">For you</Pill> : <Pill>General</Pill>}
               >
                 <motion.div
-                  className="rounded-2xl border border-black/10 bg-black/[0.02] p-5"
+                  className="rounded-2xl border border-black/10 bg-black/[0.02] p-5 lg:p-6"
                   initial={{ opacity: 0, y: 8 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={shouldReduceMotion ? { duration: 0 } : { duration: 0.22, ease: "easeOut" }}
                 >
-                  <div className="text-[13px] font-extrabold text-[#141414]">{wellness.label}</div>
-                  <ul className="mt-3 text-[13px] text-black/70 leading-relaxed space-y-2">
+                  {wellness.personalized && <div className="text-[12px] text-black/55 font-semibold mb-3">Based on your mood + reason today.</div>}
+
+                  <ul className="text-[13px] lg:text-[14px] text-black/70 leading-relaxed space-y-2">
                     {wellness.tips.map((t, i) => (
                       <motion.li
                         key={i}
@@ -1936,17 +1935,11 @@ export default function Journal() {
                     ))}
                   </ul>
 
-                  {!wellness.personalized && (
-                    <div className="mt-4 text-[12px] text-black/50">
-                      Personalization unlocks after you <span className="font-extrabold text-black">Save</span> your{" "}
-                      <span className="font-extrabold text-black">Mood</span>, <span className="font-extrabold text-black">Reason</span>, and{" "}
-                      <span className="font-extrabold text-black">Notes</span>.
+                  {!termsAccepted && (
+                    <div className="mt-4 rounded-xl border border-black/10 bg-white/80 p-3 text-[12px] text-black/60 font-semibold">
+                      Tips will unlock after you accept Terms.
                     </div>
                   )}
-
-          
-                  
-                
                 </motion.div>
               </Card>
             </div>
@@ -1957,42 +1950,85 @@ export default function Journal() {
   );
 }
 
+
+
+// 2) Replace your existing BackgroundFX() with this upgraded version:
+
 function BackgroundFX() {
   const reduce = useReducedMotion();
 
+  const blob = (a, b, opacity = 0.35) => ({
+    background: `radial-gradient(circle at 30% 30%, ${a}, ${b})`,
+    opacity,
+  });
+
   return (
-    <div className="pointer-events-none absolute inset-0 z-[0]">
+    <div className="pointer-events-none absolute inset-0 z-[0] overflow-hidden">
+      {/* Primary mint wash */}
       <motion.div
-        className="absolute -top-32 -left-32 h-[520px] w-[520px] rounded-full blur-3xl"
-        style={{
-          background: "radial-gradient(circle at 30% 30%, rgba(185,255,102,0.95), rgba(185,255,102,0))",
-          opacity: 0.55,
-        }}
-        animate={reduce ? {} : { x: [0, 40, -20, 0], y: [0, 20, 50, 0], scale: [1, 1.08, 0.98, 1] }}
+        className="absolute -top-36 -left-36 h-[560px] w-[560px] rounded-full blur-3xl"
+        style={blob("rgba(185,255,102,0.95)", "rgba(185,255,102,0.00)", 0.42)}
+        animate={reduce ? {} : { x: [0, 44, -24, 0], y: [0, 22, 56, 0], scale: [1, 1.08, 0.98, 1] }}
         transition={reduce ? {} : { duration: 12, repeat: Infinity, ease: "easeInOut" }}
       />
 
+      {/* Top-right soft green */}
       <motion.div
-        className="absolute top-[12%] -right-40 h-[620px] w-[620px] rounded-full blur-3xl"
-        style={{
-          background:
-            "radial-gradient(1200px 520px at 18% 0%, rgba(185,255,102,0.26) 0%, rgba(185,255,102,0.0) 58%), radial-gradient(900px 520px at 85% 10%, rgba(20,20,20,0.10) 0%, rgba(20,20,20,0.0) 60%), linear-gradient(180deg, #FAFBFF 0%, #FFFFFF 55%, #F6F7FB 100%)",
-        }}
-        animate={reduce ? {} : { x: [0, -30, 16, 0], y: [0, 30, -18, 0], scale: [1, 1.05, 1, 1] }}
+        className="absolute -top-40 -right-44 h-[680px] w-[680px] rounded-full blur-3xl"
+        style={blob("rgba(218,252,182,0.95)", "rgba(218,252,182,0.00)", 0.34)}
+        animate={reduce ? {} : { x: [0, -36, 18, 0], y: [0, 26, -14, 0], scale: [1, 1.06, 1.0, 1] }}
         transition={reduce ? {} : { duration: 16, repeat: Infinity, ease: "easeInOut" }}
       />
 
+      {/* Mid wash (adds the “soft field” look like your screenshot) */}
+      <motion.div
+        className="absolute top-[18%] left-[18%] h-[720px] w-[720px] rounded-full blur-3xl"
+        style={blob("rgba(211,243,176,0.85)", "rgba(211,243,176,0.00)", 0.26)}
+        animate={reduce ? {} : { x: [0, 24, -18, 0], y: [0, -10, 20, 0], scale: [1, 1.04, 0.99, 1] }}
+        transition={reduce ? {} : { duration: 18, repeat: Infinity, ease: "easeInOut" }}
+      />
+
+      {/* Bottom-left tint */}
+      <motion.div
+        className="absolute -bottom-44 -left-40 h-[640px] w-[640px] rounded-full blur-3xl"
+        style={blob("rgba(224,252,193,0.85)", "rgba(224,252,193,0.00)", 0.22)}
+        animate={reduce ? {} : { x: [0, 22, -10, 0], y: [0, -18, 12, 0], scale: [1, 1.05, 1.0, 1] }}
+        transition={reduce ? {} : { duration: 20, repeat: Infinity, ease: "easeInOut" }}
+      />
+
+      {/* Subtle darker depth (kept minimal) */}
+      <motion.div
+        className="absolute top-[10%] right-[6%] h-[560px] w-[560px] rounded-full blur-3xl"
+        style={blob("rgba(20,20,20,0.10)", "rgba(20,20,20,0.00)", 0.16)}
+        animate={reduce ? {} : { x: [0, -18, 10, 0], y: [0, 16, -10, 0], scale: [1, 1.03, 1.0, 1] }}
+        transition={reduce ? {} : { duration: 22, repeat: Infinity, ease: "easeInOut" }}
+      />
+
+      {/* Dots (existing vibe) */}
       <motion.div
         className="absolute inset-0"
         style={{
           backgroundImage: "radial-gradient(rgba(0,0,0,0.35) 1px, transparent 1px)",
           backgroundSize: "24px 24px",
-          opacity: 0.14,
+          opacity: 0.10,
           maskImage: "radial-gradient(900px 520px at 30% 20%, black 0%, transparent 70%)",
           WebkitMaskImage: "radial-gradient(900px 520px at 30% 20%, black 0%, transparent 70%)",
         }}
         animate={reduce ? {} : { backgroundPosition: ["0px 0px", "24px 24px"] }}
         transition={reduce ? {} : { duration: 10, repeat: Infinity, ease: "linear" }}
+      />
+
+      {/* ✅ Soft grain (adds richness without “noise assets”) */}
+      <div
+        className="absolute inset-0"
+        style={{
+          opacity: 0.06,
+          backgroundImage: `
+            repeating-linear-gradient(0deg, rgba(0,0,0,0.30) 0px, rgba(0,0,0,0.00) 1px, rgba(0,0,0,0.00) 3px),
+            repeating-linear-gradient(90deg, rgba(0,0,0,0.18) 0px, rgba(0,0,0,0.00) 1px, rgba(0,0,0,0.00) 4px)
+          `,
+          mixBlendMode: "soft-light",
+        }}
       />
     </div>
   );

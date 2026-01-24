@@ -98,13 +98,13 @@ export default function Navbar() {
     },
     {
       to: "/services/journal",
-      label: "Journal",
+      label: "Mood Tracker",
       desc: "Reflect and write safely.",
       img: journalImg,
     },
     {
       to: "/services/assessment",
-      label: "PHQ-9 Assessment",
+      label: "Wellness Check",
       desc: "Evidence-based screening tool.",
       img: phqImg,
     },
@@ -145,14 +145,7 @@ export default function Navbar() {
                 className="h-[40px] sm:h-[46px] lg:h-[50px] w-auto object-contain"
               />
 
-              <div className="hidden xl:block leading-tight">
-                <div className="text-[16px] sm:text-[17px] font-extrabold text-[#141414]">
-                  CheckIn
-                </div>
-                <div className="text-[12px] font-semibold text-black/50 -mt-[2px]">
-                  mental well-being
-                </div>
-              </div>
+              
             </NavLink>
 
             {/* DESKTOP NAV */}

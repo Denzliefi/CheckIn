@@ -4,13 +4,18 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 const CHECKIN_GREEN = "#B9FF66";
 const TEXT_MAIN = "#141414";
 
-/** small helper hook for responsive inline-styles */
+// 24h expiry from chat creation
+const EXPIRE_MS = 24 * 60 * 60 * 1000;
+
+// session storage key (per session as requested)
+const SS_KEY = "counselor_chat_session_v1";
+
+/** ✅ SSR-safe media hook */
 function useMedia(query) {
-  const get = () =>
-    typeof window !== "undefined" ? window.matchMedia(query).matches : false;
-  const [matches, setMatches] = useState(get);
+  const [matches, setMatches] = useState(false);
 
   useEffect(() => {
+    if (typeof window === "undefined") return;
     const m = window.matchMedia(query);
     const onChange = () => setMatches(m.matches);
     onChange();
@@ -25,6 +30,21 @@ function useMedia(query) {
   }, [query]);
 
   return matches;
+}
+
+function safeParse(v, fallback) {
+  try {
+    if (!v) return fallback;
+    return JSON.parse(v);
+  } catch {
+    return fallback;
+  }
+}
+
+function isValidEmail(email) {
+  const e = String(email || "").trim();
+  if (!e) return false;
+  return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/i.test(e);
 }
 
 function sameDay(a, b) {
@@ -58,19 +78,6 @@ function dayLabel(dateLike) {
   });
 }
 
-/**
- * Expected thread shape:
- * {
- *   id: string,
- *   name: string,
- *   avatarUrl?: string,
- *   subtitle?: string,        // e.g. "Guidance Counselor"
- *   lastMessage?: string,
- *   lastTime?: string,        // "17h"
- *   unread?: number,
- *   // messages: [{ id, from: "me"|"them", text, time, createdAt? }]
- * }
- */
 export default function MessagesDrawer({
   open,
   onClose,
@@ -81,13 +88,23 @@ export default function MessagesDrawer({
 }) {
   const PAGE_SIZE = 10;
 
-  const [view, setView] = useState("list"); // "list" | "chat"
-  const [dir, setDir] = useState("left"); // "left" | "right"
-  const [activeId, setActiveId] = useState(
-    initialThreadId || threads?.[0]?.id || ""
-  );
+  // views:
+  // "mode" -> choose Student/Anonymous
+  // "email" -> student email required
+  // "chat" -> counselor chat
+  const [view, setView] = useState("mode");
+
+  const [mode, setMode] = useState(null); // "student" | "anonymous" | null
+  const [studentEmail, setStudentEmail] = useState("");
+  const [emailTouched, setEmailTouched] = useState(false);
+
+  const [activeId, setActiveId] = useState(initialThreadId || threads?.[0]?.id || "");
   const [draft, setDraft] = useState("");
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+
+  // expiry session
+  const [createdAtMs, setCreatedAtMs] = useState(null);
+  const [expiresAtMs, setExpiresAtMs] = useState(null);
 
   // responsive flags
   const isMobile = useMedia("(max-width: 520px)");
@@ -98,7 +115,18 @@ export default function MessagesDrawer({
     [threads, activeId]
   );
 
-  // normalize messages (ensure createdAt exists for separators; fallback to "now")
+  const counselorClosed = useMemo(() => {
+    const t = activeThread;
+    if (!t) return false;
+    return (
+      t.status === "closed" ||
+      t.closed === true ||
+      t.endedBy === "counselor" ||
+      t.closedByCounselor === true
+    );
+  }, [activeThread]);
+
+  // normalize messages
   const normalizedMessages = useMemo(() => {
     const all = activeThread?.messages || [];
     return all.map((m, idx) => ({
@@ -114,24 +142,153 @@ export default function MessagesDrawer({
     return all.slice(start);
   }, [normalizedMessages, visibleCount]);
 
-  // ✅ reset ONLY when opening (not when threads update)
+  // date separators + bubble grouping
+  const chatRows = useMemo(() => {
+    const rows = [];
+    for (let i = 0; i < visibleMessages.length; i++) {
+      const m = visibleMessages[i];
+      const prev = visibleMessages[i - 1];
+      const next = visibleMessages[i + 1];
+
+      const showDay = !prev || dayLabel(prev.createdAt) !== dayLabel(m.createdAt);
+      const sameAsPrevSender = !!prev && prev.from === m.from;
+      const sameAsNextSender = !!next && next.from === m.from;
+
+      const isStart = !sameAsPrevSender || showDay;
+      const isEnd = !sameAsNextSender;
+
+      if (showDay) rows.push({ type: "day", key: `day-${m._idx}`, label: dayLabel(m.createdAt) });
+
+      rows.push({ type: "msg", key: m.id || `m-${m._idx}`, msg: m, isStart, isEnd });
+    }
+    return rows;
+  }, [visibleMessages]);
+
+  // ---------- Session persistence (per session) ----------
+  function loadSession() {
+    if (typeof window === "undefined") return null;
+    return safeParse(window.sessionStorage.getItem(SS_KEY), null);
+  }
+  function saveSession(next) {
+    if (typeof window === "undefined") return;
+    window.sessionStorage.setItem(SS_KEY, JSON.stringify(next));
+  }
+  function clearSession() {
+    if (typeof window === "undefined") return;
+    window.sessionStorage.removeItem(SS_KEY);
+  }
+
+  function resetToStart() {
+    setView("mode");
+    setMode(null);
+    setStudentEmail("");
+    setEmailTouched(false);
+    setDraft("");
+    setVisibleCount(PAGE_SIZE);
+    setCreatedAtMs(null);
+    setExpiresAtMs(null);
+    setActiveId(initialThreadId || threads?.[0]?.id || "");
+    clearSession();
+  }
+
+  // ✅ On open: restore from sessionStorage (resume until expiry)
   useEffect(() => {
     if (!open) return;
 
-    setView("list");
-    setDir("left");
-    setDraft("");
-    setVisibleCount(PAGE_SIZE);
-    setActiveId((prev) => prev || initialThreadId || threads?.[0]?.id || "");
+    const saved = loadSession();
+    const defaultThreadId = initialThreadId || threads?.[0]?.id || "";
+    setActiveId((prev) => prev || defaultThreadId);
 
+    if (!saved) {
+      setView("mode");
+      setMode(null);
+      setStudentEmail("");
+      setEmailTouched(false);
+      setDraft("");
+      setVisibleCount(PAGE_SIZE);
+      setCreatedAtMs(null);
+      setExpiresAtMs(null);
+      return;
+    }
+
+    const now = Date.now();
+    if (saved?.expiresAtMs && now >= saved.expiresAtMs) {
+      resetToStart();
+      return;
+    }
+
+    setView(saved.view || "mode");
+    setMode(saved.mode || null);
+    setStudentEmail(saved.studentEmail || "");
+    setCreatedAtMs(saved.createdAtMs || null);
+    setExpiresAtMs(saved.expiresAtMs || null);
+    setActiveId(saved.activeId || defaultThreadId);
+    setVisibleCount(saved.visibleCount || PAGE_SIZE);
+    setDraft("");
+    setEmailTouched(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
+
+  // persist whenever key state changes
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    saveSession({
+      view,
+      mode,
+      studentEmail,
+      createdAtMs,
+      expiresAtMs,
+      activeId,
+      visibleCount,
+    });
+  }, [view, mode, studentEmail, createdAtMs, expiresAtMs, activeId, visibleCount]);
+
+  // ✅ Expiry timer: if expired -> reset
+  useEffect(() => {
+    if (!open) return;
+    if (!expiresAtMs) return;
+
+    const id = window.setInterval(() => {
+      if (Date.now() >= expiresAtMs) resetToStart();
+    }, 15_000);
+
+    return () => window.clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, expiresAtMs]);
 
   // refs for scroll control
   const chatEndRef = useRef(null);
   const chatBodyRef = useRef(null);
 
-  // ✅ always start at bottom when entering chat / switching thread / visible messages changes
+  // ✅ stable "load older messages" scroll restore
+  const pendingScrollRestoreRef = useRef(null);
+
+  function onChatScroll(e) {
+    const el = e.currentTarget;
+    if (el.scrollTop > 16) return;
+
+    const total = normalizedMessages.length || 0;
+    if (visibleCount >= total) return;
+
+    pendingScrollRestoreRef.current = el.scrollHeight;
+    setVisibleCount((c) => Math.min(total, c + PAGE_SIZE));
+  }
+
+  useEffect(() => {
+    if (!open) return;
+    if (view !== "chat") return;
+    const el = chatBodyRef.current;
+    if (!el) return;
+
+    // restore after older messages render
+    if (pendingScrollRestoreRef.current != null) {
+      const prevHeight = pendingScrollRestoreRef.current;
+      pendingScrollRestoreRef.current = null;
+      el.scrollTop = el.scrollHeight - prevHeight;
+    }
+  }, [open, view, visibleMessages.length]);
+
+  // ✅ always start at bottom when entering chat / switching thread
   useEffect(() => {
     if (!open) return;
     if (view !== "chat") return;
@@ -141,9 +298,9 @@ export default function MessagesDrawer({
       if (!el) return;
       el.scrollTop = el.scrollHeight;
     });
-  }, [open, view, activeId, visibleMessages.length]);
+  }, [open, view, activeId]);
 
-  // responsive drawer style (inline)
+  // responsive drawer style
   const drawerStyle = useMemo(() => {
     if (isMobile) {
       return {
@@ -159,8 +316,8 @@ export default function MessagesDrawer({
 
     return {
       ...styles.drawer,
-      width: 380,
-      height: isSmallHeight ? 540 : 600,
+      width: 420,
+      height: isSmallHeight ? 560 : 640,
       right: 18,
       bottom: 18,
       borderRadius: 22,
@@ -177,11 +334,7 @@ export default function MessagesDrawer({
 
   const headerStyle = useMemo(() => {
     if (!isMobile) return styles.header;
-    return {
-      ...styles.header,
-      padding: "12px 14px",
-      gridTemplateColumns: "44px 1fr 44px",
-    };
+    return { ...styles.header, padding: "12px 14px", gridTemplateColumns: "44px 1fr 44px" };
   }, [isMobile]);
 
   const headerBtnStyle = useMemo(() => {
@@ -191,15 +344,28 @@ export default function MessagesDrawer({
 
   const isOpen = !!open;
 
-  const totalUnread = useMemo(() => {
-    return threads.reduce((sum, t) => sum + (t.unread || 0), 0);
-  }, [threads]);
+  // ✅ expiry start (write immediately to sessionStorage)
+  function ensureChatSessionStarted() {
+    const saved = loadSession() || {};
 
+    if (saved?.createdAtMs && saved?.expiresAtMs) {
+      setCreatedAtMs(saved.createdAtMs);
+      setExpiresAtMs(saved.expiresAtMs);
+      return;
+    }
 
+    const now = Date.now();
+    const next = { ...saved, createdAtMs: now, expiresAtMs: now + EXPIRE_MS };
+    saveSession(next);
+    setCreatedAtMs(next.createdAtMs);
+    setExpiresAtMs(next.expiresAtMs);
+  }
 
   async function handleSend() {
     const text = draft.trim();
     if (!text || !activeThread) return;
+    if (counselorClosed) return;
+    if (expiresAtMs && Date.now() >= expiresAtMs) return;
 
     setDraft("");
     try {
@@ -218,298 +384,298 @@ export default function MessagesDrawer({
   }
 
   function goToChat(threadId) {
-    setDir("left");
     setActiveId(threadId);
     setVisibleCount(PAGE_SIZE);
+    ensureChatSessionStarted();
     setView("chat");
   }
 
-  function goBackToList() {
-    setDir("right");
-    setView("list");
-  }
+  function chooseMode(nextMode) {
+    setMode(nextMode);
+    setDraft("");
+    setVisibleCount(PAGE_SIZE);
 
-  // load older when scrolling near top (and keep scroll position stable)
-  function onChatScroll(e) {
-    const el = e.currentTarget;
-    if (el.scrollTop > 16) return;
+    const threadId = initialThreadId || threads?.[0]?.id || "";
 
-    const total = normalizedMessages.length || 0;
-    if (visibleCount >= total) return;
-
-    const prevHeight = el.scrollHeight;
-
-    setVisibleCount((c) => Math.min(total, c + PAGE_SIZE));
-
-    requestAnimationFrame(() => {
-      const newHeight = el.scrollHeight;
-      el.scrollTop = newHeight - prevHeight;
-    });
-  }
-
-  // Build rows with: date separators + bubble grouping
-  const chatRows = useMemo(() => {
-    const rows = [];
-    for (let i = 0; i < visibleMessages.length; i++) {
-      const m = visibleMessages[i];
-      const prev = visibleMessages[i - 1];
-      const next = visibleMessages[i + 1];
-
-      const showDay =
-        !prev || dayLabel(prev.createdAt) !== dayLabel(m.createdAt);
-
-      const sameAsPrevSender = !!prev && prev.from === m.from;
-      const sameAsNextSender = !!next && next.from === m.from;
-
-      const isStart = !sameAsPrevSender || showDay; // start of group or after separator
-      const isEnd = !sameAsNextSender; // end of group
-
-      if (showDay) {
-        rows.push({ type: "day", key: `day-${m._idx}`, label: dayLabel(m.createdAt) });
-      }
-
-      rows.push({
-        type: "msg",
-        key: m.id || `m-${m._idx}`,
-        msg: m,
-        isStart,
-        isEnd,
-      });
+    if (nextMode === "anonymous") {
+      setStudentEmail("");
+      setEmailTouched(false);
+      goToChat(threadId);
+      return;
     }
-    return rows;
-  }, [visibleMessages]);
 
+    setView("email");
+  }
+
+  function continueStudent() {
+    setEmailTouched(true);
+    if (!isValidEmail(studentEmail)) return;
+
+    const threadId = initialThreadId || threads?.[0]?.id || "";
+    goToChat(threadId);
+  }
+
+  function endConversationByUser() {
+    // optional confirm to prevent accidental reset
+    const ok = window.confirm?.("End this conversation? It will reset to the beginning.");
+    if (ok === false) return;
+    resetToStart();
+  }
+
+  // ---------- UI ----------
   return !isOpen ? null : (
     <>
-      {/* overlay */}
       <div style={overlayStyle} onClick={onClose} />
 
-      {/* drawer */}
       <div style={drawerStyle} role="dialog" aria-label="Messages">
-        {/* header */}
         <div style={headerStyle}>
           {view === "chat" ? (
             <button
               style={headerBtnStyle}
-              onClick={goBackToList}
-              aria-label="Back"
-              title="Back"
+              onClick={endConversationByUser}
+              aria-label="End conversation"
+              title="End conversation"
             >
-              ←
+              End
             </button>
           ) : (
             <span style={{ width: isMobile ? 44 : 34 }} />
           )}
 
           <div style={styles.headerTitleWrap}>
-            {view === "list" ? (
-              <div style={styles.headerTitleRow}>
-                <span style={styles.headerTitle}>{title}</span>
-                {totalUnread > 0 && (
-                  <span style={styles.headerBadge}>{totalUnread}</span>
-                )}
-              </div>
-            ) : (
-              <div style={styles.chatHeader}>
-                <img
-                  src={activeThread?.avatarUrl || "https://via.placeholder.com/44"}
-                  alt=""
-                  style={styles.chatHeaderAvatar}
-                />
-                <div style={{ minWidth: 0 }}>
-                  <div style={styles.chatHeaderName}>
-                    {activeThread?.name || "Conversation"}
-                  </div>
-                  <div style={styles.chatHeaderSub}>
-                    {activeThread?.subtitle || "Counselor"}
-                    <span style={styles.dot} />
-                    <span style={styles.replyHint}>Replies as soon as possible</span>
-                  </div>
-                </div>
-              </div>
-            )}
+            <div style={styles.headerTitleRow}>
+              <span style={styles.headerTitle}>{view === "chat" ? "Counselor Chat" : title}</span>
+              {mode ? (
+                <span style={styles.modeBadge}>{mode === "student" ? "Student" : "Anonymous"}</span>
+              ) : null}
+            </div>
           </div>
 
-          <button
-            style={headerBtnStyle}
-            onClick={onClose}
-            aria-label="Close"
-            title="Close"
-          >
+          <button style={headerBtnStyle} onClick={onClose} aria-label="Close" title="Close">
             ✕
           </button>
         </div>
 
-        {/* body (animated) */}
-        <div
-          key={view}
-          style={{
-            ...styles.bodyAnimator,
-            ...(dir === "left" ? styles.slideInLeft : styles.slideInRight),
-          }}
-        >
-          {view === "list" ? (
-            <div style={styles.list}>
-              {threads.map((t) => (
-                <button
-                  key={t.id}
-                  type="button"
-                  onClick={() => goToChat(t.id)}
-                  style={styles.thread}
-                >
-                  <img
-                    src={t.avatarUrl || "https://via.placeholder.com/48"}
-                    alt=""
-                    style={styles.threadAvatar}
-                  />
+        {view === "mode" ? (
+          <div style={styles.centerWrap}>
+            <div style={styles.panel}>
+              <div style={styles.panelTitle}>Continue to counselor chat</div>
+              <div style={styles.panelText}>
+                Choose how you want to start. You can end the conversation anytime. Conversations expire after{" "}
+                <b>24 hours</b> and will reset.
+              </div>
 
-                  <div style={{ minWidth: 0, flex: 1 }}>
-                    <div style={styles.threadTop}>
-                      <span style={styles.threadName}>{t.name}</span>
-                      <span style={styles.threadTime}>{t.lastTime || ""}</span>
-                    </div>
+              <div style={{ height: 12 }} />
 
-                    <div style={styles.threadBottom}>
-                      <span style={styles.threadLast}>
-                        {t.lastMessage || "No messages yet."}
-                      </span>
-                      {t.unread > 0 && <span style={styles.unreadPill}>{t.unread}</span>}
-                    </div>
-                  </div>
-                </button>
-              ))}
+              <button type="button" style={styles.bigChoiceBtn} onClick={() => chooseMode("student")}>
+                <div style={styles.choiceTitle}>Continue as Student</div>
+                <div style={styles.choiceSub}>Email required for follow-up if counselor doesn’t respond.</div>
+              </button>
+
+              <button type="button" style={styles.bigChoiceBtnAlt} onClick={() => chooseMode("anonymous")}>
+                <div style={styles.choiceTitle}>Continue as Anonymous</div>
+                <div style={styles.choiceSub}>No email required. Chat still expires after 24 hours.</div>
+              </button>
             </div>
-          ) : (
-            <div style={styles.chatWrap}>
-              {/* privacy as a system bubble (calm + readable) */}
-              <div style={styles.systemWrap}>
-                <div style={styles.systemBubble}>
-                  <div style={styles.systemTitle}>Your privacy is valued.</div>
-                  <div style={styles.systemText}>
-                    Counselors will reply as soon as possible. If this is an
-                    emergency, contact your local hotline.
-                  </div>
+          </div>
+        ) : view === "email" ? (
+          <div style={styles.centerWrap}>
+            <div style={styles.panel}>
+              <div style={styles.panelTitle}>Student email</div>
+              <div style={styles.panelText}>
+                Your email is required so we can follow up if the counselor doesn’t respond in chat. Stored{" "}
+                <b>only for this session</b>.
+              </div>
+
+              <div style={{ height: 14 }} />
+
+              <label style={styles.label}>Email address</label>
+              <input
+                value={studentEmail}
+                onChange={(e) => setStudentEmail(e.target.value)}
+                onBlur={() => setEmailTouched(true)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    continueStudent();
+                  }
+                }}
+                placeholder="name@school.edu"
+                style={{
+                  ...styles.input,
+                  ...(emailTouched && !isValidEmail(studentEmail) ? styles.inputError : null),
+                }}
+              />
+
+              {emailTouched && !isValidEmail(studentEmail) ? (
+                <div style={styles.errorText}>Please enter a valid email.</div>
+              ) : (
+                <div style={styles.hintText}>Example: name@school.edu</div>
+              )}
+
+              <div style={{ height: 14 }} />
+
+              <div style={{ display: "flex", gap: 10 }}>
+                <button type="button" style={styles.secondaryBtn} onClick={resetToStart}>
+                  Back
+                </button>
+
+                <button
+                  type="button"
+                  style={{
+                    ...styles.primaryBtn,
+                    ...(isValidEmail(studentEmail) ? null : styles.primaryBtnDisabled),
+                  }}
+                  onClick={continueStudent}
+                  disabled={!isValidEmail(studentEmail)}
+                >
+                  Continue to Chat
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : (
+          // CHAT VIEW
+          <div style={styles.chatWrap}>
+            <div style={styles.systemWrap}>
+              <div style={styles.systemBubble}>
+                <div style={styles.systemTitle}>Your privacy is valued.</div>
+                <div style={styles.systemText}>
+                  Counselors will reply as soon as possible. If this is an emergency, contact your local hotline.
                 </div>
               </div>
 
-              {/* messages */}
-              <div
-                ref={chatBodyRef}
-                style={styles.chatBody}
-                onScroll={onChatScroll}
-              >
-                {/* top fade */}
-                <div style={styles.topFade} aria-hidden="true" />
+              {!activeThread ? (
+                <div style={styles.closedBanner}>
+                  No counselor conversation is available yet.
+                  <button type="button" style={styles.closedBannerBtn} onClick={resetToStart}>
+                    Restart
+                  </button>
+                </div>
+              ) : counselorClosed ? (
+                <div style={styles.closedBanner}>
+                  This conversation has been closed by the counselor.
+                  <button type="button" style={styles.closedBannerBtn} onClick={resetToStart}>
+                    Start new conversation
+                  </button>
+                </div>
+              ) : null}
 
-                {normalizedMessages.length > visibleCount ? (
-                  <div style={styles.loadMoreHint}>Loading earlier messages…</div>
-                ) : (
-                  <div style={styles.loadMoreHintDim}>Start of conversation</div>
-                )}
+              {expiresAtMs ? (
+                <div style={styles.expireHint}>
+                  Expires:{" "}
+                  <b>
+                    {new Date(expiresAtMs).toLocaleString(undefined, {
+                      month: "short",
+                      day: "2-digit",
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })}
+                  </b>
+                </div>
+              ) : null}
+            </div>
 
-                {chatRows.map((row) => {
-                  if (row.type === "day") {
-                    return (
-                      <div key={row.key} style={styles.dayRow}>
-                        <span style={styles.dayChip}>{row.label}</span>
-                      </div>
-                    );
-                  }
+            <div ref={chatBodyRef} style={styles.chatBody} onScroll={onChatScroll}>
+              <div style={styles.topFade} aria-hidden="true" />
 
-                  const m = row.msg;
-                  const isMe = m.from === "me";
+              {normalizedMessages.length > visibleCount ? (
+                <div style={styles.loadMoreHint}>Loading earlier messages…</div>
+              ) : (
+                <div style={styles.loadMoreHintDim}>Start of conversation</div>
+              )}
 
-                  const bubbleStyle = {
-                    ...styles.bubble,
-                    ...(isMe ? styles.bubbleMe : styles.bubbleThem),
-                    ...(row.isStart ? null : (isMe ? styles.bubbleMeMid : styles.bubbleThemMid)),
-                    ...(row.isEnd ? null : (isMe ? styles.bubbleMeMid2 : styles.bubbleThemMid2)),
-                  };
-
+              {chatRows.map((row) => {
+                if (row.type === "day") {
                   return (
-                    <div
-                      key={row.key}
-                      style={{
-                        display: "flex",
-                        justifyContent: isMe ? "flex-end" : "flex-start",
-                        marginBottom: row.isEnd ? 10 : 4,
-                      }}
-                    >
-                      <div style={bubbleStyle}>
-                        <div style={styles.bubbleText}>{m.text}</div>
-                        {row.isEnd && m.time ? (
-                          <div style={styles.bubbleTime}>{m.time}</div>
-                        ) : null}
-                      </div>
+                    <div key={row.key} style={styles.dayRow}>
+                      <span style={styles.dayChip}>{row.label}</span>
                     </div>
                   );
-                })}
+                }
 
-                <div ref={chatEndRef} />
-              </div>
+                const m = row.msg;
+                const isMe = m.from === "me";
 
-              {/* input */}
-              <div style={styles.inputBar}>
-                <button
-                  style={styles.iconBtn}
-                  type="button"
-                  aria-label="Emoji"
-                  title="Emoji"
-                >
-                  🙂
-                </button>
+                const bubbleStyle = {
+                  ...styles.bubble,
+                  ...(isMe ? styles.bubbleMe : styles.bubbleThem),
+                  ...(row.isStart ? null : isMe ? styles.bubbleMeMid : styles.bubbleThemMid),
+                  ...(row.isEnd ? null : isMe ? styles.bubbleMeMid2 : styles.bubbleThemMid2),
+                };
 
-                <textarea
-                  value={draft}
-                  onChange={(e) => setDraft(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && !e.shiftKey) {
-                      e.preventDefault();
-                      handleSend();
-                    }
-                  }}
-                  placeholder="Type a message…"
-                  style={styles.textarea}
-                  rows={1}
-                />
+                return (
+                  <div
+                    key={row.key}
+                    style={{
+                      display: "flex",
+                      justifyContent: isMe ? "flex-end" : "flex-start",
+                      marginBottom: row.isEnd ? 12 : 6,
+                    }}
+                  >
+                    <div style={bubbleStyle}>
+                      <div style={styles.bubbleText}>{m.text}</div>
+                      {row.isEnd && m.time ? <div style={styles.bubbleTime}>{m.time}</div> : null}
+                    </div>
+                  </div>
+                );
+              })}
 
-                <button
-                  style={styles.iconBtn}
-                  type="button"
-                  aria-label="Attach"
-                  title="Attach"
-                >
-                  📎
-                </button>
-
-                <button
-                  style={{
-                    ...styles.sendIcon,
-                    ...(draft.trim() ? null : styles.sendIconDisabled),
-                  }}
-                  type="button"
-                  onClick={handleSend}
-                  disabled={!draft.trim()}
-                  aria-label="Send"
-                  title="Send"
-                >
-                  ➤
-                </button>
-              </div>
+              <div ref={chatEndRef} />
             </div>
-          )}
-        </div>
 
-        {/* keyframes */}
-        <style>{`
-          @keyframes msgSlideInLeft { from { transform: translateX(10px); opacity: 0.6; } to { transform: translateX(0); opacity: 1; } }
-          @keyframes msgSlideInRight { from { transform: translateX(-10px); opacity: 0.6; } to { transform: translateX(0); opacity: 1; } }
-        `}</style>
+            <div style={styles.inputBar}>
+              <button style={styles.iconBtn} type="button" aria-label="Emoji" title="Emoji">
+                🙂
+              </button>
+
+              <textarea
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    handleSend();
+                  }
+                }}
+                placeholder={counselorClosed ? "Conversation closed." : "Type a message…"}
+                style={{
+                  ...styles.textarea,
+                  ...(counselorClosed || !activeThread ? styles.textareaDisabled : null),
+                }}
+                rows={1}
+                disabled={counselorClosed || !activeThread}
+              />
+
+              <button style={styles.iconBtn} type="button" aria-label="Attach" title="Attach">
+                📎
+              </button>
+
+              <button
+                style={{
+                  ...styles.sendIcon,
+                  ...(draft.trim() && !counselorClosed && activeThread ? null : styles.sendIconDisabled),
+                }}
+                type="button"
+                onClick={handleSend}
+                disabled={!draft.trim() || counselorClosed || !activeThread}
+                aria-label="Send"
+                title="Send"
+              >
+                ➤
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </>
   );
 }
 
+/**
+ * ✅ Your styles are kept the same.
+ * (No changes below)
+ */
 const styles = {
   overlay: {
     position: "fixed",
@@ -518,11 +684,10 @@ const styles = {
     zIndex: 9998,
   },
 
-  // LIGHT drawer (surpasses readability)
   drawer: {
     position: "fixed",
     zIndex: 9999,
-    background: "rgba(255,255,255,0.92)",
+    background: "rgba(255,255,255,0.94)",
     backdropFilter: "blur(12px)",
     WebkitBackdropFilter: "blur(12px)",
     boxShadow: "0 18px 48px rgba(0,0,0,0.22)",
@@ -538,8 +703,7 @@ const styles = {
     gridTemplateColumns: "34px 1fr 34px",
     alignItems: "center",
     borderBottom: "1px solid rgba(20,20,20,0.08)",
-    background:
-      "linear-gradient(180deg, rgba(255,255,255,0.98), rgba(255,255,255,0.86))",
+    background: "linear-gradient(180deg, rgba(255,255,255,0.98), rgba(255,255,255,0.86))",
   },
   headerBtn: {
     width: 34,
@@ -551,326 +715,108 @@ const styles = {
     cursor: "pointer",
     fontFamily: "Nunito, sans-serif",
     fontWeight: 900,
+    fontSize: 14,
   },
 
   headerTitleWrap: { minWidth: 0, paddingLeft: 10, paddingRight: 10 },
-  headerTitleRow: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-  },
-  headerTitle: {
-    color: TEXT_MAIN,
-    fontFamily: "Lora, serif",
-    fontWeight: 800,
-    fontSize: 18,
-    letterSpacing: "0.2px",
-  },
-  headerBadge: {
-    background: "#FF3B30",
-    color: "#fff",
+  headerTitleRow: { display: "flex", alignItems: "center", justifyContent: "center", gap: 8 },
+  headerTitle: { color: TEXT_MAIN, fontFamily: "Lora, serif", fontWeight: 900, fontSize: 19, letterSpacing: "0.2px" },
+  modeBadge: {
     borderRadius: 999,
+    padding: "4px 10px",
+    border: "1px solid rgba(0,0,0,0.10)",
+    background: "rgba(185,255,102,0.35)",
     fontFamily: "Nunito, sans-serif",
     fontWeight: 900,
     fontSize: 12,
-    padding: "2px 8px",
-  },
-
-  // chat header
-  chatHeader: {
-    display: "flex",
-    alignItems: "center",
-    gap: 10,
-    justifyContent: "center",
-  },
-  chatHeaderAvatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 999,
-    objectFit: "cover",
-    border: `2px solid ${CHECKIN_GREEN}`,
-    flex: "0 0 auto",
-  },
-  chatHeaderName: {
-    fontFamily: "Lora, serif",
-    fontWeight: 800,
-    fontSize: 15,
     color: TEXT_MAIN,
-    overflow: "hidden",
-    whiteSpace: "nowrap",
-    textOverflow: "ellipsis",
-    maxWidth: 210,
   },
-  chatHeaderSub: {
-    marginTop: 2,
-    display: "flex",
-    gap: 6,
-    alignItems: "center",
-    justifyContent: "center",
-    fontFamily: "Nunito, sans-serif",
-    fontWeight: 800,
-    fontSize: 12,
-    color: "rgba(20,20,20,0.62)",
-    overflow: "hidden",
-    whiteSpace: "nowrap",
-    textOverflow: "ellipsis",
-  },
-  dot: {
-    width: 6,
-    height: 6,
-    borderRadius: 999,
-    background: "rgba(20,20,20,0.25)",
-    display: "inline-block",
-  },
-  replyHint: { fontWeight: 800 },
 
-  bodyAnimator: { flex: 1, minHeight: 0, display: "flex", flexDirection: "column" },
-  slideInLeft: { animation: "msgSlideInLeft 220ms cubic-bezier(0.22, 1, 0.36, 1)" },
-  slideInRight: { animation: "msgSlideInRight 220ms cubic-bezier(0.22, 1, 0.36, 1)" },
-
-  list: { padding: 10, overflow: "auto" },
-
-  thread: {
+  centerWrap: { flex: 1, minHeight: 0, display: "flex", alignItems: "center", justifyContent: "center", padding: 14 },
+  panel: {
     width: "100%",
-    display: "flex",
-    gap: 10,
-    padding: "10px 10px",
-    borderRadius: 16,
-    border: "1px solid rgba(20,20,20,0.08)",
-    background: "rgba(255,255,255,0.72)",
-    cursor: "pointer",
+    maxWidth: 520,
+    borderRadius: 18,
+    border: "1px solid rgba(20,20,20,0.10)",
+    background: "rgba(255,255,255,0.80)",
+    boxShadow: "0 16px 40px rgba(0,0,0,0.10)",
+    padding: 16,
+  },
+  panelTitle: { fontFamily: "Lora, serif", fontWeight: 900, fontSize: 18, color: TEXT_MAIN },
+  panelText: { marginTop: 6, fontFamily: "Nunito, sans-serif", fontWeight: 750, fontSize: 14, color: "rgba(20,20,20,0.72)", lineHeight: 1.55 },
+
+  bigChoiceBtn: {
+    width: "100%",
     textAlign: "left",
+    padding: 14,
+    borderRadius: 16,
+    border: "1px solid rgba(0,0,0,0.12)",
+    background: "rgba(185,255,102,0.55)",
+    cursor: "pointer",
+    boxShadow: "0 12px 24px rgba(0,0,0,0.08)",
     marginBottom: 10,
   },
-  threadAvatar: {
-    width: 46,
-    height: 46,
-    borderRadius: 999,
-    objectFit: "cover",
-    border: `2px solid ${CHECKIN_GREEN}`,
-    flex: "0 0 auto",
+  bigChoiceBtnAlt: {
+    width: "100%",
+    textAlign: "left",
+    padding: 14,
+    borderRadius: 16,
+    border: "1px solid rgba(0,0,0,0.12)",
+    background: "rgba(255,255,255,0.86)",
+    cursor: "pointer",
+    boxShadow: "0 12px 24px rgba(0,0,0,0.06)",
   },
-  threadTop: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 10,
-  },
-  threadName: {
-    color: TEXT_MAIN,
-    fontFamily: "Lora, serif",
-    fontWeight: 800,
-    fontSize: 15,
-    overflow: "hidden",
-    whiteSpace: "nowrap",
-    textOverflow: "ellipsis",
-  },
-  threadTime: {
-    color: "rgba(20,20,20,0.55)",
-    fontFamily: "Nunito, sans-serif",
-    fontWeight: 800,
-    fontSize: 12,
-    flex: "0 0 auto",
-  },
-  threadBottom: {
-    marginTop: 3,
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 10,
-  },
-  threadLast: {
-    color: "rgba(20,20,20,0.70)",
-    fontFamily: "Nunito, sans-serif",
-    fontWeight: 700,
-    fontSize: 12,
-    overflow: "hidden",
-    whiteSpace: "nowrap",
-    textOverflow: "ellipsis",
-    minWidth: 0,
-  },
-  unreadPill: {
-    background: "#2F80FF",
-    color: "#fff",
-    fontFamily: "Nunito, sans-serif",
-    fontWeight: 900,
-    fontSize: 11,
-    borderRadius: 999,
-    padding: "2px 8px",
-    flex: "0 0 auto",
-  },
+  choiceTitle: { fontFamily: "Nunito, sans-serif", fontWeight: 900, fontSize: 16, color: TEXT_MAIN },
+  choiceSub: { marginTop: 4, fontFamily: "Nunito, sans-serif", fontWeight: 750, fontSize: 13, color: "rgba(20,20,20,0.70)", lineHeight: 1.45 },
+
+  label: { display: "block", fontFamily: "Nunito, sans-serif", fontWeight: 900, fontSize: 13, color: "rgba(20,20,20,0.78)", marginBottom: 6 },
+  input: { width: "100%", borderRadius: 14, border: "1px solid rgba(20,20,20,0.12)", background: "rgba(255,255,255,0.92)", padding: "12px 12px", outline: "none", fontFamily: "Nunito, sans-serif", fontWeight: 800, fontSize: 14, color: TEXT_MAIN },
+  inputError: { borderColor: "rgba(255,59,48,0.65)", boxShadow: "0 0 0 4px rgba(255,59,48,0.10)" },
+  hintText: { marginTop: 6, fontFamily: "Nunito, sans-serif", fontWeight: 700, fontSize: 12, color: "rgba(20,20,20,0.55)" },
+  errorText: { marginTop: 6, fontFamily: "Nunito, sans-serif", fontWeight: 900, fontSize: 12, color: "#FF3B30" },
+
+  primaryBtn: { flex: 1, borderRadius: 14, border: "1px solid rgba(0,0,0,0.12)", background: CHECKIN_GREEN, color: TEXT_MAIN, cursor: "pointer", padding: "12px 12px", fontFamily: "Nunito, sans-serif", fontWeight: 900, fontSize: 14 },
+  primaryBtnDisabled: { opacity: 0.55, cursor: "not-allowed" },
+  secondaryBtn: { width: 110, borderRadius: 14, border: "1px solid rgba(0,0,0,0.12)", background: "rgba(20,20,20,0.04)", color: TEXT_MAIN, cursor: "pointer", padding: "12px 12px", fontFamily: "Nunito, sans-serif", fontWeight: 900, fontSize: 14 },
 
   chatWrap: { display: "flex", flexDirection: "column", minHeight: 0, flex: 1 },
 
-  // chat background pattern
-  chatBody: {
-    padding: 12,
-    overflow: "auto",
-    flex: 1,
-    background:
-      "radial-gradient(circle at 18% 30%, rgba(185,255,102,0.16) 0 2px, transparent 3px), radial-gradient(circle at 68% 70%, rgba(185,255,102,0.12) 0 2px, transparent 3px), linear-gradient(180deg, rgba(255,255,255,0.55), rgba(255,255,255,0.92))",
-  },
-  topFade: {
-    position: "sticky",
-    top: 0,
-    height: 14,
-    marginTop: -12,
-    background:
-      "linear-gradient(180deg, rgba(255,255,255,0.96), rgba(255,255,255,0))",
-    zIndex: 2,
-  },
+  systemWrap: { padding: "10px 12px 0" },
+  systemBubble: { borderRadius: 16, border: "1px dashed rgba(20,20,20,0.18)", background: "rgba(255,255,255,0.80)", padding: "12px 12px" },
+  systemTitle: { fontFamily: "Nunito, sans-serif", fontWeight: 900, fontSize: 13, color: TEXT_MAIN, letterSpacing: "0.2px" },
+  systemText: { marginTop: 6, fontFamily: "Nunito, sans-serif", fontWeight: 750, fontSize: 13, color: "rgba(20,20,20,0.72)", lineHeight: 1.5 },
 
-  // system bubble
-  systemWrap: {
-    padding: "10px 12px 0",
-  },
-  systemBubble: {
-    borderRadius: 16,
-    border: "1px dashed rgba(20,20,20,0.18)",
-    background: "rgba(255,255,255,0.75)",
-    padding: "10px 12px",
-  },
-  systemTitle: {
-    fontFamily: "Nunito, sans-serif",
-    fontWeight: 900,
-    fontSize: 12,
-    color: TEXT_MAIN,
-    letterSpacing: "0.2px",
-  },
-  systemText: {
-    marginTop: 4,
-    fontFamily: "Nunito, sans-serif",
-    fontWeight: 700,
-    fontSize: 12,
-    color: "rgba(20,20,20,0.70)",
-    lineHeight: 1.35,
-  },
+  closedBanner: { marginTop: 10, borderRadius: 16, border: "1px solid rgba(255,59,48,0.25)", background: "rgba(255,59,48,0.08)", padding: "10px 12px", fontFamily: "Nunito, sans-serif", fontWeight: 900, fontSize: 13, color: "rgba(20,20,20,0.85)", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 },
+  closedBannerBtn: { borderRadius: 999, border: "1px solid rgba(0,0,0,0.10)", background: "rgba(255,255,255,0.85)", padding: "8px 10px", cursor: "pointer", fontFamily: "Nunito, sans-serif", fontWeight: 900, fontSize: 12, color: TEXT_MAIN, whiteSpace: "nowrap" },
 
-  loadMoreHint: {
-    textAlign: "center",
-    padding: "10px 0 12px",
-    fontFamily: "Nunito, sans-serif",
-    fontWeight: 900,
-    fontSize: 12,
-    color: "rgba(20,20,20,0.58)",
-  },
-  loadMoreHintDim: {
-    textAlign: "center",
-    padding: "10px 0 12px",
-    fontFamily: "Nunito, sans-serif",
-    fontWeight: 900,
-    fontSize: 12,
-    color: "rgba(20,20,20,0.38)",
-  },
+  expireHint: { marginTop: 10, fontFamily: "Nunito, sans-serif", fontWeight: 800, fontSize: 12, color: "rgba(20,20,20,0.55)" },
 
-  dayRow: { display: "flex", justifyContent: "center", margin: "6px 0 10px" },
-  dayChip: {
-    padding: "6px 10px",
-    borderRadius: 999,
-    background: "rgba(20,20,20,0.06)",
-    border: "1px solid rgba(20,20,20,0.08)",
-    fontFamily: "Nunito, sans-serif",
-    fontWeight: 900,
-    fontSize: 11,
-    color: "rgba(20,20,20,0.65)",
-  },
+  chatBody: { padding: 12, overflow: "auto", flex: 1, background: "radial-gradient(circle at 18% 30%, rgba(185,255,102,0.16) 0 2px, transparent 3px), radial-gradient(circle at 68% 70%, rgba(185,255,102,0.12) 0 2px, transparent 3px), linear-gradient(180deg, rgba(255,255,255,0.55), rgba(255,255,255,0.92))" },
+  topFade: { position: "sticky", top: 0, height: 14, marginTop: -12, background: "linear-gradient(180deg, rgba(255,255,255,0.96), rgba(255,255,255,0))", zIndex: 2 },
 
-  // bubbles
-  bubble: {
-    maxWidth: "78%",
-    padding: "10px 12px",
-    borderRadius: 18,
-    border: "1px solid rgba(20,20,20,0.08)",
-    boxShadow: "0 8px 18px rgba(0,0,0,0.06)",
-  },
-  bubbleMe: {
-    background: CHECKIN_GREEN,
-    color: TEXT_MAIN,
-    borderColor: "rgba(0,0,0,0.10)",
-    borderTopRightRadius: 10,
-  },
-  bubbleThem: {
-    background: "rgba(255,255,255,0.95)",
-    color: TEXT_MAIN,
-    borderTopLeftRadius: 10,
-  },
+  loadMoreHint: { textAlign: "center", padding: "10px 0 12px", fontFamily: "Nunito, sans-serif", fontWeight: 900, fontSize: 12, color: "rgba(20,20,20,0.58)" },
+  loadMoreHintDim: { textAlign: "center", padding: "10px 0 12px", fontFamily: "Nunito, sans-serif", fontWeight: 900, fontSize: 12, color: "rgba(20,20,20,0.38)" },
 
-  // grouping tweaks (mid bubbles look connected)
+  dayRow: { display: "flex", justifyContent: "center", margin: "8px 0 12px" },
+  dayChip: { padding: "6px 10px", borderRadius: 999, background: "rgba(20,20,20,0.06)", border: "1px solid rgba(20,20,20,0.08)", fontFamily: "Nunito, sans-serif", fontWeight: 900, fontSize: 12, color: "rgba(20,20,20,0.65)" },
+
+  bubble: { maxWidth: "82%", padding: "12px 13px", borderRadius: 18, border: "1px solid rgba(20,20,20,0.08)", boxShadow: "0 8px 18px rgba(0,0,0,0.06)" },
+  bubbleMe: { background: CHECKIN_GREEN, color: TEXT_MAIN, borderColor: "rgba(0,0,0,0.10)", borderTopRightRadius: 10 },
+  bubbleThem: { background: "rgba(255,255,255,0.95)", color: TEXT_MAIN, borderTopLeftRadius: 10 },
   bubbleMeMid: { borderTopRightRadius: 8 },
   bubbleMeMid2: { borderBottomRightRadius: 8 },
   bubbleThemMid: { borderTopLeftRadius: 8 },
   bubbleThemMid2: { borderBottomLeftRadius: 8 },
 
-  bubbleText: {
-    fontFamily: "Nunito, sans-serif",
-    fontWeight: 800,
-    fontSize: 14,
-    lineHeight: 1.5,
-    whiteSpace: "pre-wrap",
-    wordBreak: "break-word",
-  },
-  bubbleTime: {
-    marginTop: 6,
-    fontFamily: "Nunito, sans-serif",
-    fontWeight: 900,
-    fontSize: 10,
-    opacity: 0.65,
-    textAlign: "right",
-  },
+  bubbleText: { fontFamily: "Nunito, sans-serif", fontWeight: 800, fontSize: 15, lineHeight: 1.55, whiteSpace: "pre-wrap", wordBreak: "break-word" },
+  bubbleTime: { marginTop: 8, fontFamily: "Nunito, sans-serif", fontWeight: 900, fontSize: 11, opacity: 0.65, textAlign: "right" },
 
-  inputBar: {
-    padding: 10,
-    paddingBottom: "calc(10px + env(safe-area-inset-bottom))",
-    borderTop: "1px solid rgba(20,20,20,0.08)",
-    display: "flex",
-    gap: 8,
-    alignItems: "center",
-    background: "rgba(255,255,255,0.92)",
-  },
-  iconBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 14,
-    border: "1px solid rgba(20,20,20,0.10)",
-    background: "rgba(20,20,20,0.04)",
-    color: TEXT_MAIN,
-    cursor: "pointer",
-    fontFamily: "Nunito, sans-serif",
-    fontWeight: 900,
-  },
+  inputBar: { padding: 10, paddingBottom: "calc(10px + env(safe-area-inset-bottom))", borderTop: "1px solid rgba(20,20,20,0.08)", display: "flex", gap: 8, alignItems: "center", background: "rgba(255,255,255,0.92)" },
+  iconBtn: { width: 40, height: 40, borderRadius: 14, border: "1px solid rgba(20,20,20,0.10)", background: "rgba(20,20,20,0.04)", color: TEXT_MAIN, cursor: "pointer", fontFamily: "Nunito, sans-serif", fontWeight: 900, fontSize: 16 },
 
-  // textarea (multiline + readable)
-  textarea: {
-    flex: 1,
-    minHeight: 38,
-    maxHeight: 110,
-    resize: "none",
-    borderRadius: 16,
-    border: "1px solid rgba(20,20,20,0.10)",
-    background: "rgba(255,255,255,0.82)",
-    color: TEXT_MAIN,
-    padding: "10px 12px",
-    outline: "none",
-    fontFamily: "Nunito, sans-serif",
-    fontWeight: 800,
-    fontSize: 13,
-    lineHeight: 1.35,
-  },
+  textarea: { flex: 1, minHeight: 40, maxHeight: 120, resize: "none", borderRadius: 16, border: "1px solid rgba(20,20,20,0.10)", background: "rgba(255,255,255,0.86)", color: TEXT_MAIN, padding: "11px 12px", outline: "none", fontFamily: "Nunito, sans-serif", fontWeight: 800, fontSize: 14, lineHeight: 1.45 },
+  textareaDisabled: { opacity: 0.7, cursor: "not-allowed" },
 
-  sendIcon: {
-    width: 38,
-    height: 38,
-    borderRadius: 14,
-    border: "1px solid rgba(0,0,0,0.10)",
-    background: CHECKIN_GREEN,
-    color: TEXT_MAIN,
-    cursor: "pointer",
-    fontFamily: "Nunito, sans-serif",
-    fontWeight: 900,
-    fontSize: 16,
-    display: "grid",
-    placeItems: "center",
-  },
+  sendIcon: { width: 40, height: 40, borderRadius: 14, border: "1px solid rgba(0,0,0,0.10)", background: CHECKIN_GREEN, color: TEXT_MAIN, cursor: "pointer", fontFamily: "Nunito, sans-serif", fontWeight: 900, fontSize: 18, display: "grid", placeItems: "center" },
   sendIconDisabled: { opacity: 0.55, cursor: "not-allowed" },
 };

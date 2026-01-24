@@ -12,15 +12,25 @@ export default function FloatingMessagesPill({
   return (
     <button
       type="button"
-      onClick={onClick}
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick?.();
+      }}
+      onPointerDown={(e) => e.stopPropagation()}
       aria-label="Open Messages"
       title="Messages"
-      className="fixed right-4 bottom-4 z-[70] flex items-center gap-3 px-4 py-3 rounded-full shadow-2xl border border-black/10 bg-white/90 hover:bg-white transition"
-      style={{ backdropFilter: "blur(10px)" }}
+      className="fixed z-[10000] flex items-center gap-3 px-4 py-3 rounded-full shadow-2xl border border-black/10 bg-white/90 hover:bg-white transition"
+      style={{
+        right: "calc(16px + env(safe-area-inset-right))",
+        bottom: "calc(16px + env(safe-area-inset-bottom))",
+        backdropFilter: "blur(10px)",
+        WebkitBackdropFilter: "blur(10px)",
+        touchAction: "manipulation",
+        pointerEvents: "auto",
+      }}
     >
-      {/* icon */}
       <span
-        className="h-10 w-10 rounded-full grid place-items-center"
+        className="h-11 w-11 md:h-12 md:w-12 rounded-full grid place-items-center"
         style={{ backgroundColor: `${accent}55`, color: "#141414" }}
       >
         💬
@@ -35,7 +45,6 @@ export default function FloatingMessagesPill({
         </div>
       </div>
 
-      {/* badge */}
       {unread > 0 ? (
         <span className="ml-1 px-2 py-[2px] rounded-full text-[12px] font-[Nunito] font-extrabold text-white bg-red-500">
           {unread}
