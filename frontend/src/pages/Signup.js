@@ -1134,6 +1134,24 @@ export default function Signup() {
 
   const pendingActionRef = useRef(null);
 
+  const errorTimerRef = useRef(null);
+
+    const showError = (msg) => {
+    if (errorTimerRef.current) clearTimeout(errorTimerRef.current);
+    setError(msg);
+
+    errorTimerRef.current = setTimeout(() => {
+      setError("");
+      errorTimerRef.current = null;
+    }, 2500);
+  };
+
+    useEffect(() => {
+    return () => {
+      if (errorTimerRef.current) clearTimeout(errorTimerRef.current);
+    };
+  }, []);
+
   useEffect(() => {
     const html = document.documentElement;
     const body = document.body;
@@ -1193,90 +1211,155 @@ export default function Signup() {
     await fn();
   };
 
-  const handleGoogleSignup = async () => {
-    await requireTermsThen(async () => {
-      setLoading(true);
-      setError("");
+const handleGoogleSignup = async () => {
+  await requireTermsThen(async () => {
+    setLoading(true);
+    if (errorTimerRef.current) clearTimeout(errorTimerRef.current);
+    setError("");
 
-      try {
-        const firebaseUser = await signInWithGoogle();
-        const u = firebaseUser?.user || firebaseUser;
+    try {
+      const course = (form.course || "").trim();
+      const studentNumber = (form.studentNumber || "").trim();
 
-        const payload = {
-          googleId: u?.uid,
-          email: u?.email,
-          fullName: u?.displayName || u?.email?.split("@")?.[0],
-          course: form.course || "",
-        };
+      if (!course) throw new Error("Please select your course.");
+      if (!studentNumber) throw new Error("Student number is not yet filled up.");
 
-        const { res, data, raw } = await fetchJsonSafe("/api/auth/google", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        });
+      const studentNumberRegex = /^[0-9]{2}-[0-9]{5}$/;
+      if (!studentNumberRegex.test(studentNumber)) throw new Error("Invalid, please try again.");
 
-        if (!res.ok) throw new Error(data?.message || raw || "Google signup failed (backend).");
+      const firebaseUser = await signInWithGoogle();
+      const u = firebaseUser?.user || firebaseUser;
 
-        if (data?.token) localStorage.setItem("token", data.token);
-        if (data?.user) localStorage.setItem("user", JSON.stringify(data.user));
+      const payload = {
+        googleId: u?.uid,
+        email: u?.email,
+        fullName: u?.displayName || u?.email?.split("@")?.[0],
+        course,
+        studentNumber,
+      };
 
-        navigate("/dashboard");
-      } catch (err) {
-        // eslint-disable-next-line no-console
-        console.error(err);
-        setError(err.message || "Google sign up failed");
-      } finally {
-        setLoading(false);
-      }
-    });
-  };
+      const { res, data, raw } = await fetchJsonSafe("/api/auth/google", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
 
-  const handleCreateAccount = async (e) => {
-    e.preventDefault();
+      if (!res.ok) {
+        const serverMsg = (data?.message || raw || "Google sign in failed.").toString();
+        const m = serverMsg.toLowerCase();
 
-    await requireTermsThen(async () => {
-      setLoading(true);
-      setError("");
-
-      try {
-        const firstName = form.firstName.trim();
-        const lastName = form.lastName.trim();
-        const fullName = [firstName, lastName].filter(Boolean).join(" ");
-
-        if (!firstName || !lastName || !form.email || !form.username || !form.studentNumber || !form.course || !form.password) {
-          throw new Error("Please fill in all required fields.");
+        if (m.includes("email") && (m.includes("exist") || m.includes("taken") || m.includes("already"))) {
+          throw new Error("Email is taken.");
         }
-        if (form.password.length < 6) throw new Error("Password must be at least 6 characters.");
-        if (form.password !== form.confirmPassword) throw new Error("Passwords do not match.");
+        if (m.includes("username") && (m.includes("exist") || m.includes("taken") || m.includes("already"))) {
+          throw new Error("Username is taken.");
+        }
 
-        const { res, data, raw } = await fetchJsonSafe("/api/auth/register", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            fullName,
-            firstName,
-            lastName,
-            email: form.email,
-            username: form.username,
-            studentNumber: form.studentNumber,
-            course: form.course,
-            password: form.password,
-          }),
-        });
-
-        if (!res.ok) throw new Error(data?.message || raw || "Signup failed.");
-
-        if (data?.token) localStorage.setItem("token", data.token);
-        if (data?.user) localStorage.setItem("user", JSON.stringify(data.user));
-
-        navigate("/dashboard");
-      } catch (err) {
-        setError(err.message || "Signup failed.");
-      } finally {
-        setLoading(false);
+        throw new Error(serverMsg);
       }
-    });
-  };
+
+      // ✅ login behavior: store token + go to app (NOT /login)
+      if (data?.token) localStorage.setItem("token", data.token);
+      if (data?.user) localStorage.setItem("user", JSON.stringify(data.user));
+
+      navigate("/"); // change this to your dashboard route e.g. "/dashboard"
+    } catch (err) {
+      showError(err.message || "Google sign in failed");
+    } finally {
+      setLoading(false);
+    }
+  });
+};
+
+
+
+const handleCreateAccount = async (e) => {
+  e.preventDefault();
+
+  await requireTermsThen(async () => {
+    setLoading(true);
+    if (errorTimerRef.current) clearTimeout(errorTimerRef.current);
+    setError("");
+
+    try {
+      const firstName = form.firstName.trim();
+      const lastName = form.lastName.trim();
+      const fullName = [firstName, lastName].filter(Boolean).join(" ");
+
+      const email = form.email.trim();
+      const username = form.username.trim();
+      const studentNumber = form.studentNumber.trim();
+      const course = (form.course || "").trim();
+
+      if (!firstName || !lastName || !email || !username || !studentNumber || !course || !form.password) {
+        throw new Error("Please fill in all required fields.");
+      }
+
+      // ✅ Email format
+      const emailRegex = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/;
+      if (!emailRegex.test(email)) {
+        throw new Error("Email is invalid. Please try again.");
+      }
+
+      // ✅ Username minimum 6 chars
+      if (username.length < 6) {
+        throw new Error("Username must be at least 6 characters.");
+      }
+
+      // ✅ Student Number validation (generic message only)
+      const studentNumberRegex = /^[0-9]{2}-[0-9]{5}$/;
+      if (!studentNumberRegex.test(studentNumber)) {
+        throw new Error("Invalid, please try again.");
+      }
+
+      if (form.password.length < 6) throw new Error("Password must be at least 6 characters.");
+      if (form.password !== form.confirmPassword) throw new Error("Passwords do not match.");
+
+      const { res, data, raw } = await fetchJsonSafe("/api/auth/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fullName,
+          firstName,
+          lastName,
+          email,
+          username,
+          studentNumber,
+          course,
+          password: form.password,
+        }),
+      });
+
+      if (!res.ok) {
+        const serverMsg = (data?.message || raw || "Signup failed.").toString().toLowerCase();
+
+        if (serverMsg.includes("email") && (serverMsg.includes("exist") || serverMsg.includes("taken") || serverMsg.includes("already"))) {
+          throw new Error("Email is taken.");
+        }
+
+        if (serverMsg.includes("username") && (serverMsg.includes("exist") || serverMsg.includes("taken") || serverMsg.includes("already"))) {
+          throw new Error("Username is taken.");
+        }
+
+        throw new Error(data?.message || raw || "Signup failed.");
+      }
+
+      // ✅ IMPORTANT: do NOT store token/user on signup anymore
+      // Backend now returns message only.
+      // Optional: you can show success then redirect.
+      // showError is for errors; if you want a success UI, use your success UI handler instead.
+      // For now: just redirect.
+      navigate("/login");
+    } catch (err) {
+      showError(err.message || "Signup failed");
+    } finally {
+      setLoading(false);
+    }
+  });
+};
+
+
+
 
   const uiPatchStyles = `
     /* GoogleButton full width */
@@ -1309,10 +1392,10 @@ export default function Signup() {
           setShowTerms(false);
           setTermsChecked(false);
         }}
-        onAgree={() => {}}
-        agreed={false}
-        setAgreed={() => {}}
-        loading={false}
+        onAgree={handleAgreeTerms}
+        agreed={termsChecked}
+        setAgreed={setTermsChecked}
+        loading={termsLoading}
       />
 
       {/* BACKGROUND DOME */}

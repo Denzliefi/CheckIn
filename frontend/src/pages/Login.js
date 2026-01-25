@@ -1,5 +1,7 @@
 // src/pages/Login.js
 
+import { useLocation } from "react-router-dom";
+
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link, useNavigate } from "react-router-dom";
@@ -1017,12 +1019,23 @@ function TermsModal({ open, onClose, onAgree, agreed, setAgreed, loading }) {
 function redirectByRole(navigate, role) {
   if (role === "Admin") return navigate("/admin");
   if (role === "Consultant") return navigate("/consultant");
-  return navigate("/dashboard");
+  return navigate("/");
 }
 
 function isBlank(v) {
   return !v || v.trim().length === 0;
 }
+
+function isEmailLike(v) {
+  const s = (v || "").trim();
+  // lightweight email-ish check (we only need to know if user typed an email)
+  return s.includes("@");
+}
+
+// Allowed username chars: letters, numbers, dot, underscore
+const USERNAME_RE = /^[A-Za-z0-9._'-]+(?:\s+[A-Za-z0-9._'-]+)*$/;
+
+
 
 /* ======================
   LOGIN
@@ -1030,6 +1043,13 @@ function isBlank(v) {
 
 export default function Login() {
   const navigate = useNavigate();
+  const USERNAME_RE = /^[A-Za-z0-9._]+$/;
+
+  const isEmailLike = (v) => {
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
+  };
+
+  const [rememberMe, setRememberMe] = useState(true);
 
   const [submitting, setSubmitting] = useState(false);
   const [pageError, setPageError] = useState("");
@@ -1058,6 +1078,8 @@ export default function Login() {
 
   const emailWrapRef = useRef(null);
   const passWrapRef = useRef(null);
+
+  const location = useLocation();
 
   useEffect(() => {
     const saved = localStorage.getItem("termsAccepted") === "true";
@@ -1103,25 +1125,6 @@ export default function Login() {
     el?.focus?.();
   };
 
-  const validate = () => {
-    setAttemptedSubmit(true);
-    setEmailTouched(true);
-    setPassTouched(true);
-
-    const eBlank = isBlank(emailOrUsername);
-    const pBlank = isBlank(password);
-
-    const nextEmailErr = eBlank ? "This field can’t be blank" : "";
-    const nextPassErr = pBlank ? "This field can’t be blank" : "";
-
-    setEmailErr(nextEmailErr);
-    setPassErr(nextPassErr);
-
-    if (nextEmailErr) return { ok: false, first: "email" };
-    if (nextPassErr) return { ok: false, first: "pass" };
-    return { ok: true, first: null };
-  };
-
   const onEmailChange = (e) => {
     const v = e.target.value;
     setEmailOrUsername(v);
@@ -1144,6 +1147,38 @@ export default function Login() {
 
   const emailInvalid = (emailTouched || attemptedSubmit) && (isBlank(emailOrUsername) || !!emailErr);
   const passInvalid = (passTouched || attemptedSubmit) && (isBlank(password) || !!passErr);
+
+
+  const validate = () => {
+    setAttemptedSubmit(true);
+    setEmailTouched(true);
+    setPassTouched(true);
+
+    const raw = (emailOrUsername || "").trim();
+    const eBlank = isBlank(raw);
+    const pBlank = isBlank(password);
+
+    let nextEmailErr = eBlank ? "This field can’t be blank" : "";
+    let nextPassErr = pBlank ? "This field can’t be blank" : "";
+
+    // ✅ Username: no special characters (only if NOT email)
+    if (!eBlank && !isEmailLike(raw)) {
+      if (!USERNAME_RE.test(raw)) {
+        nextEmailErr =
+          "Username can only contain letters, numbers, dot (.) and underscore (_)";
+      }
+    }
+
+    setEmailErr(nextEmailErr);
+    setPassErr(nextPassErr);
+
+    if (nextEmailErr) return { ok: false, first: "email" };
+    if (nextPassErr) return { ok: false, first: "pass" };
+    return { ok: true, first: null };
+  };
+
+
+  
 
   const handleEmailLogin = async () => {
     if (submitting) return;
@@ -1173,25 +1208,31 @@ export default function Login() {
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data.message || "Login failed");
 
-        setAuth(data.token, data.user);
+        // ✅ Remember me handling (local vs session)
+        setAuth(data.token, data.user, rememberMe);
+
         redirectByRole(navigate, data.user.role);
       } catch (err) {
         const msg = err?.message || "Login failed";
-        setPageError(msg);
 
         setAttemptedSubmit(true);
         setEmailTouched(true);
         setPassTouched(true);
 
-        if (/invalid|incorrect|wrong|credential/i.test(msg)) {
-          setEmailErr("Invalid email/username or password");
-          setPassErr("Invalid email/username or password");
+        if (/invalid|incorrect|wrong|credential|401/i.test(msg)) {
+          const common = "Invalid username or password";
+          setPageError(common);
+          setEmailErr(common);
+          setPassErr(common);
+        } else {
+          setPageError(msg);
         }
       } finally {
         setSubmitting(false);
       }
     });
   };
+
 
   const handleGoogleLogin = async () => {
     if (submitting) return;
