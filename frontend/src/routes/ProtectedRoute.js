@@ -1,27 +1,13 @@
-import { Routes, Route } from "react-router-dom";
-import ProtectedRoute from "./routes/ProtectedRoute"; // adjust path
+// src/routes/ProtectedRoute.js
+import { Outlet, Navigate, useLocation } from "react-router-dom";
+import { useAuth } from "../utils/auth";
 
-import GuidanceCounseling from "./pages/GuidanceCounseling";
-import MoodTracker from "./pages/Journal";
-import WellnessCheck from "./pages/Assessment";
+export default function ProtectedRoute() {
+  const location = useLocation();
+  const { isAuthed } = useAuth();
 
-export default function App() {
-  return (
-    <Routes>
-      {/* public routes */}
-      {/* <Route path="/" element={<Home />} /> */}
-      {/* <Route path="/login" element={<Login />} /> */}
-      {/* <Route path="/sign-up" element={<Signup />} /> */}
-
-      {/* ✅ protected routes */}
-      <Route element={<ProtectedRoute />}>
-        <Route path="/guidancecounseling" element={<GuidanceCounseling />} />
-        <Route path="/assessment" element={<MoodTracker />} />
-        <Route path="/journal" element={<WellnessCheck />} />
-      </Route>
-
-      {/* fallback */}
-      {/* <Route path="*" element={<NotFound />} /> */}
-    </Routes>
-  );
+  if (!isAuthed) {
+    return <Navigate to="/login" replace state={{ from: location.pathname }} />;
+  }
+  return <Outlet />;
 }

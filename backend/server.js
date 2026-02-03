@@ -1,35 +1,50 @@
 console.log("SERVER FILE:", __filename);
 console.log("CWD:", process.cwd());
+
 const express = require("express");
 const dotenv = require("dotenv");
 const cors = require("cors");
 const morgan = require("morgan");
 
 const connectDB = require("./src/config/db");
+
 const authRoutes = require("./src/routes/auth.routes");
-const counselingRoutes = require("./src/routes/counseling.routes"); // ✅ move here
+const counselingRoutes = require("./src/routes/counseling.routes");
+const userRoutes = require("./src/routes/user.routes"); // ✅ ADD THIS
+
 const { notFound, errorHandler } = require("./src/middleware/errormiddleware");
 
 dotenv.config();
 
 const app = express();
 
-// Middleware
+/* ======================
+   MIDDLEWARE
+====================== */
 app.use(cors());
 app.use(express.json());
 app.use(morgan("dev"));
 
-// DB
+/* ======================
+   DB
+====================== */
 connectDB();
 
-// Routes
+/* ======================
+   ROUTES
+====================== */
 app.use("/api/auth", authRoutes);
-app.use("/api/counseling", counselingRoutes); // ✅ mount BEFORE notFound
+app.use("/api/counseling", counselingRoutes);
+app.use("/api/users", userRoutes); // 
 
-// Health check
+/* ======================
+   HEALTH CHECK
+====================== */
 app.get("/", (req, res) => res.json({ ok: true, message: "API running" }));
 
-// Error middleware (must be LAST)
+/* ======================
+   ERROR MIDDLEWARE (LAST)
+====================== */
 app.use(notFound);
 app.use(errorHandler);
 

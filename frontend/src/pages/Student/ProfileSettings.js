@@ -1,5 +1,8 @@
-// src/pages/ProfileSettings.js
-import React, { useMemo } from "react";
+// frontend/src/pages/Student/ProfileSettings.js
+import React, { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { fetchMyProfile } from "../../api/user.api";
+import { getToken } from "../../utils/auth";
 
 const PRIMARY_GREEN = "#B9FF66";
 const GREEN_GLOW = "rgba(185, 255, 102, 0.22)";
@@ -9,13 +12,14 @@ const TEXT_MAIN = "#0F172A";
 const TEXT_MUTED = "#475569";
 const TEXT_SOFT = "#64748B";
 
-const DEFAULT_PROFILE = {
-  firstName: "Juan",
-  lastName: "Dela Cruz",
-  studentId: "2201-267",
-  email: "student@pup.edu.ph",
-  campus: "Andres Bonifacio Campus",
-  course: "Bachelor of Science in Information Technology",
+const EMPTY_PROFILE = {
+  firstName: "",
+  lastName: "",
+  studentNumber: "",
+  email: "",
+  campus: "",
+  course: "",
+  accountCreation: "",
 };
 
 const SECTIONS = [
@@ -25,8 +29,9 @@ const SECTIONS = [
     items: [
       { label: "First Name", key: "firstName" },
       { label: "Last Name", key: "lastName" },
-      { label: "Student ID", key: "studentId", mono: true, breakAll: true },
+      { label: "Student Number", key: "studentNumber", mono: true, breakAll: true },
       { label: "Email", key: "email", breakAll: true },
+      { label: "Account Creation", key: "accountCreation", mono: true, breakAll: true },
     ],
   },
   {
@@ -44,15 +49,93 @@ function safeText(value) {
   return String(value);
 }
 
-export default function ProfileSettings({ profile }) {
-  const data = profile ?? DEFAULT_PROFILE;
+function splitName(fullName = "") {
+  const parts = String(fullName).trim().split(/\s+/).filter(Boolean);
+  return {
+    firstName: parts[0] || "",
+    lastName: parts.length > 1 ? parts.slice(1).join(" ") : "",
+  };
+}
+
+function formatDate(value) {
+  if (!value) return "—";
+  try {
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return safeText(value);
+    return d.toLocaleDateString("en-PH", { year: "numeric", month: "short", day: "2-digit" });
+  } catch {
+    return safeText(value);
+  }
+}
+
+function Spinner({ size = 18 }) {
+  return (
+    <svg className="animate-spin" width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+    </svg>
+  );
+}
+
+export default function ProfileSettings() {
+  const navigate = useNavigate();
+
+  const [profile, setProfile] = useState(EMPTY_PROFILE);
+  const [loading, setLoading] = useState(true);
+  const [pageError, setPageError] = useState("");
+
+  useEffect(() => {
+    // If token missing, redirect
+    if (!getToken()) {
+      navigate("/login", { replace: true });
+      return;
+    }
+
+    let alive = true;
+
+    (async () => {
+      try {
+        setLoading(true);
+        setPageError("");
+
+        const p = await fetchMyProfile();
+        if (!alive) return;
+
+        // Your backend returns: fullName, username, etc.
+        const nameFromBackend =
+          (p?.firstName || "").trim() || (p?.fullName || "").trim() || "";
+
+        const { firstName: fFromFull, lastName: lFromFull } = splitName(p?.fullName || "");
+
+        setProfile({
+          firstName: (p?.firstName || fFromFull || nameFromBackend || "").trim(),
+          lastName: (p?.lastName || lFromFull || "").trim(),
+          studentNumber: p?.studentNumber || "",
+          email: p?.email || "",
+          campus: p?.campus || "",
+          course: p?.course || "",
+          accountCreation: formatDate(p?.accountCreation || p?.createdAt || p?.created_on || ""),
+        });
+      } catch (e) {
+        if (!alive) return;
+        setPageError(e?.message || "Failed to load profile");
+      } finally {
+        if (alive) setLoading(false);
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, [navigate]);
 
   const resolved = useMemo(() => {
+    const data = profile || EMPTY_PROFILE;
     return SECTIONS.map((section) => ({
       ...section,
       items: section.items.map((it) => ({ ...it, value: safeText(data[it.key]) })),
     }));
-  }, [data]);
+  }, [profile]);
 
   return (
     <div
@@ -64,16 +147,10 @@ export default function ProfileSettings({ profile }) {
       ].join(" ")}
     >
       <div className="w-full max-w-4xl xl:max-w-5xl">
-        <div
-          className="relative overflow-hidden rounded-2xl border border-gray-200/70 bg-white shadow-xl"
-          role="region"
-          aria-labelledby="profile-settings-title"
-        >
+        <div className="relative overflow-hidden rounded-2xl border border-gray-200/70 bg-white shadow-xl" role="region" aria-labelledby="profile-settings-title">
           <div className="absolute inset-0 pointer-events-none" style={{ boxShadow: `0 0 0 6px ${GREEN_GLOW}` }} aria-hidden="true" />
 
           <div className="relative px-4 sm:px-7 lg:px-9 py-7 sm:py-9">
-            <div className="h-2 sm:h-3" aria-hidden="true" />
-
             <header className="max-w-3xl mx-auto sm:mx-0 text-center sm:text-left">
               <h1
                 id="profile-settings-title"
@@ -83,20 +160,31 @@ export default function ProfileSettings({ profile }) {
                 Profile Settings
               </h1>
 
-              <p
-                className="mt-2.5 text-sm sm:text-base text-gray-600 break-words leading-relaxed"
-                style={{ fontFamily: "Lora, serif", color: TEXT_MUTED }}
-              >
-                This information is <strong style={{ color: TEXT_MAIN }}>read-only</strong>. Corrections must be
-                requested via the <strong style={{ color: TEXT_MAIN }}>Guidance Office</strong>.
+              <p className="mt-2.5 text-sm sm:text-base text-gray-600 break-words leading-relaxed" style={{ fontFamily: "Lora, serif", color: TEXT_MUTED }}>
+                This information is <strong style={{ color: TEXT_MAIN }}>read-only</strong>. Corrections must be requested via the{" "}
+                <strong style={{ color: TEXT_MAIN }}>Guidance Office</strong>.
               </p>
 
-              <div className="mt-4 flex justify-center sm:justify-start gap-2.5 flex-wrap">
+              <div className="mt-4 flex flex-col sm:flex-row gap-3 sm:items-center">
+                {loading && (
+                  <div
+                    className="inline-flex items-center gap-2 rounded-full border border-green-200/70 bg-green-50/60 px-3.5 py-1.5 text-xs sm:text-sm font-extrabold text-gray-700 whitespace-nowrap"
+                    style={{ fontFamily: "Nunito, sans-serif", boxShadow: `0 0 0 2px ${GREEN_GLOW}` }}
+                  >
+                    <Spinner size={16} />
+                    Loading profile…
+                  </div>
+                )}
+
+                {pageError && !loading && (
+                  <div className="rounded-[16px] border-2 border-black bg-red-50 px-4 py-3 text-[13px] text-black">
+                    <span className="font-extrabold">Error:</span> {pageError}
+                  </div>
+                )}
+
                 <span
                   className="inline-flex items-center gap-2 rounded-full border border-green-200/70 bg-green-50/60 px-3.5 py-1.5 text-xs sm:text-sm font-extrabold text-gray-700 whitespace-nowrap"
                   style={{ fontFamily: "Nunito, sans-serif", boxShadow: `0 0 0 2px ${GREEN_GLOW}` }}
-                  aria-label="This profile is locked by the system"
-                  title="System Locked"
                 >
                   <span className="h-2 w-2 rounded-full" style={{ backgroundColor: PRIMARY_GREEN }} aria-hidden="true" />
                   System Locked
@@ -104,17 +192,9 @@ export default function ProfileSettings({ profile }) {
               </div>
             </header>
 
-            <main className="mt-8 sm:mt-9" aria-describedby="profile-readonly-description">
-              <p id="profile-readonly-description" className="sr-only">
-                All fields on this page are read-only and cannot be edited by students.
-              </p>
-
+            <main className="mt-8 sm:mt-9">
               <div className="rounded-xl border border-gray-200/70 bg-white overflow-hidden shadow-md">
-                <div
-                  className="h-1.5"
-                  style={{ background: `linear-gradient(90deg, ${PRIMARY_GREEN} 0%, #84CC16 100%)` }}
-                  aria-hidden="true"
-                />
+                <div className="h-1.5" style={{ background: `linear-gradient(90deg, ${PRIMARY_GREEN} 0%, #84CC16 100%)` }} aria-hidden="true" />
 
                 <div className="px-3 sm:px-5 lg:px-6 py-5 sm:py-6">
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-8">
@@ -123,33 +203,17 @@ export default function ProfileSettings({ profile }) {
 
                       return (
                         <section key={section.title} aria-labelledby={sectionId} className="min-w-0">
-                          <div className="flex items-start justify-between gap-3">
+                          <div className="flex items-start gap-2.5 min-w-0">
+                            <div className="h-2.5 w-2.5 rounded-full shrink-0 mt-1" style={{ backgroundColor: PRIMARY_GREEN }} aria-hidden="true" />
                             <div className="min-w-0">
-                              <div className="flex items-start gap-2.5 min-w-0">
-                                <div
-                                  className="h-2.5 w-2.5 rounded-full shrink-0 mt-1"
-                                  style={{ backgroundColor: PRIMARY_GREEN }}
-                                  aria-hidden="true"
-                                />
-                                <h2
-                                  id={sectionId}
-                                  className="font-extrabold text-base sm:text-lg lg:text-xl break-words leading-tight"
-                                  style={{
-                                    fontFamily: "Nunito, sans-serif",
-                                    color: TEXT_MAIN,
-                                    overflowWrap: "anywhere",
-                                    wordBreak: "break-word",
-                                  }}
-                                  title={section.title}
-                                >
-                                  {section.title}
-                                </h2>
-                              </div>
-
-                              <p
-                                className="mt-1 text-xs sm:text-sm lg:text-base break-words leading-relaxed"
-                                style={{ fontFamily: "Lora, serif", color: TEXT_SOFT }}
+                              <h2
+                                id={sectionId}
+                                className="font-extrabold text-base sm:text-lg lg:text-xl break-words leading-tight"
+                                style={{ fontFamily: "Nunito, sans-serif", color: TEXT_MAIN }}
                               >
+                                {section.title}
+                              </h2>
+                              <p className="mt-1 text-xs sm:text-sm lg:text-base break-words leading-relaxed" style={{ fontFamily: "Lora, serif", color: TEXT_SOFT }}>
                                 {section.subtitle}
                               </p>
                             </div>
@@ -170,32 +234,24 @@ export default function ProfileSettings({ profile }) {
                                   role="group"
                                   aria-labelledby={`${labelId}-label`}
                                 >
-                                  <div className="flex flex-col gap-2.5">
-                                    <div className="min-w-0">
-                                      <div
-                                        id={`${labelId}-label`}
-                                        className="text-xs font-extrabold uppercase tracking-wide text-gray-500"
-                                        style={{ fontFamily: "Nunito, sans-serif" }}
-                                      >
-                                        {item.label}
-                                      </div>
+                                  <div className="min-w-0">
+                                    <div
+                                      id={`${labelId}-label`}
+                                      className="text-xs font-extrabold uppercase tracking-wide text-gray-500"
+                                      style={{ fontFamily: "Nunito, sans-serif" }}
+                                    >
+                                      {item.label}
+                                    </div>
 
-                                      <div
-                                        className={[
-                                          "mt-1 text-sm sm:text-base font-extrabold min-w-0 whitespace-normal",
-                                          item.mono ? "font-mono tracking-tight" : "",
-                                          item.breakAll ? "break-all" : "break-words",
-                                        ].join(" ")}
-                                        style={{
-                                          color: TEXT_MAIN,
-                                          overflowWrap: "anywhere",
-                                          wordBreak: item.breakAll ? "break-all" : "break-word",
-                                          fontFamily: "Nunito, sans-serif",
-                                        }}
-                                        title={item.value}
-                                      >
-                                        {item.value}
-                                      </div>
+                                    <div
+                                      className={[
+                                        "mt-1 text-sm sm:text-base font-extrabold min-w-0 whitespace-normal",
+                                        item.mono ? "font-mono tracking-tight" : "",
+                                        item.breakAll ? "break-all" : "break-words",
+                                      ].join(" ")}
+                                      style={{ color: TEXT_MAIN, fontFamily: "Nunito, sans-serif" }}
+                                    >
+                                      {item.value}
                                     </div>
                                   </div>
                                 </div>
@@ -215,7 +271,6 @@ export default function ProfileSettings({ profile }) {
                 className="w-full max-w-3xl rounded-xl border border-green-200/50 bg-green-50/20 px-4 sm:px-6 py-5 sm:py-6 shadow-md flex flex-col sm:flex-row gap-4 sm:gap-5 items-start"
                 style={{ boxShadow: `0 0 0 4px ${GREEN_GLOW}` }}
                 role="region"
-                aria-labelledby="guidance-notice-heading"
               >
                 <div
                   className="h-10 w-10 rounded-lg border border-green-200 flex items-center justify-center shrink-0 bg-green-50/40"
@@ -232,28 +287,16 @@ export default function ProfileSettings({ profile }) {
                 </div>
 
                 <div className="flex-1 text-center sm:text-left min-w-0">
-                  <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2.5">
-                    <h3
-                      id="guidance-notice-heading"
-                      className="font-extrabold text-base sm:text-lg break-words leading-tight"
-                      style={{
-                        fontFamily: "Nunito, sans-serif",
-                        color: TEXT_MAIN,
-                        overflowWrap: "anywhere",
-                        wordBreak: "break-word",
-                      }}
-                    >
-                      Guidance Office Only
-                    </h3>
-                  </div>
-
+                  <h3 className="font-extrabold text-base sm:text-lg break-words leading-tight" style={{ fontFamily: "Nunito, sans-serif", color: TEXT_MAIN }}>
+                    Guidance Office Only
+                  </h3>
                   <p className="mt-1.5 text-sm break-words leading-relaxed" style={{ fontFamily: "Lora, serif", color: TEXT_MUTED }}>
-                    Report any incorrect information directly to the{" "}
-                    <strong style={{ color: TEXT_MAIN }}>Guidance Office</strong>.
+                    Report any incorrect information directly to the <strong style={{ color: TEXT_MAIN }}>Guidance Office</strong>.
                   </p>
                 </div>
               </div>
             </div>
+
           </div>
         </div>
       </div>

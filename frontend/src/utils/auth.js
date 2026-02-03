@@ -1,41 +1,38 @@
 // src/utils/auth.js
+import { useSyncExternalStore } from "react";
 
 export const TOKEN_KEY = "token";
 export const ROLE_KEY = "role";
 export const USER_KEY = "user";
 
-/**
- * Helper: get the active storage
- * - localStorage → remember me
- * - sessionStorage → not remembered
- */
-function getStorage(preferLocal = true) {
-  return preferLocal ? localStorage : sessionStorage;
+const AUTH_EVENT = "auth:changed";
+
+function isBrowser() {
+  return typeof window !== "undefined" && typeof document !== "undefined";
 }
 
-/**
- * Read helpers
- * Try localStorage first, then sessionStorage
- */
+function emitAuthChanged() {
+  if (!isBrowser()) return;
+  window.dispatchEvent(new Event(AUTH_EVENT));
+}
+
+function readItem(key) {
+  if (!isBrowser()) return null;
+  return window.localStorage.getItem(key) ?? window.sessionStorage.getItem(key);
+}
+
 export function getToken() {
-  return (
-    localStorage.getItem(TOKEN_KEY) ||
-    sessionStorage.getItem(TOKEN_KEY)
-  );
+  return readItem(TOKEN_KEY);
 }
 
 export function getRole() {
-  return (
-    localStorage.getItem(ROLE_KEY) ||
-    sessionStorage.getItem(ROLE_KEY)
-  );
+  return readItem(ROLE_KEY);
 }
 
 export function getUser() {
+  if (!isBrowser()) return null;
   try {
-    const raw =
-      localStorage.getItem(USER_KEY) ||
-      sessionStorage.getItem(USER_KEY);
+    const raw = readItem(USER_KEY);
     return raw ? JSON.parse(raw) : null;
   } catch {
     return null;
@@ -46,37 +43,105 @@ export function isAuthenticated() {
   return !!getToken();
 }
 
+/* ===========================
+   ✅ STABLE SNAPSHOT CACHE
+   =========================== */
+
+let _lastKey = null;
+let _lastSnapshot = { token: null, isAuthed: false, user: null, role: null };
+
+function buildAuthKey() {
+  const token = readItem(TOKEN_KEY) || "";
+  const role = readItem(ROLE_KEY) || "";
+  const userRaw = readItem(USER_KEY) || "";
+  // key is a primitive string (stable compare)
+  return `${token}::${role}::${userRaw}`;
+}
+
+export function getAuthSnapshot() {
+  if (!isBrowser()) return _lastSnapshot;
+
+  const key = buildAuthKey();
+  if (key === _lastKey) return _lastSnapshot;
+
+  _lastKey = key;
+
+  const token = getToken();
+  const role = getRole();
+  const user = getUser();
+
+  _lastSnapshot = {
+    token,
+    isAuthed: !!token,
+    user,
+    role,
+  };
+
+  return _lastSnapshot;
+}
+
 /**
- * Save auth
- * @param {string} token
- * @param {object} user
- * @param {boolean} rememberMe
+ * Subscribe (same tab via AUTH_EVENT, other tabs via storage)
  */
-export function setAuth(token, user, rememberMe = true) {
-  // clear both first to avoid conflicts
-  clearAuth();
+export function subscribeAuth(callback) {
+  if (!isBrowser()) return () => {};
 
-  const storage = getStorage(rememberMe);
+  const onAuth = () => callback();
 
+  const onStorage = (e) => {
+    if (!e) return;
+    if ([TOKEN_KEY, USER_KEY, ROLE_KEY].includes(e.key)) callback();
+  };
+
+  window.addEventListener(AUTH_EVENT, onAuth);
+  window.addEventListener("storage", onStorage);
+
+  return () => {
+    window.removeEventListener(AUTH_EVENT, onAuth);
+    window.removeEventListener("storage", onStorage);
+  };
+}
+
+/**
+ * ✅ React hook: rerenders only when auth key changes
+ */
+export function useAuth() {
+  return useSyncExternalStore(subscribeAuth, getAuthSnapshot, getAuthSnapshot);
+}
+
+/**
+ * ✅ The ONLY way to sign in
+ */
+export function setAuth({ token, user, rememberMe = true }) {
+  if (!isBrowser()) return;
+
+  clearAuth({ notify: false });
+
+  const storage = rememberMe ? window.localStorage : window.sessionStorage;
   storage.setItem(TOKEN_KEY, token);
-  storage.setItem(USER_KEY, JSON.stringify(user));
-  storage.setItem(ROLE_KEY, user?.role || "");
+  storage.setItem(USER_KEY, JSON.stringify(user ?? null));
+  storage.setItem(ROLE_KEY, user?.role ?? "");
+
+  emitAuthChanged();
 }
 
 /**
- * Clear auth everywhere
+ * ✅ The ONLY way to sign out
  */
-export function clearAuth() {
-  localStorage.removeItem(TOKEN_KEY);
-  localStorage.removeItem(USER_KEY);
-  localStorage.removeItem(ROLE_KEY);
+export function clearAuth({ notify = true } = {}) {
+  if (!isBrowser()) return;
 
-  sessionStorage.removeItem(TOKEN_KEY);
-  sessionStorage.removeItem(USER_KEY);
-  sessionStorage.removeItem(ROLE_KEY);
+  window.localStorage.removeItem(TOKEN_KEY);
+  window.localStorage.removeItem(USER_KEY);
+  window.localStorage.removeItem(ROLE_KEY);
+
+  window.sessionStorage.removeItem(TOKEN_KEY);
+  window.sessionStorage.removeItem(USER_KEY);
+  window.sessionStorage.removeItem(ROLE_KEY);
+
+  if (notify) emitAuthChanged();
 }
 
-// keep logout as alias if used elsewhere
 export function logout() {
-  clearAuth();
+  clearAuth({ notify: true });
 }

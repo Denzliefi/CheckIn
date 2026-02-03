@@ -31,6 +31,17 @@ const userSchema = new mongoose.Schema(
       trim: true,
     },
 
+    campus: {
+      type: String,
+      trim: true,
+    },
+
+    course: {
+      type: String,
+      trim: true,
+    },
+
+
     role: {
       type: String,
       enum: ["Student", "Counselor", "Admin"],
@@ -76,3 +87,4 @@ userSchema.methods.matchPassword = async function (enteredPassword) {
 };
 
 module.exports = mongoose.model("User", userSchema);
+

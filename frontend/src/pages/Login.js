@@ -1209,7 +1209,7 @@ export default function Login() {
         if (!res.ok) throw new Error(data.message || "Login failed");
 
         // ✅ Remember me handling (local vs session)
-        setAuth(data.token, data.user, rememberMe);
+        setAuth({ token: data.token, user: data.user, rememberMe });
 
         redirectByRole(navigate, data.user.role);
       } catch (err) {
@@ -1261,7 +1261,7 @@ export default function Login() {
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data.message || "Google login failed");
 
-        setAuth(data.token, data.user);
+        setAuth({ token: data.token, user: data.user, rememberMe });
         redirectByRole(navigate, data.user.role);
       } catch (err) {
         setPageError(err?.message || "Google login failed");
@@ -1424,7 +1424,13 @@ export default function Login() {
 
                   <div className="flex items-center justify-between text-[13px]">
                     <label className="flex items-center gap-2">
-                      <input type="checkbox" className="accent-greenBorder" disabled={submitting} />
+                      <input
+                        type="checkbox"
+                        className="accent-greenBorder"
+                        checked={rememberMe}
+                        onChange={(e) => setRememberMe(e.target.checked)}
+                        disabled={submitting}
+                      />
                       Remember me
                     </label>
 
