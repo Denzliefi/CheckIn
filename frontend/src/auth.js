@@ -12,13 +12,13 @@ import {
 
 // Firebase configuration
 const firebaseConfig = {
-  apiKey: "AIzaSyA7pcTlj7zkWUVPFMVtYfkS2GvY5ohpY_c",
-  authDomain: "thesis-cec35.firebaseapp.com",
-  projectId: "thesis-cec35",
-  storageBucket: "thesis-cec35.firebasestorage.app",
-  messagingSenderId: "620375802252",
-  appId: "1:620375802252:web:f610bccc60f993ab0056a9",
-  measurementId: "G-NZDG227W5L",
+  apiKey: "AIzaSyDry-vQlHO-5f9vgHHlcLDwkiOPdxzDvyw",
+  authDomain: "checkin-2be12.firebaseapp.com",
+  projectId: "checkin-2be12",
+  storageBucket: "checkin-2be12.firebasestorage.app",
+  messagingSenderId: "648158463578",
+  appId: "1:648158463578:web:761e87da381d2a71c27a63",
+  measurementId: "G-MQJ4PP49P4"
 };
 
 // Initialize Firebase

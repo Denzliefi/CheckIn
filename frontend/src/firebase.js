@@ -42,3 +42,9 @@ const logout = async () => {
 };
 
 export { auth, signInWithGoogle, logout, analytics };
+
+console.log("🔥 Firebase config check", {
+  apiKey: firebaseConfig.apiKey,
+  authDomain: firebaseConfig.authDomain,
+  projectId: firebaseConfig.projectId,
+});
