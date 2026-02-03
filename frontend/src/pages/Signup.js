@@ -1238,101 +1238,101 @@ const handleGoogleSignup = async () => {
         studentNumber,
       };
 
-      const res = await fetch(
-        `${process.env.REACT_APP_API_BASE}/api/auth/google`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        }
-      );
-
-
-      if (!res.ok) {
-        const serverMsg = (data?.message || raw || "Google sign in failed.").toString();
-        const m = serverMsg.toLowerCase();
-
-        if (m.includes("email") && (m.includes("exist") || m.includes("taken") || m.includes("already"))) {
-          throw new Error("Email is taken.");
-        }
-        if (m.includes("username") && (m.includes("exist") || m.includes("taken") || m.includes("already"))) {
-          throw new Error("Username is taken.");
-        }
-
-        throw new Error(serverMsg);
-      }
-
-      // ✅ login behavior: store token + go to app (NOT /login)
-      if (data?.token) localStorage.setItem("token", data.token);
-      if (data?.user) localStorage.setItem("user", JSON.stringify(data.user));
-
-      navigate("/"); // change this to your dashboard route e.g. "/dashboard"
-    } catch (err) {
-      showError(err.message || "Google sign in failed");
-    } finally {
-      setLoading(false);
+  const { res, data, raw } = await fetchJsonSafe(
+    `${process.env.REACT_APP_API_BASE}/api/auth/google`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
     }
-  });
-};
+  );
+
+  if (!res.ok) {
+    const serverMsg = (data?.message || raw || "Google sign in failed.").toString();
+    const m = serverMsg.toLowerCase();
+
+    if (m.includes("email") && (m.includes("exist") || m.includes("taken") || m.includes("already"))) {
+      throw new Error("Email is taken.");
+    }
+
+    throw new Error(serverMsg);
+  }
 
 
+        // ✅ login behavior: store token + go to app (NOT /login)
+        if (data?.token) localStorage.setItem("token", data.token);
+        if (data?.user) localStorage.setItem("user", JSON.stringify(data.user));
 
-const handleCreateAccount = async (e) => {
-  e.preventDefault();
-
-  await requireTermsThen(async () => {
-    setLoading(true);
-    if (errorTimerRef.current) clearTimeout(errorTimerRef.current);
-    setError("");
-
-    try {
-      const firstName = form.firstName.trim();
-      const lastName = form.lastName.trim();
-      const fullName = [firstName, lastName].filter(Boolean).join(" ");
-
-      const email = form.email.trim();
-      const username = form.username.trim();
-      const studentNumber = form.studentNumber.trim();
-      const course = (form.course || "").trim();
-
-      if (!firstName || !lastName || !email || !username || !studentNumber || !course || !form.password) {
-        throw new Error("Please fill in all required fields.");
+        navigate("/"); // change this to your dashboard route e.g. "/dashboard"
+      } catch (err) {
+        showError(err.message || "Google sign in failed");
+      } finally {
+        setLoading(false);
       }
+    });
+  };
 
-      // ✅ Email format
-      const emailRegex = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/;
-      if (!emailRegex.test(email)) {
-        throw new Error("Email is invalid. Please try again.");
-      }
 
-      // ✅ Username minimum 6 chars
-      if (username.length < 6) {
-        throw new Error("Username must be at least 6 characters.");
-      }
 
-      // ✅ Student Number validation (generic message only)
-      const studentNumberRegex = /^[0-9]{2}-[0-9]{5}$/;
-      if (!studentNumberRegex.test(studentNumber)) {
-        throw new Error("Invalid, please try again.");
-      }
+  const handleCreateAccount = async (e) => {
+    e.preventDefault();
 
-      if (form.password.length < 6) throw new Error("Password must be at least 6 characters.");
-      if (form.password !== form.confirmPassword) throw new Error("Passwords do not match.");
+    await requireTermsThen(async () => {
+      setLoading(true);
+      if (errorTimerRef.current) clearTimeout(errorTimerRef.current);
+      setError("");
 
-      const { res, data, raw } = await fetchJsonSafe("/api/auth/register", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          fullName,
-          firstName,
-          lastName,
-          email,
-          username,
-          studentNumber,
-          course,
-          password: form.password,
-        }),
-      });
+      try {
+        const firstName = form.firstName.trim();
+        const lastName = form.lastName.trim();
+        const fullName = [firstName, lastName].filter(Boolean).join(" ");
+
+        const email = form.email.trim();
+        const username = form.username.trim();
+        const studentNumber = form.studentNumber.trim();
+        const course = (form.course || "").trim();
+
+        if (!firstName || !lastName || !email || !username || !studentNumber || !course || !form.password) {
+          throw new Error("Please fill in all required fields.");
+        }
+
+        // ✅ Email format
+        const emailRegex = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/;
+        if (!emailRegex.test(email)) {
+          throw new Error("Email is invalid. Please try again.");
+        }
+
+        // ✅ Username minimum 6 chars
+        if (username.length < 6) {
+          throw new Error("Username must be at least 6 characters.");
+        }
+
+        // ✅ Student Number validation (generic message only)
+        const studentNumberRegex = /^[0-9]{2}-[0-9]{5}$/;
+        if (!studentNumberRegex.test(studentNumber)) {
+          throw new Error("Invalid, please try again.");
+        }
+
+        if (form.password.length < 6) throw new Error("Password must be at least 6 characters.");
+        if (form.password !== form.confirmPassword) throw new Error("Passwords do not match.");
+
+        const { res, data, raw } = await fetchJsonSafe(
+          `${process.env.REACT_APP_API_BASE}/api/auth/register`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                  fullName,
+                  firstName,
+                  lastName,
+                  email,
+                  username,
+                  studentNumber,
+                  course,
+                  password: form.password,}),
+          }
+        );
+
 
       if (!res.ok) {
         const serverMsg = (data?.message || raw || "Signup failed.").toString().toLowerCase();
