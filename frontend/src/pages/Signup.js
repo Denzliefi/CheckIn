@@ -1239,7 +1239,7 @@ const handleGoogleSignup = async () => {
       };
 
   const { res, data, raw } = await fetchJsonSafe(
-    `${process.env.REACT_APP_API_BASE}/api/auth/google`,
+    `${process.env.REACT_APP_API_URL}/api/auth/google`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1317,7 +1317,7 @@ const handleGoogleSignup = async () => {
         if (form.password !== form.confirmPassword) throw new Error("Passwords do not match.");
 
         const { res, data, raw } = await fetchJsonSafe(
-          `${process.env.REACT_APP_API_BASE}/api/auth/register`,
+          `${process.env.REACT_APP_API_URL}/api/auth/register`,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
