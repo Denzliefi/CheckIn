@@ -1041,6 +1041,16 @@ const USERNAME_RE = /^[A-Za-z0-9._'-]+(?:\s+[A-Za-z0-9._'-]+)*$/;
   LOGIN
 ====================== */
 
+
+
+/* ======================
+  API BASE
+  - local:  REACT_APP_API_URL=http://localhost:5000
+  - prod:   REACT_APP_API_URL=https://checkin-backend-4xic.onrender.com
+====================== */
+const API_BASE = (process.env.REACT_APP_API_URL || "").replace(/\/+$/, "");
+
+
 export default function Login() {
   const navigate = useNavigate();
   const USERNAME_RE = /^[A-Za-z0-9._]+$/;
@@ -1196,7 +1206,7 @@ export default function Login() {
       setPageError("");
 
       try {
-        const res = await fetch("/api/auth/login", {
+        const res = await fetch(`${API_BASE}/api/auth/login`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -1245,15 +1255,16 @@ export default function Login() {
 
       try {
         const firebaseUser = await signInWithGoogle();
+        const u = firebaseUser?.user || firebaseUser;
 
         const payload = {
-          googleId: firebaseUser?.uid,
-          email: firebaseUser?.email,
-          fullName: firebaseUser?.displayName || "Google User",
+          googleId: u?.uid,
+          email: u?.email,
+          fullName: u?.displayName || u?.email?.split("@")?.[0] || "Google User",
         };
 
         const res = await fetch(
-          `${process.env.REACT_APP_API_BASE}/api/auth/google`,
+          `${API_BASE}/api/auth/google`,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },

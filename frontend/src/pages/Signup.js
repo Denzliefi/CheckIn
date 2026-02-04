@@ -1094,6 +1094,15 @@ function CourseDropdown({ label, value, onChange, options, disabled }) {
    SIGNUP
 ====================== */
 
+
+
+/* ======================
+   API BASE
+   - local:  REACT_APP_API_URL=http://localhost:5000
+   - prod:   REACT_APP_API_URL=https://checkin-backend-4xic.onrender.com
+====================== */
+const API_BASE = (process.env.REACT_APP_API_URL || "").replace(/\/+$/, "");
+
 async function fetchJsonSafe(url, options) {
   const res = await fetch(url, options);
   const raw = await res.text();
@@ -1239,7 +1248,7 @@ const handleGoogleSignup = async () => {
       };
 
   const { res, data, raw } = await fetchJsonSafe(
-    `${process.env.REACT_APP_API_URL}/api/auth/google`,
+    `${API_BASE}/api/auth/google`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1317,7 +1326,7 @@ const handleGoogleSignup = async () => {
         if (form.password !== form.confirmPassword) throw new Error("Passwords do not match.");
 
         const { res, data, raw } = await fetchJsonSafe(
-          `${process.env.REACT_APP_API_URL}/api/auth/register`,
+          `${API_BASE}/api/auth/register`,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
