@@ -1708,16 +1708,6 @@ function CourseDropdown({
    NETWORK
 ====================== */
 
-<<<<<<< HEAD:frontend/src/pages/Signup.js
-
-
-/* ======================
-   API BASE
-   - local:  REACT_APP_API_URL=http://localhost:5000
-   - prod:   REACT_APP_API_URL=https://checkin-backend-4xic.onrender.com
-====================== */
-=======
->>>>>>> 573bd80 (Update login/signup UI):src/pages/Signup.js
 const API_BASE = (process.env.REACT_APP_API_URL || "").replace(/\/+$/, "");
 
 async function fetchJsonSafe(url, options) {
@@ -1868,130 +1858,6 @@ export default function Signup() {
     await fn();
   };
 
-<<<<<<< HEAD:frontend/src/pages/Signup.js
-const handleGoogleSignup = async () => {
-  await requireTermsThen(async () => {
-    setLoading(true);
-    if (errorTimerRef.current) clearTimeout(errorTimerRef.current);
-    setError("");
-
-    try {
-      const course = (form.course || "").trim();
-      const studentNumber = (form.studentNumber || "").trim();
-
-      if (!course) throw new Error("Please select your course.");
-      if (!studentNumber) throw new Error("Student number is not yet filled up.");
-
-      const studentNumberRegex = /^[0-9]{2}-[0-9]{5}$/;
-      if (!studentNumberRegex.test(studentNumber)) throw new Error("Invalid, please try again.");
-
-      const firebaseUser = await signInWithGoogle();
-      const u = firebaseUser?.user || firebaseUser;
-
-      const payload = {
-        googleId: u?.uid,
-        email: u?.email,
-        fullName: u?.displayName || u?.email?.split("@")?.[0],
-        course,
-        studentNumber,
-      };
-
-  const { res, data, raw } = await fetchJsonSafe(
-    `${API_BASE}/api/auth/google`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    }
-  );
-
-  if (!res.ok) {
-    const serverMsg = (data?.message || raw || "Google sign in failed.").toString();
-    const m = serverMsg.toLowerCase();
-
-    if (m.includes("email") && (m.includes("exist") || m.includes("taken") || m.includes("already"))) {
-      throw new Error("Email is taken.");
-    }
-
-    throw new Error(serverMsg);
-  }
-
-
-        // ✅ login behavior: store token + go to app (NOT /login)
-        if (data?.token) localStorage.setItem("token", data.token);
-        if (data?.user) localStorage.setItem("user", JSON.stringify(data.user));
-
-        navigate("/"); // change this to your dashboard route e.g. "/dashboard"
-      } catch (err) {
-        showError(err.message || "Google sign in failed");
-      } finally {
-        setLoading(false);
-      }
-    });
-  };
-
-
-
-  const handleCreateAccount = async (e) => {
-    e.preventDefault();
-
-    await requireTermsThen(async () => {
-      setLoading(true);
-      if (errorTimerRef.current) clearTimeout(errorTimerRef.current);
-      setError("");
-
-      try {
-        const firstName = form.firstName.trim();
-        const lastName = form.lastName.trim();
-        const fullName = [firstName, lastName].filter(Boolean).join(" ");
-
-        const email = form.email.trim();
-        const username = form.username.trim();
-        const studentNumber = form.studentNumber.trim();
-        const course = (form.course || "").trim();
-
-        if (!firstName || !lastName || !email || !username || !studentNumber || !course || !form.password) {
-          throw new Error("Please fill in all required fields.");
-        }
-
-        // ✅ Email format
-        const emailRegex = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/;
-        if (!emailRegex.test(email)) {
-          throw new Error("Email is invalid. Please try again.");
-        }
-
-        // ✅ Username minimum 6 chars
-        if (username.length < 6) {
-          throw new Error("Username must be at least 6 characters.");
-        }
-
-        // ✅ Student Number validation (generic message only)
-        const studentNumberRegex = /^[0-9]{2}-[0-9]{5}$/;
-        if (!studentNumberRegex.test(studentNumber)) {
-          throw new Error("Invalid, please try again.");
-        }
-
-        if (form.password.length < 6) throw new Error("Password must be at least 6 characters.");
-        if (form.password !== form.confirmPassword) throw new Error("Passwords do not match.");
-
-        const { res, data, raw } = await fetchJsonSafe(
-          `${API_BASE}/api/auth/register`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                  fullName,
-                  firstName,
-                  lastName,
-                  email,
-                  username,
-                  studentNumber,
-                  course,
-                  password: form.password,}),
-          }
-        );
-
-=======
   const validateRequired = (keys) => {
     const nextErrors = {};
     for (const k of keys) {
@@ -2124,7 +1990,6 @@ const handleGoogleSignup = async () => {
         }
       });
     };
->>>>>>> 573bd80 (Update login/signup UI):src/pages/Signup.js
 
   const handleCreateAccount = async (e) => {
     e.preventDefault();

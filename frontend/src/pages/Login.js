@@ -1281,16 +1281,6 @@ const API_BASE = (process.env.REACT_APP_API_URL || "").replace(/\/+$/, "");
   LOGIN PAGE
 ====================== */
 
-
-
-/* ======================
-  API BASE
-  - local:  REACT_APP_API_URL=http://localhost:5000
-  - prod:   REACT_APP_API_URL=https://checkin-backend-4xic.onrender.com
-====================== */
-const API_BASE = (process.env.REACT_APP_API_URL || "").replace(/\/+$/, "");
-
-
 export default function Login() {
   const navigate = useNavigate();
 
@@ -1448,22 +1438,11 @@ export default function Login() {
           fullName: u?.displayName || u?.email?.split("@")?.[0] || "Google User",
         };
 
-<<<<<<< HEAD:frontend/src/pages/Login.js
-        const res = await fetch(
-          `${API_BASE}/api/auth/google`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload),
-          }
-        );
-=======
         const res = await fetch(`${API_BASE}/api/auth/google`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
         });
->>>>>>> 573bd80 (Update login/signup UI):src/pages/Login.js
 
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data?.message || "Google login failed");
