@@ -4,10 +4,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { createPortal } from "react-dom";
 import { useGesture } from "@use-gesture/react";
-
-import TextInput from "../components/TextInput";
-import PrimaryButton from "../components/PrimaryButton";
-import GoogleButton from "../components/GoogleButton";
 import { signInWithGoogle } from "../auth";
 
 import poster1 from "../assets/poster1.png";
@@ -18,6 +14,151 @@ import poster5 from "../assets/poster5.png";
 import poster6 from "../assets/poster6.png";
 import poster7 from "../assets/poster7.png";
 import poster8 from "../assets/poster8.png";
+
+/* ======================
+   TOASTER (LOCAL)
+====================== */
+
+function useToasts({ maxToasts = 4 } = {}) {
+  const [toasts, setToasts] = useState([]);
+  const timersRef = useRef(new Map());
+
+  const dismiss = useCallback((id) => {
+    const t = timersRef.current.get(id);
+    if (t) clearTimeout(t);
+    timersRef.current.delete(id);
+    setToasts((prev) => prev.filter((x) => x.id !== id));
+  }, []);
+
+  const push = useCallback(
+    ({ variant = "info", title = "", message = "", duration = 2800 } = {}) => {
+      const id = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      const toast = { id, variant, title, message };
+
+      setToasts((prev) => {
+        const next = [...prev, toast];
+        return next.length > maxToasts
+          ? next.slice(next.length - maxToasts)
+          : next;
+      });
+
+      if (duration > 0) {
+        const timer = setTimeout(() => dismiss(id), duration);
+        timersRef.current.set(id, timer);
+      }
+
+      return id;
+    },
+    [dismiss, maxToasts],
+  );
+
+  const clear = useCallback(() => {
+    for (const t of timersRef.current.values()) clearTimeout(t);
+    timersRef.current.clear();
+    setToasts([]);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      for (const t of timersRef.current.values()) clearTimeout(t);
+      timersRef.current.clear();
+    };
+  }, []);
+
+  return { toasts, push, dismiss, clear };
+}
+
+function ToastIcon({ variant }) {
+  const base = "h-2.5 w-2.5 rounded-full border-2 border-black";
+  if (variant === "error") return <span className={`${base} bg-red-500`} />;
+  if (variant === "success") return <span className={`${base} bg-green-500`} />;
+  return <span className={`${base} bg-black/40`} />;
+}
+
+function ToastItem({ toast, onDismiss }) {
+  const isError = toast.variant === "error";
+  const isSuccess = toast.variant === "success";
+
+  return (
+    <div
+      className={`dg-toast pointer-events-auto w-[min(420px,calc(100vw-24px))] rounded-[16px] border-2 border-black px-4 py-3 shadow-[0_16px_0_rgba(0,0,0,0.16)]
+        ${isError ? "bg-red-50" : isSuccess ? "bg-green-50" : "bg-white"}`}
+      role="status"
+      aria-live="polite"
+    >
+      <div className="flex items-start gap-3">
+        <div className="pt-1">
+          <ToastIcon variant={toast.variant} />
+        </div>
+
+        <div className="min-w-0 flex-1">
+          {toast.title ? (
+            <div className="text-[13px] font-extrabold text-black/90">
+              {toast.title}
+            </div>
+          ) : null}
+          {toast.message ? (
+            <div className="text-[13px] text-black/80 leading-snug mt-0.5 break-words">
+              {toast.message}
+            </div>
+          ) : null}
+        </div>
+
+        <button
+          type="button"
+          onClick={() => onDismiss(toast.id)}
+          className="h-9 w-9 rounded-[12px] grid place-items-center hover:bg-black/5"
+          aria-label="Dismiss notification"
+        >
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            aria-hidden="true"
+          >
+            <path
+              d="M6 6l12 12M18 6L6 18"
+              stroke="currentColor"
+              strokeWidth="2.6"
+              strokeLinecap="round"
+            />
+          </svg>
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ToastViewport({ toasts, onDismiss }) {
+  if (typeof document === "undefined") return null;
+
+  const toastStyles = `
+    @keyframes dgToastIn {
+      from { transform: translateY(-10px); opacity: 0; }
+      to { transform: translateY(0px); opacity: 1; }
+    }
+    .dg-toast { animation: dgToastIn 220ms ease-out; }
+  `;
+
+  return createPortal(
+    <>
+      <style dangerouslySetInnerHTML={{ __html: toastStyles }} />
+      <div
+        className="fixed right-3 sm:right-5 top-3 sm:top-5 z-[1300] pointer-events-none flex flex-col gap-3"
+        style={{
+          paddingTop: "max(0px, env(safe-area-inset-top))",
+          paddingRight: "max(0px, env(safe-area-inset-right))",
+        }}
+      >
+        {toasts.map((t) => (
+          <ToastItem key={t.id} toast={t} onDismiss={onDismiss} />
+        ))}
+      </div>
+    </>,
+    document.body,
+  );
+}
 
 /* ======================
    DOME GALLERY (LOCAL)
@@ -58,7 +199,10 @@ function dgBuildItems(pool, seg) {
     return { src: image?.src || "", alt: image?.alt || "" };
   });
 
-  const usedImages = Array.from({ length: totalSlots }, (_, i) => normalizedImages[i % normalizedImages.length]);
+  const usedImages = Array.from(
+    { length: totalSlots },
+    (_, i) => normalizedImages[i % normalizedImages.length],
+  );
 
   for (let i = 1; i < usedImages.length; i++) {
     if (usedImages[i].src === usedImages[i - 1].src) {
@@ -73,34 +217,38 @@ function dgBuildItems(pool, seg) {
     }
   }
 
-  return coords.map((c, i) => ({ ...c, src: usedImages[i].src, alt: usedImages[i].alt }));
+  return coords.map((c, i) => ({
+    ...c,
+    src: usedImages[i].src,
+    alt: usedImages[i].alt,
+  }));
 }
 
 function DomeGallery({
   images = DG_DEFAULT_IMAGES,
-  fit = 25,
-  fitBasis = "auto",
-  minRadius = 520,
-  maxRadius = Infinity,
-  padFactor = 0.16,
+  fit = 3,
+  fitBasis = "min",
+  minRadius = 150,
+  maxRadius = 350,
+  padFactor = 0.12,
   maxVerticalRotationDeg = 6,
   dragSensitivity = 20,
   enlargeTransitionMs = 260,
   segments = 20,
   dragDampening = 2,
-  openedImageBorderRadius = "22px",
-  imageBorderRadius = "25px",
+  openedImageBorderRadius = "18px",
+  imageBorderRadius = "18px",
   grayscale = false,
   colorFilter = "saturate(1.15) contrast(1.06)",
   autoRotate = false,
   autoRotateDegPerSec = 10,
   autoRotateIdleDelayMs = 1000,
-
-  // Phone/Tablet: disable click + drag + popup
   disableInteractionMaxWidth = 1024,
-
-  // Desktop/Laptop: keep anchored popup in the same "viewer-frame" position
   viewerFrameShiftEnabled = true,
+
+  className = "",
+  showBackdrop = true,
+  showVignette = true,
 }) {
   const rootRef = useRef(null);
   const mainRef = useRef(null);
@@ -128,11 +276,16 @@ function DomeGallery({
   const lastTsRef = useRef(0);
   const pauseUntilRef = useRef(0);
 
-  const items = useMemo(() => dgBuildItems(images, segments), [images, segments]);
+  const items = useMemo(
+    () => dgBuildItems(images, segments),
+    [images, segments],
+  );
 
   const [interactionsDisabled, setInteractionsDisabled] = useState(() => {
     if (typeof window === "undefined" || !window.matchMedia) return false;
-    const mqSmall = window.matchMedia(`(max-width: ${disableInteractionMaxWidth}px)`);
+    const mqSmall = window.matchMedia(
+      `(max-width: ${disableInteractionMaxWidth}px)`,
+    );
     const mqTouch = window.matchMedia("(hover: none) and (pointer: coarse)");
     return mqSmall.matches || mqTouch.matches;
   });
@@ -140,9 +293,12 @@ function DomeGallery({
   useEffect(() => {
     if (typeof window === "undefined" || !window.matchMedia) return undefined;
 
-    const mqSmall = window.matchMedia(`(max-width: ${disableInteractionMaxWidth}px)`);
+    const mqSmall = window.matchMedia(
+      `(max-width: ${disableInteractionMaxWidth}px)`,
+    );
     const mqTouch = window.matchMedia("(hover: none) and (pointer: coarse)");
-    const recompute = () => setInteractionsDisabled(mqSmall.matches || mqTouch.matches);
+    const recompute = () =>
+      setInteractionsDisabled(mqSmall.matches || mqTouch.matches);
 
     if (mqSmall.addEventListener) mqSmall.addEventListener("change", recompute);
     else mqSmall.addListener(recompute);
@@ -153,10 +309,12 @@ function DomeGallery({
     recompute();
 
     return () => {
-      if (mqSmall.removeEventListener) mqSmall.removeEventListener("change", recompute);
+      if (mqSmall.removeEventListener)
+        mqSmall.removeEventListener("change", recompute);
       else mqSmall.removeListener(recompute);
 
-      if (mqTouch.removeEventListener) mqTouch.removeEventListener("change", recompute);
+      if (mqTouch.removeEventListener)
+        mqTouch.removeEventListener("change", recompute);
       else mqTouch.removeListener(recompute);
     };
   }, [disableInteractionMaxWidth]);
@@ -208,7 +366,10 @@ function DomeGallery({
       root.style.setProperty("--viewer-pad", `${viewerPad}px`);
       root.style.setProperty("--tile-radius", imageBorderRadius);
       root.style.setProperty("--enlarge-radius", openedImageBorderRadius);
-      root.style.setProperty("--image-filter", grayscale ? "grayscale(1)" : "none");
+      root.style.setProperty(
+        "--image-filter",
+        grayscale ? "grayscale(1)" : "none",
+      );
       root.style.setProperty("--color-filter", colorFilter);
 
       applyTransform(rotationRef.current.x, rotationRef.current.y);
@@ -216,7 +377,18 @@ function DomeGallery({
 
     ro.observe(root);
     return () => ro.disconnect();
-  }, [applyTransform, fit, fitBasis, minRadius, maxRadius, padFactor, grayscale, imageBorderRadius, openedImageBorderRadius, colorFilter]);
+  }, [
+    applyTransform,
+    fit,
+    fitBasis,
+    minRadius,
+    maxRadius,
+    padFactor,
+    grayscale,
+    imageBorderRadius,
+    openedImageBorderRadius,
+    colorFilter,
+  ]);
 
   const stopInertia = useCallback(() => {
     if (!inertiaRAF.current) return;
@@ -249,7 +421,11 @@ function DomeGallery({
           return;
         }
 
-        const nextX = dgClamp(rotationRef.current.x - vY / 200, -maxVerticalRotationDeg, maxVerticalRotationDeg);
+        const nextX = dgClamp(
+          rotationRef.current.x - vY / 200,
+          -maxVerticalRotationDeg,
+          maxVerticalRotationDeg,
+        );
         const nextY = dgWrapAngleSigned(rotationRef.current.y + vX / 200);
 
         rotationRef.current = { x: nextX, y: nextY };
@@ -261,7 +437,7 @@ function DomeGallery({
       stopInertia();
       inertiaRAF.current = requestAnimationFrame(step);
     },
-    [applyTransform, dragDampening, maxVerticalRotationDeg, stopInertia]
+    [applyTransform, dragDampening, maxVerticalRotationDeg, stopInertia],
   );
 
   const cleanupEnlarge = useCallback(() => {
@@ -311,9 +487,10 @@ function DomeGallery({
       const padStr = cs.getPropertyValue("--viewer-pad") || "40";
       const viewerPad = dgClamp(parseInt(padStr, 10) || 40, 10, 120);
 
-      // ✅ Safe region: keep popup inside the RIGHT HALF (no overlap into form)
       const safeInset = 12;
-      const safeMinX = viewerFrameShiftEnabled ? rootR.left + rootR.width / 2 + safeInset : rootR.left + safeInset;
+      const safeMinX = viewerFrameShiftEnabled
+        ? rootR.left + rootR.width / 2 + safeInset
+        : rootR.left + safeInset;
       const safeMaxX = rootR.right - safeInset;
       const safeMaxY = rootR.bottom - safeInset;
       const safeMinY = rootR.top + safeInset;
@@ -321,18 +498,29 @@ function DomeGallery({
       const safeW = Math.max(1, safeMaxX - safeMinX);
       const safeH = Math.max(1, safeMaxY - safeMinY);
 
-      // Desired size: follow frame, but clamp to safe right-half area + viewport.
-      const desiredFromFrame = frameR && frameR.width > 0 && frameR.height > 0 ? Math.min(frameR.width, frameR.height) : Math.min(rootR.width, rootR.height);
-      const desiredFromViewport = Math.min(window.innerWidth, window.innerHeight) - viewerPad * 2;
+      const desiredFromFrame =
+        frameR && frameR.width > 0 && frameR.height > 0
+          ? Math.min(frameR.width, frameR.height)
+          : Math.min(rootR.width, rootR.height);
+      const desiredFromViewport =
+        Math.min(window.innerWidth, window.innerHeight) - viewerPad * 2;
 
-      let size = Math.min(desiredFromFrame, desiredFromViewport, safeW, safeH, 900);
+      let size = Math.min(
+        desiredFromFrame,
+        desiredFromViewport,
+        safeW,
+        safeH,
+        900,
+      );
       size = Math.max(size, 320);
 
-      // Center point: frame center if available, otherwise safe area center
-      const centerX = frameR ? frameR.left + frameR.width / 2 : safeMinX + safeW / 2;
-      const centerY = frameR ? frameR.top + frameR.height / 2 : safeMinY + safeH / 2;
+      const centerX = frameR
+        ? frameR.left + frameR.width / 2
+        : safeMinX + safeW / 2;
+      const centerY = frameR
+        ? frameR.top + frameR.height / 2
+        : safeMinY + safeH / 2;
 
-      // Convert to root-relative, then clamp so it never crosses safe region
       let left = Math.round(centerX - size / 2 - rootR.left);
       let top = Math.round(centerY - size / 2 - rootR.top);
 
@@ -357,9 +545,10 @@ function DomeGallery({
       overlay.style.transformOrigin = "50% 50%";
       overlay.style.borderRadius = `var(--enlarge-radius, ${openedImageBorderRadius})`;
       overlay.style.overflow = "hidden";
-      overlay.style.boxShadow = "0 18px 60px rgba(0,0,0,.14)";
       overlay.style.pointerEvents = "auto";
       overlay.style.transform = "translate(0px, 0px) scale(0.94)";
+      overlay.style.boxShadow = "none";
+      overlay.style.background = "transparent";
 
       const rawSrc = parent?.dataset?.src || el.querySelector("img")?.src || "";
       const rawAlt = parent?.dataset?.alt || el.querySelector("img")?.alt || "";
@@ -370,7 +559,7 @@ function DomeGallery({
       img.style.width = "100%";
       img.style.height = "100%";
       img.style.objectFit = "contain";
-      img.style.background = "white";
+      img.style.background = "transparent";
       img.style.filter = `${grayscale ? "grayscale(1)" : "none"} ${colorFilter}`;
       overlay.appendChild(img);
 
@@ -393,7 +582,14 @@ function DomeGallery({
         }, enlargeTransitionMs + 30);
       });
     },
-    [closeEnlarge, colorFilter, enlargeTransitionMs, grayscale, openedImageBorderRadius, viewerFrameShiftEnabled]
+    [
+      closeEnlarge,
+      colorFilter,
+      enlargeTransitionMs,
+      grayscale,
+      openedImageBorderRadius,
+      viewerFrameShiftEnabled,
+    ],
   );
 
   const openItemFromElement = useCallback(
@@ -414,7 +610,7 @@ function DomeGallery({
       focusedElRef.current = el;
       openAnchoredModal(parent, el);
     },
-    [autoRotateIdleDelayMs, interactionsDisabled, openAnchoredModal]
+    [autoRotateIdleDelayMs, interactionsDisabled, openAnchoredModal],
   );
 
   useGesture(
@@ -435,9 +631,20 @@ function DomeGallery({
         pauseUntilRef.current = performance.now() + autoRotateIdleDelayMs;
       },
 
-      onDrag: ({ event, last, velocity: velArr = [0, 0], direction: dirArr = [0, 0], movement }) => {
+      onDrag: ({
+        event,
+        last,
+        velocity: velArr = [0, 0],
+        direction: dirArr = [0, 0],
+        movement,
+      }) => {
         if (interactionsDisabled) return;
-        if (focusedElRef.current || !draggingRef.current || !startPosRef.current) return;
+        if (
+          focusedElRef.current ||
+          !draggingRef.current ||
+          !startPosRef.current
+        )
+          return;
 
         const dxTotal = event.clientX - startPosRef.current.x;
         const dyTotal = event.clientY - startPosRef.current.y;
@@ -456,7 +663,11 @@ function DomeGallery({
         if (!likelyScroll) {
           if (touch) event.preventDefault();
 
-          const nextX = dgClamp(startRotRef.current.x - dyTotal / dragSensitivity, -maxVerticalRotationDeg, maxVerticalRotationDeg);
+          const nextX = dgClamp(
+            startRotRef.current.x - dyTotal / dragSensitivity,
+            -maxVerticalRotationDeg,
+            maxVerticalRotationDeg,
+          );
           const nextY = startRotRef.current.y + dxTotal / dragSensitivity;
 
           const cur = rotationRef.current;
@@ -475,20 +686,30 @@ function DomeGallery({
         let vx = vMagX * dirX;
         let vy = vMagY * dirY;
 
-        if (Math.abs(vx) < 0.001 && Math.abs(vy) < 0.001 && Array.isArray(movement)) {
+        if (
+          Math.abs(vx) < 0.001 &&
+          Math.abs(vy) < 0.001 &&
+          Array.isArray(movement)
+        ) {
           const [mx, my] = movement;
           vx = (mx / dragSensitivity) * 0.02;
           vy = (my / dragSensitivity) * 0.02;
         }
 
-        if (!likelyScroll && (Math.abs(vx) > 0.005 || Math.abs(vy) > 0.005)) startInertia(vx, vy);
+        if (!likelyScroll && (Math.abs(vx) > 0.005 || Math.abs(vy) > 0.005)) {
+          startInertia(vx, vy);
+        }
 
         startPosRef.current = null;
         movedRef.current = false;
         pauseUntilRef.current = performance.now() + autoRotateIdleDelayMs;
       },
     },
-    { target: mainRef, eventOptions: { passive: false }, drag: { filterTaps: true, threshold: 6 } }
+    {
+      target: mainRef,
+      eventOptions: { passive: false },
+      drag: { filterTaps: true, threshold: 6 },
+    },
   );
 
   useEffect(() => {
@@ -498,7 +719,9 @@ function DomeGallery({
     const onClick = () => closeEnlarge();
     scrim.addEventListener("click", onClick);
 
-    const onKey = (e) => e.key === "Escape" && closeEnlarge();
+    const onKey = (e) => {
+      if (e.key === "Escape") closeEnlarge();
+    };
     window.addEventListener("keydown", onKey);
 
     return () => {
@@ -566,7 +789,9 @@ function DomeGallery({
       inset: 0;
       z-index: 0;
       pointer-events: none;
-      background:
+      background: ${
+        showBackdrop
+          ? `
         radial-gradient(1100px 720px at 16% 16%,
           rgba(185,255,102,0.62) 0%,
           rgba(214,255,173,0.38) 32%,
@@ -582,6 +807,9 @@ function DomeGallery({
           rgba(250,252,248,1) 58%,
           rgba(245,250,244,1) 100%
         );
+      `
+          : "none"
+      };
     }
 
     .dg-bg::after{
@@ -589,7 +817,7 @@ function DomeGallery({
       position:absolute;
       inset:0;
       pointer-events:none;
-      opacity: .35;
+      opacity: ${showBackdrop ? ".35" : "0"};
       background:
         radial-gradient(circle at 1px 1px, rgba(0,0,0,0.10) 1px, rgba(0,0,0,0) 1.6px);
       background-size: 22px 22px;
@@ -632,7 +860,7 @@ function DomeGallery({
 
     .item__image {
       position: absolute;
-      inset: clamp(7px, 1.1vw, 12px);
+      inset: clamp(3px, 0.8vw, 6px);
       border-radius: var(--tile-radius, 12px);
       overflow: hidden;
       cursor: pointer;
@@ -679,18 +907,17 @@ function DomeGallery({
     .viewer { pointer-events: none; }
     .sphere-root[data-enlarging="true"] .viewer { pointer-events: auto; }
 
+    
+    .scrim {
+      background: transparent !important;
+      backdrop-filter: none !important;
+      -webkit-backdrop-filter: none !important;
+    }
+
     .sphere-root[data-enlarging="true"] .scrim {
       opacity: 1 !important;
       pointer-events: auto !important;
       cursor: zoom-out;
-    }
-
-    .scrim {
-      background:
-        radial-gradient(900px 600px at 30% 30%, rgba(185,255,102,0.30) 0%, rgba(185,255,102,0.16) 38%, rgba(255,255,255,0.10) 78%),
-        rgba(255,255,255,0.08);
-      backdrop-filter: blur(6px);
-      -webkit-backdrop-filter: blur(6px);
     }
 
     .dg-vignette {
@@ -704,6 +931,7 @@ function DomeGallery({
           rgba(185,255,102,0.12) 78%,
           rgba(185,255,102,0.26) 100%
         );
+      opacity: ${showVignette ? "1" : "0"};
     }
   `;
 
@@ -712,7 +940,7 @@ function DomeGallery({
       <style dangerouslySetInnerHTML={{ __html: cssStyles }} />
       <div
         ref={rootRef}
-        className="sphere-root relative w-full h-full"
+        className={`sphere-root relative w-full h-full ${className}`}
         data-interactions={interactionsDisabled ? "off" : "on"}
         style={{
           ["--segments-x"]: segments,
@@ -772,24 +1000,38 @@ function DomeGallery({
                       openItemFromElement(e.currentTarget);
                     }}
                   >
-                    <img src={it.src} draggable={false} alt={it.alt} className="dg-tile-img" />
+                    <img
+                      src={it.src}
+                      draggable={false}
+                      alt={it.alt}
+                      className="dg-tile-img"
+                    />
                   </div>
                 </div>
               ))}
             </div>
           </div>
 
-          <div className="dg-vignette" />
+          {showVignette ? <div className="dg-vignette" /> : null}
 
-          <div ref={viewerRef} className="viewer absolute inset-0 z-20 flex items-center justify-center" style={{ padding: "var(--viewer-pad)" }}>
-            <div ref={scrimRef} className="scrim absolute inset-0 z-10 opacity-0 transition-opacity duration-300" />
+          <div
+            ref={viewerRef}
+            className="viewer absolute inset-0 z-20 flex items-center justify-center"
+            style={{ padding: "var(--viewer-pad)" }}
+          >
+            <div
+              ref={scrimRef}
+              className="scrim absolute inset-0 z-10 opacity-0 transition-opacity duration-300"
+            />
 
             <div
               ref={frameRef}
               className="viewer-frame h-full aspect-square flex pointer-events-none"
               style={{
                 marginLeft: viewerFrameShiftEnabled ? "50%" : "0%",
-                transform: viewerFrameShiftEnabled ? "translateX(clamp(0px, 3vw, 70px))" : "translateX(0px)",
+                transform: viewerFrameShiftEnabled
+                  ? "translateX(clamp(0px, 3vw, 70px))"
+                  : "translateX(0px)",
               }}
             />
           </div>
@@ -822,12 +1064,288 @@ const COURSES = [
 
 function Spinner({ size = 16 }) {
   return (
-    <svg className="animate-spin" width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+    <svg
+      className="animate-spin"
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden="true"
+    >
+      <circle
+        className="opacity-25"
+        cx="12"
+        cy="12"
+        r="10"
+        stroke="currentColor"
+        strokeWidth="4"
+      />
+      <path
+        className="opacity-75"
+        fill="currentColor"
+        d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"
+      />
     </svg>
   );
 }
+
+
+/* ======================
+   GOOGLE CTA BUTTON (LOCAL)
+   - Signup page should say "Sign up with Google"
+   - We keep it local so Login page can still use its own Google button text
+====================== */
+
+function GoogleGIcon({ size = 16 }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 48 48"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <path
+        fill="#EA4335"
+        d="M24 9.5c3.15 0 5.98 1.09 8.22 2.88l6.14-6.14C34.45 2.6 29.59 0.5 24 0.5 14.62 0.5 6.51 5.88 2.61 13.72l7.22 5.61C11.6 13.58 17.3 9.5 24 9.5z"
+      />
+      <path
+        fill="#4285F4"
+        d="M46.5 24.5c0-1.65-.15-3.23-.43-4.77H24v9.04h12.6c-.54 2.9-2.16 5.36-4.6 7.02l7.05 5.45c4.12-3.8 6.45-9.4 6.45-16.74z"
+      />
+      <path
+        fill="#FBBC05"
+        d="M9.83 28.67a14.5 14.5 0 0 1 0-9.34l-7.22-5.61a23.9 23.9 0 0 0 0 20.56l7.22-5.61z"
+      />
+      <path
+        fill="#34A853"
+        d="M24 47.5c5.59 0 10.3-1.85 13.73-5.03l-7.05-5.45c-1.96 1.32-4.47 2.1-6.68 2.1-6.7 0-12.4-4.08-14.17-9.83l-7.22 5.61C6.51 42.12 14.62 47.5 24 47.5z"
+      />
+    </svg>
+  );
+}
+
+function GoogleCTAButton({ onClick, loading, label = "Sign up with Google" }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={loading}
+      className={`w-full rounded-[12px] border border-black/10 bg-white py-3 px-4 text-[14px] font-extrabold
+        shadow-[0_14px_28px_rgba(0,0,0,0.08)] transition
+        ${loading ? "opacity-70 cursor-not-allowed" : "hover:bg-black/5"}`}
+    >
+      <span className="inline-flex items-center justify-center gap-2">
+        {loading ? <Spinner size={16} /> : <GoogleGIcon size={16} />}
+        {label}
+      </span>
+    </button>
+  );
+}
+
+
+/* ======================
+   OR DIVIDER (LOCAL)
+====================== */
+
+function OrDivider({ text = "OR" }) {
+  return (
+    <div className="flex items-center gap-3 my-2">
+      <div className="h-[2px] flex-1 bg-black/10" />
+      <span className="text-[11px] sm:text-[12px] font-extrabold tracking-[0.22em] text-black/40">
+        {text}
+      </span>
+      <div className="h-[2px] flex-1 bg-black/10" />
+    </div>
+  );
+}
+
+/* ======================
+   FORM INPUTS (LOCAL)
+====================== */
+
+function EyeIcon({ open }) {
+  return open ? (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden="true"
+    >
+      <path
+        d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"
+        stroke="currentColor"
+        strokeWidth="2.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z"
+        stroke="currentColor"
+        strokeWidth="2.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  ) : (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden="true"
+    >
+      <path
+        d="M3 3l18 18"
+        stroke="currentColor"
+        strokeWidth="2.2"
+        strokeLinecap="round"
+      />
+      <path
+        d="M10.6 10.6a2 2 0 0 0 2.8 2.8"
+        stroke="currentColor"
+        strokeWidth="2.2"
+        strokeLinecap="round"
+      />
+      <path
+        d="M6.2 6.2C3.8 8 2 12 2 12s3.5 7 10 7c2 0 3.7-.5 5.1-1.3"
+        stroke="currentColor"
+        strokeWidth="2.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M9.9 4.2C10.6 4.1 11.3 4 12 4c6.5 0 10 8 10 8s-1.2 2.7-3.4 4.8"
+        stroke="currentColor"
+        strokeWidth="2.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function formatFieldError(errorText) {
+  if (!errorText) return "";
+  const norm = String(errorText).trim();
+  if (/^must be filled out/i.test(norm) && !norm.endsWith("*"))
+    return `${norm}*`;
+  return norm;
+}
+
+function FieldInput({
+  label,
+  value,
+  onChange,
+  type = "text",
+  disabled = false,
+  errorText,
+  rightSlot,
+  rightSlotWidth = 44,
+}) {
+  const normError = formatFieldError(errorText);
+  const isEmpty = !String(value || "").trim();
+
+  const showInlineRequired =
+    Boolean(normError) && /^must be filled out/i.test(normError) && isEmpty;
+
+  const topError = showInlineRequired ? "" : normError;
+
+  const errorId = useMemo(() => {
+    const safe = String(label || "field")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/(^-|-$)/g, "");
+    return `err-${safe}`;
+  }, [label]);
+
+  return (
+    <div className="w-full">
+      <div className="mb-1 flex items-end justify-between gap-3">
+        <span className="block text-[13px] font-bold text-black">
+          {label}
+        </span>
+
+        {topError ? (
+          <span className="text-[12px] font-bold text-red-600 text-right whitespace-nowrap">
+            {topError}
+          </span>
+        ) : null}
+      </div>
+
+      {normError ? (
+        <span id={errorId} className="sr-only">
+          {normError}
+        </span>
+      ) : null}
+
+      <div className="relative">
+        <input
+          value={value}
+          onChange={onChange}
+          type={type}
+          disabled={disabled}
+          aria-invalid={Boolean(normError)}
+          aria-describedby={normError ? errorId : undefined}
+          placeholder={showInlineRequired ? normError : undefined}
+          className={`
+  w-full rounded-[12px]
+  bg-[#EEF5FF]
+  px-4 py-3 text-[14px]
+  outline-none
+  border
+  focus:ring-2 focus:ring-black/10
+  placeholder:text-red-600 placeholder:font-extrabold placeholder:opacity-100
+  ${disabled ? "opacity-60 cursor-not-allowed" : ""}
+  ${normError ? "border-red-500" : "border-black/10"}
+`}
+          style={{
+            paddingRight: rightSlot ? rightSlotWidth + 12 : undefined,
+          }}
+        />
+
+        {rightSlot ? (
+          <div className="absolute right-2 top-1/2 -translate-y-1/2">
+            {rightSlot}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function PasswordField({ label, value, onChange, disabled, errorText }) {
+  const [show, setShow] = useState(false);
+
+  return (
+    <FieldInput
+      label={label}
+      value={value}
+      onChange={onChange}
+      type={show ? "text" : "password"}
+      disabled={disabled}
+      errorText={errorText}
+      rightSlotWidth={54}
+      rightSlot={
+        <button
+          type="button"
+          onClick={() => setShow((v) => !v)}
+          className="h-10 w-10 rounded-[12px] grid place-items-center hover:bg-black/5"
+          aria-label={show ? "Hide password" : "Show password"}
+        >
+          <span className="text-black/70">
+            <EyeIcon open={show} />
+          </span>
+        </button>
+      }
+    />
+  );
+}
+
+/* ======================
+   TERMS MODAL
+====================== */
 
 function TermsModal({ open, onClose, onAgree, agreed, setAgreed, loading }) {
   if (!open) return null;
@@ -847,8 +1365,12 @@ function TermsModal({ open, onClose, onAgree, agreed, setAgreed, loading }) {
         style={{ maxHeight: "min(90dvh, 860px)" }}
       >
         <div className="p-5 sm:p-6 border-b border-black/10 bg-white shrink-0">
-          <h2 className="text-[18px] sm:text-[20px] font-extrabold tracking-[0.12em]">TERMS & CONDITIONS</h2>
-          <p className="text-[13px] text-black/60 mt-2">Please review and accept to create your account.</p>
+          <h2 className="text-[18px] sm:text-[20px] font-extrabold tracking-[0.12em]">
+            TERMS & CONDITIONS
+          </h2>
+          <p className="text-[13px] text-black/60 mt-2">
+            Please review and accept to create your account.
+          </p>
         </div>
 
         <div
@@ -857,28 +1379,53 @@ function TermsModal({ open, onClose, onAgree, agreed, setAgreed, loading }) {
         >
           <p className="font-bold text-black/80 mb-2">Summary</p>
           <ul className="list-disc list-inside space-y-2">
-            <li>CheckIn supports student well-being using journaling and PHQ-9 self-assessment.</li>
             <li>
-              CheckIn is <span className="font-semibold">not</span> a diagnostic tool and does not replace professional care.
+              CheckIn supports student well-being using journaling and PHQ-9
+              self-assessment.
             </li>
-            <li>Use the platform respectfully. Do not attempt unauthorized access or misuse.</li>
-            <li>If you are in immediate danger, contact emergency services or your local hotline.</li>
+            <li>
+              CheckIn is <span className="font-semibold">not</span> a diagnostic
+              tool and does not replace professional care.
+            </li>
+            <li>
+              Use the platform respectfully. Do not attempt unauthorized access
+              or misuse.
+            </li>
+            <li>
+              If you are in immediate danger, contact emergency services or your
+              local hotline.
+            </li>
           </ul>
 
           <div className="mt-5">
             <p className="font-bold text-black/80 mb-2">Full Terms</p>
             <p className="mb-3">
-              By creating an account and using CheckIn, you agree to use the platform only for lawful and appropriate purposes.
+              By creating an account and using CheckIn, you agree to use the
+              platform only for lawful and appropriate purposes.
             </p>
-            <p className="mb-3">CheckIn may store and process information you provide to deliver features and improve performance.</p>
-            <p className="mb-3">CheckIn is provided “as is.” We cannot guarantee uninterrupted availability.</p>
-            <p>We may update these terms when necessary. Continued use constitutes acceptance of updated terms.</p>
+            <p className="mb-3">
+              CheckIn may store and process information you provide to deliver
+              features and improve performance.
+            </p>
+            <p className="mb-3">
+              CheckIn is provided “as is.” We cannot guarantee uninterrupted
+              availability.
+            </p>
+            <p>
+              We may update these terms when necessary. Continued use
+              constitutes acceptance of updated terms.
+            </p>
           </div>
         </div>
 
         <div className="p-5 sm:p-6 border-t border-black/10 bg-white shrink-0 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <label className="flex items-center gap-2 text-[13px] font-bold">
-            <input type="checkbox" checked={agreed} onChange={(e) => setAgreed(e.target.checked)} className="accent-greenBorder" />
+            <input
+              type="checkbox"
+              checked={agreed}
+              onChange={(e) => setAgreed(e.target.checked)}
+              className="accent-greenBorder"
+            />
             I agree to the Terms & Conditions
           </label>
 
@@ -896,7 +1443,9 @@ function TermsModal({ open, onClose, onAgree, agreed, setAgreed, loading }) {
               disabled={!agreed || loading}
               onClick={onAgree}
               className={`px-5 py-2 text-[13px] font-extrabold rounded-[12px] border-2 border-black flex items-center gap-2 justify-center ${
-                agreed ? "bg-black text-white hover:opacity-90" : "bg-black/30 text-white cursor-not-allowed"
+                agreed
+                  ? "bg-black text-white hover:opacity-90"
+                  : "bg-black/30 text-white cursor-not-allowed"
               }`}
             >
               {loading ? (
@@ -919,7 +1468,14 @@ function TermsModal({ open, onClose, onAgree, agreed, setAgreed, loading }) {
    COURSE DROPDOWN
 ====================== */
 
-function CourseDropdown({ label, value, onChange, options, disabled }) {
+function CourseDropdown({
+  label,
+  value,
+  onChange,
+  options,
+  disabled,
+  errorText,
+}) {
   const wrapRef = useRef(null);
   const btnRef = useRef(null);
   const menuRef = useRef(null);
@@ -927,6 +1483,14 @@ function CourseDropdown({ label, value, onChange, options, disabled }) {
   const [open, setOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
   const [pos, setPos] = useState({ left: 0, top: 0, width: 0, maxHeight: 280 });
+
+  const normError = formatFieldError(errorText);
+  const isEmpty = !String(value || "").trim();
+
+  const showInlineRequired =
+    Boolean(normError) && /^must be filled out/i.test(normError) && isEmpty;
+
+  const topError = showInlineRequired ? "" : normError;
 
   const selectedLabel = value || "Select your course";
 
@@ -946,13 +1510,22 @@ function CourseDropdown({ label, value, onChange, options, disabled }) {
     const desiredMax = 340;
     const openUp = spaceBelow < 200 && spaceAbove > spaceBelow;
 
-    const maxHeight = Math.max(200, Math.min(desiredMax, openUp ? spaceAbove : spaceBelow));
+    const maxHeight = Math.max(
+      200,
+      Math.min(desiredMax, openUp ? spaceAbove : spaceBelow),
+    );
 
     const top = openUp
       ? Math.max(viewportPad, rect.top - gap - maxHeight)
-      : Math.min(window.innerHeight - viewportPad - maxHeight, rect.bottom + gap);
+      : Math.min(
+          window.innerHeight - viewportPad - maxHeight,
+          rect.bottom + gap,
+        );
 
-    const left = Math.min(Math.max(viewportPad, rect.left), window.innerWidth - viewportPad - rect.width);
+    const left = Math.min(
+      Math.max(viewportPad, rect.left),
+      window.innerWidth - viewportPad - rect.width,
+    );
 
     setPos({ left, top, width: rect.width, maxHeight });
   }, []);
@@ -973,7 +1546,9 @@ function CourseDropdown({ label, value, onChange, options, disabled }) {
       close();
     };
 
-    const onKey = (e) => e.key === "Escape" && close();
+    const onKey = (e) => {
+      if (e.key === "Escape") close();
+    };
     const onResize = () => computePos();
     const onScroll = () => computePos();
 
@@ -1001,7 +1576,7 @@ function CourseDropdown({ label, value, onChange, options, disabled }) {
     <div
       ref={menuRef}
       role="listbox"
-      className="z-[9999] rounded-[14px] border-2 border-black bg-white shadow-[0_16px_0_rgba(0,0,0,0.14)] overflow-hidden"
+      className="z-[9999] rounded-[14px] border border-black/10 bg-white shadow-[0_14px_28px_rgba(0,0,0,0.08)] overflow-hidden"
       style={{
         position: "fixed",
         left: pos.left,
@@ -1011,11 +1586,16 @@ function CourseDropdown({ label, value, onChange, options, disabled }) {
         overscrollBehavior: "contain",
       }}
     >
-      <div className="h-full overflow-y-auto" style={{ maxHeight: pos.maxHeight, WebkitOverflowScrolling: "touch" }}>
+      <div
+        className="h-full overflow-y-auto"
+        style={{ maxHeight: pos.maxHeight, WebkitOverflowScrolling: "touch" }}
+      >
         <button
           type="button"
           onClick={() => handlePick("")}
-          className={`w-full text-left px-4 py-3 text-[14px] hover:bg-black/5 ${!value ? "font-extrabold" : "font-semibold"}`}
+          className={`w-full text-left px-4 py-3 text-[14px] hover:bg-black/5 ${
+            !value ? "font-extrabold" : "font-semibold"
+          }`}
         >
           Select your course
         </button>
@@ -1042,48 +1622,82 @@ function CourseDropdown({ label, value, onChange, options, disabled }) {
 
   return (
     <div ref={wrapRef} className="relative w-full">
-      <span className="block text-[13px] font-extrabold text-black/90 mb-1">{label}</span>
+      <div className="mb-1 flex items-end justify-between gap-3">
+        <span className="block text-[13px] font-bold text-black">
+          {label}
+        </span>
 
-      <button
-        ref={btnRef}
-        type="button"
-        disabled={disabled}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        onClick={() => {
-          if (disabled) return;
-          setOpen((v) => !v);
-        }}
-        className={`
-          relative w-full text-left rounded-[14px] border-2 border-black bg-white
-          px-4 pr-11 py-3 sm:py-[14px]
-          text-[14px] sm:text-[15px] leading-snug
-          focus:outline-none focus:ring-2 focus:ring-black/20
-          ${disabled ? "opacity-60 cursor-not-allowed" : "cursor-pointer"}
-        `}
-      >
-        <span
-          className={`${value ? "text-black" : "text-black/50"} block`}
-          style={{
-            display: "-webkit-box",
-            WebkitLineClamp: 2,
-            WebkitBoxOrient: "vertical",
-            overflow: "hidden",
+        {topError ? (
+          <span className="text-[12px] font-bold text-red-600 text-right whitespace-nowrap">
+            {topError}
+          </span>
+        ) : null}
+      </div>
+
+      <div className="relative">
+        <button
+          ref={btnRef}
+          type="button"
+          disabled={disabled}
+          aria-haspopup="listbox"
+          aria-expanded={open}
+          onClick={() => {
+            if (disabled) return;
+            setOpen((v) => !v);
           }}
+          className={`
+  relative w-full text-left rounded-[12px]
+  bg-[#EEF5FF]
+  px-4 pr-11 py-3
+  text-[14px] leading-snug
+  outline-none
+  border
+  focus:ring-2 focus:ring-black/10
+  ${disabled ? "opacity-60 cursor-not-allowed" : "cursor-pointer"}
+  ${normError ? "border-red-500" : "border-black/10"}
+`}
         >
-          {selectedLabel}
-        </span>
+          <span
+            className={`block ${
+              showInlineRequired
+                ? "text-red-600 font-extrabold"
+                : value
+                  ? "text-black"
+                  : "text-black/50"
+            }`}
+            style={{
+              display: "-webkit-box",
+              WebkitLineClamp: 2,
+              WebkitBoxOrient: "vertical",
+              overflow: "hidden",
+            }}
+          >
+            {showInlineRequired ? normError : selectedLabel}
+          </span>
 
-        <span
-          className={`pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-black transition-transform duration-150 ${
-            open ? "rotate-180" : "rotate-0"
-          }`}
-        >
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        </span>
-      </button>
+          <span
+            className={`pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-black transition-transform duration-150 ${
+              open ? "rotate-180" : "rotate-0"
+            }`}
+          >
+            <svg
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              aria-hidden="true"
+            >
+              <path
+                d="M6 9l6 6 6-6"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </span>
+        </button>
+      </div>
 
       {mounted ? createPortal(menu, document.body) : null}
     </div>
@@ -1091,9 +1705,10 @@ function CourseDropdown({ label, value, onChange, options, disabled }) {
 }
 
 /* ======================
-   SIGNUP
+   NETWORK
 ====================== */
 
+<<<<<<< HEAD:frontend/src/pages/Signup.js
 
 
 /* ======================
@@ -1101,6 +1716,8 @@ function CourseDropdown({ label, value, onChange, options, disabled }) {
    - local:  REACT_APP_API_URL=http://localhost:5000
    - prod:   REACT_APP_API_URL=https://checkin-backend-4xic.onrender.com
 ====================== */
+=======
+>>>>>>> 573bd80 (Update login/signup UI):src/pages/Signup.js
 const API_BASE = (process.env.REACT_APP_API_URL || "").replace(/\/+$/, "");
 
 async function fetchJsonSafe(url, options) {
@@ -1117,11 +1734,46 @@ async function fetchJsonSafe(url, options) {
   return { res, data, raw };
 }
 
+/* ======================
+   SIGNUP PAGE
+====================== */
+
 export default function Signup() {
   const navigate = useNavigate();
 
+  const {
+    toasts,
+    push: pushToast,
+    dismiss: dismissToast,
+  } = useToasts({ maxToasts: 4 });
+
+  const toast = useMemo(() => {
+    return {
+      info: (message, opts = {}) =>
+        pushToast({
+          variant: "info",
+          title: opts.title ?? "Info",
+          message,
+          duration: opts.duration ?? 2600,
+        }),
+      success: (message, opts = {}) =>
+        pushToast({
+          variant: "success",
+          title: opts.title ?? "Success",
+          message,
+          duration: opts.duration ?? 2600,
+        }),
+      error: (message, opts = {}) =>
+        pushToast({
+          variant: "error",
+          title: opts.title ?? "Error",
+          message,
+          duration: opts.duration ?? 2800,
+        }),
+    };
+  }, [pushToast]);
+
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
 
   const [form, setForm] = useState({
     firstName: "",
@@ -1134,7 +1786,19 @@ export default function Signup() {
     confirmPassword: "",
   });
 
-  const setField = (key) => (e) => setForm((p) => ({ ...p, [key]: e.target.value }));
+  const [fieldErrors, setFieldErrors] = useState({});
+
+  const setField = (key) => (e) => {
+    const nextVal = e.target.value;
+    setForm((p) => ({ ...p, [key]: nextVal }));
+
+    setFieldErrors((prev) => {
+      if (!prev[key]) return prev;
+      const copy = { ...prev };
+      delete copy[key];
+      return copy;
+    });
+  };
 
   const [showTerms, setShowTerms] = useState(false);
   const [termsAccepted, setTermsAccepted] = useState(false);
@@ -1143,23 +1807,7 @@ export default function Signup() {
 
   const pendingActionRef = useRef(null);
 
-  const errorTimerRef = useRef(null);
-
-    const showError = (msg) => {
-    if (errorTimerRef.current) clearTimeout(errorTimerRef.current);
-    setError(msg);
-
-    errorTimerRef.current = setTimeout(() => {
-      setError("");
-      errorTimerRef.current = null;
-    }, 2500);
-  };
-
-    useEffect(() => {
-    return () => {
-      if (errorTimerRef.current) clearTimeout(errorTimerRef.current);
-    };
-  }, []);
+  const showError = (msg) => toast.error(msg);
 
   useEffect(() => {
     const html = document.documentElement;
@@ -1220,6 +1868,7 @@ export default function Signup() {
     await fn();
   };
 
+<<<<<<< HEAD:frontend/src/pages/Signup.js
 const handleGoogleSignup = async () => {
   await requireTermsThen(async () => {
     setLoading(true);
@@ -1342,40 +1991,279 @@ const handleGoogleSignup = async () => {
           }
         );
 
-
-      if (!res.ok) {
-        const serverMsg = (data?.message || raw || "Signup failed.").toString().toLowerCase();
-
-        if (serverMsg.includes("email") && (serverMsg.includes("exist") || serverMsg.includes("taken") || serverMsg.includes("already"))) {
-          throw new Error("Email is taken.");
-        }
-
-        if (serverMsg.includes("username") && (serverMsg.includes("exist") || serverMsg.includes("taken") || serverMsg.includes("already"))) {
-          throw new Error("Username is taken.");
-        }
-
-        throw new Error(data?.message || raw || "Signup failed.");
-      }
-
-      // ✅ IMPORTANT: do NOT store token/user on signup anymore
-      // Backend now returns message only.
-      // Optional: you can show success then redirect.
-      // showError is for errors; if you want a success UI, use your success UI handler instead.
-      // For now: just redirect.
-      navigate("/login");
-    } catch (err) {
-      showError(err.message || "Signup failed");
-    } finally {
-      setLoading(false);
+=======
+  const validateRequired = (keys) => {
+    const nextErrors = {};
+    for (const k of keys) {
+      const v = String(form[k] || "").trim();
+      if (!v) nextErrors[k] = "Must be filled out";
     }
-  });
-};
+    setFieldErrors(nextErrors);
+    return Object.keys(nextErrors).length === 0;
+  };
 
+    const handleGoogleSignup = async () => {
+      await requireTermsThen(async () => {
+        // UX: This is SIGN UP with Google (not login). Require identity fields so DB can store them.
+        const firstName = (form.firstName || "").trim();
+        const lastName = (form.lastName || "").trim();
+        const username = (form.username || "").trim();
+        const course = (form.course || "").trim();
+        const studentNumber = (form.studentNumber || "").trim();
+  
+        // Required for Google signup: everything EXCEPT email (email comes from Google)
+        const nextErrors = {};
+        if (!firstName) nextErrors.firstName = "Must be filled out";
+        if (!lastName) nextErrors.lastName = "Must be filled out";
+        if (!username) nextErrors.username = "Must be filled out";
+        if (!studentNumber) nextErrors.studentNumber = "Must be filled out";
+        if (!course) nextErrors.course = "Must be filled out";
+  
+        if (Object.keys(nextErrors).length) {
+          setFieldErrors(nextErrors);
+          // Inline fieldErrors are enough; avoid toaster/modal for missing required fields
+          return;
+        }
+  
+        // Username minimum 6 chars (same rule as manual signup)
+        if (username.length < 6) {
+          setFieldErrors((prev) => ({
+            ...prev,
+            username: "Username must be at least 6 characters.",
+          }));
+          showError("Username must be at least 6 characters.");
+          return;
+        }
+  
+        // Student Number validation
+        const studentNumberRegex = /^[0-9]{2}-[0-9]{5}$/;
+        if (!studentNumberRegex.test(studentNumber)) {
+          setFieldErrors((prev) => ({
+            ...prev,
+            studentNumber: "Invalid, please try again.",
+          }));
+          showError("Invalid, please try again.");
+          return;
+        }
+  
+        setLoading(true);
+  
+        try {
+          const firebaseUser = await signInWithGoogle();
+          const u = firebaseUser?.user || firebaseUser;
+  
+          if (!u?.email) {
+            showError("Google account has no email. Please try another account.");
+            return;
+          }
+  
+          const fullName = [firstName, lastName].filter(Boolean).join(" ").trim();
+  
+          const payload = {
+            googleId: u?.uid,
+            email: u?.email,
+            fullName: fullName || u?.displayName || u?.email?.split("@")?.[0],
+            firstName,
+            lastName,
+            username,
+            course,
+            studentNumber,
+          };
+  
+          const { res, data, raw } = await fetchJsonSafe(
+            `${API_BASE}/api/auth/google`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(payload),
+            },
+          );
+  
+          if (!res.ok) {
+            const serverMsg = (data?.message || raw || "Google sign up failed.")
+              .toString();
+            const msg = serverMsg.toLowerCase();
+  
+            if (
+              msg.includes("email") &&
+              (msg.includes("exist") || msg.includes("taken") || msg.includes("already"))
+            ) {
+              showError("Email is taken.");
+              return;
+            }
+  
+            if (
+              msg.includes("username") &&
+              (msg.includes("exist") || msg.includes("taken") || msg.includes("already"))
+            ) {
+              showError("Username is taken.");
+              return;
+            }
+  
+            if (
+              (msg.includes("student") && msg.includes("number")) &&
+              (msg.includes("exist") || msg.includes("taken") || msg.includes("already"))
+            ) {
+              showError("Student number is taken.");
+              return;
+            }
+  
+            showError(serverMsg);
+            return;
+          }
+  
+          // ✅ Login behavior after Google signup: store token + go to app
+          if (data?.token) localStorage.setItem("token", data.token);
+          if (data?.user) localStorage.setItem("user", JSON.stringify(data.user));
+  
+          navigate("/");
+        } catch (err) {
+          showError(err?.message || "Google sign up failed");
+        } finally {
+          setLoading(false);
+        }
+      });
+    };
+>>>>>>> 573bd80 (Update login/signup UI):src/pages/Signup.js
 
+  const handleCreateAccount = async (e) => {
+    e.preventDefault();
 
+    await requireTermsThen(async () => {
+      // ✅ keep Signup.js required fields + generic missing-fields message
+      const ok = validateRequired([
+        "firstName",
+        "lastName",
+        "email",
+        "username",
+        "studentNumber",
+        "course",
+        "password",
+        "confirmPassword",
+      ]);
+
+      if (!ok) return;
+
+      try {
+        const firstName = form.firstName.trim();
+        const lastName = form.lastName.trim();
+        const fullName = [firstName, lastName].filter(Boolean).join(" ");
+
+        const email = form.email.trim();
+        const username = form.username.trim();
+        const studentNumber = form.studentNumber.trim();
+        const course = (form.course || "").trim();
+
+        // ✅ Email format
+        const emailRegex = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/;
+        if (!emailRegex.test(email)) {
+          setFieldErrors((prev) => ({
+            ...prev,
+            email: "Email is invalid. Please try again.",
+          }));
+          showError("Email is invalid. Please try again.");
+          return;
+        }
+
+        // ✅ Username minimum 6 chars
+        if (username.length < 6) {
+          setFieldErrors((prev) => ({
+            ...prev,
+            username: "Username must be at least 6 characters.",
+          }));
+          showError("Username must be at least 6 characters.");
+          return;
+        }
+
+        // ✅ Student Number validation (generic message only)
+        const studentNumberRegex = /^[0-9]{2}-[0-9]{5}$/;
+        if (!studentNumberRegex.test(studentNumber)) {
+          setFieldErrors((prev) => ({
+            ...prev,
+            studentNumber: "Invalid, please try again.",
+          }));
+          showError("Invalid, please try again.");
+          return;
+        }
+
+        if (form.password.length < 6) {
+          setFieldErrors((prev) => ({
+            ...prev,
+            password: "Password must be at least 6 characters.",
+          }));
+          showError("Password must be at least 6 characters.");
+          return;
+        }
+
+        if (form.password !== form.confirmPassword) {
+          setFieldErrors((prev) => ({
+            ...prev,
+            confirmPassword: "Passwords do not match.",
+          }));
+          showError("Passwords do not match.");
+          return;
+        }
+
+        setLoading(true);
+
+        const { res, data, raw } = await fetchJsonSafe(
+          `${API_BASE}/api/auth/register`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              fullName,
+              firstName,
+              lastName,
+              email,
+              username,
+              studentNumber,
+              course,
+              password: form.password,
+            }),
+          },
+        );
+
+        if (!res.ok) {
+          const serverMsg = (data?.message || raw || "Signup failed.")
+            .toString()
+            .toLowerCase();
+
+          if (
+            serverMsg.includes("email") &&
+            (serverMsg.includes("exist") ||
+              serverMsg.includes("taken") ||
+              serverMsg.includes("already"))
+          ) {
+            showError("Email is taken.");
+            return;
+          }
+
+          if (
+            serverMsg.includes("username") &&
+            (serverMsg.includes("exist") ||
+              serverMsg.includes("taken") ||
+              serverMsg.includes("already"))
+          ) {
+            showError("Username is taken.");
+            return;
+          }
+
+          showError(data?.message || raw || "Signup failed.");
+          return;
+        }
+
+        // ✅ IMPORTANT (from your Signup.js): do NOT store token/user on signup, just redirect
+        navigate("/login");
+      } catch (err) {
+        showError(err?.message || "Signup failed");
+      } finally {
+        setLoading(false);
+      }
+    });
+  };
 
   const uiPatchStyles = `
-    /* GoogleButton full width */
     .google-btn-wrap { width: 100%; }
     .google-btn-wrap > * { width: 100%; }
     .google-btn-wrap button,
@@ -1390,13 +2278,11 @@ const handleGoogleSignup = async () => {
 
   return (
     <div
-      className="relative min-h-screen overflow-x-hidden"
-      style={{
-        background:
-          "radial-gradient(1400px 820px at 14% 12%, rgba(185,255,102,0.55) 0%, rgba(214,255,173,0.28) 36%, rgba(255,255,255,0) 74%), radial-gradient(1200px 760px at 78% 40%, rgba(214,255,173,0.38) 0%, rgba(236,255,223,0.20) 42%, rgba(255,255,255,0) 78%), linear-gradient(#ffffff,#ffffff)",
-      }}
+
     >
       <style dangerouslySetInnerHTML={{ __html: uiPatchStyles }} />
+
+      <ToastViewport toasts={toasts} onDismiss={dismissToast} />
 
       <TermsModal
         open={showTerms}
@@ -1411,106 +2297,177 @@ const handleGoogleSignup = async () => {
         loading={termsLoading}
       />
 
-      {/* BACKGROUND DOME */}
-      <div className="absolute inset-0 z-0">
-        <DomeGallery
-          fit={1}
-          autoRotate
-          autoRotateDegPerSec={5}
-          autoRotateIdleDelayMs={1000}
-          disableInteractionMaxWidth={1024}
-        />
-      </div>
-
-      {/* LEFT BLUR */}
-      <div
-        className="absolute inset-0 z-10 pointer-events-none w-full xl:w-1/2 xl:inset-y-0 xl:left-0"
-        style={{
-          backdropFilter: "blur(16px)",
-          WebkitBackdropFilter: "blur(16px)",
-          maskImage: "linear-gradient(to right, rgba(0,0,0,1) 0%, rgba(0,0,0,1) 86%, rgba(0,0,0,0) 100%)",
-          WebkitMaskImage: "linear-gradient(to right, rgba(0,0,0,1) 0%, rgba(0,0,0,1) 86%, rgba(0,0,0,0) 100%)",
-          background: "linear-gradient(to right, rgba(255,255,255,0.58) 0%, rgba(255,255,255,0.28) 22%, rgba(255,255,255,0) 100%)",
-        }}
-        aria-hidden="true"
-      />
-
-      <div className="hidden xl:block absolute inset-y-0 left-0 z-20 w-1/2" style={{ pointerEvents: "auto" }} aria-hidden="true" />
-
-      {/* FOREGROUND CONTENT */}
-      <div className="relative z-30 mx-auto w-full max-w-[1400px] pointer-events-none px-[clamp(16px,3.4vw,90px)] pt-[clamp(22px,5vh,92px)] pb-[clamp(22px,5vh,56px)]">
-        <div className="grid grid-cols-1 xl:grid-cols-2 items-start gap-[clamp(18px,3.2vw,64px)]">
-          <section className="w-full mx-auto xl:mx-0 xl:justify-self-start" style={{ maxWidth: "560px", pointerEvents: "auto" }}>
-            <div
-              className="
-                relative
-                rounded-[22px]
-                bg-white/35
-                border border-black/10
-                shadow-[0_18px_60px_rgba(0,0,0,0.12)]
-                px-5 sm:px-6
-                py-6 sm:py-7
-              "
-            >
+      <div className="mx-auto w-full max-w-[1500px] px-[clamp(16px,3.4vw,90px)] pt-[clamp(22px,5vh,92px)] pb-[clamp(22px,5vh,56px)]">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-[clamp(18px,3.2vw,64px)] lg:gap-x-[clamp(56px,7vw,160px)] items-start">
+          {/* LEFT: SIGNUP */}
+          <section
+            className="w-full mx-auto lg:mx-0 lg:justify-self-start"
+            style={{ maxWidth: "600px" }}
+          >
+            <div className="relative px-1 sm:px-0">
               <h1 className="text-[28px] sm:text-[36px] font-black tracking-[.22em] sm:tracking-[.26em] leading-tight text-black drop-shadow-sm">
                 SIGN UP
               </h1>
-              <p className="text-[13px] sm:text-[15px] text-black/80 mt-2">Create your account. It only takes a minute.</p>
-
-              {error && (
-                <div className="mt-5 rounded-[16px] border-2 border-black bg-red-50 px-4 py-3 text-[13px]">
-                  <b>Error:</b> {error}
-                </div>
-              )}
-
-              <form className="mt-6 flex flex-col gap-4" onSubmit={handleCreateAccount}>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <TextInput label="First Name" value={form.firstName} onChange={setField("firstName")} />
-                  <TextInput label="Last Name" value={form.lastName} onChange={setField("lastName")} />
-                </div>
-
-                <TextInput label="Email" value={form.email} onChange={setField("email")} />
-                <TextInput label="Username" value={form.username} onChange={setField("username")} />
-                <TextInput label="Student number" value={form.studentNumber} onChange={setField("studentNumber")} />
-
-                <CourseDropdown label="Course" value={form.course} onChange={setField("course")} options={COURSES} disabled={loading} />
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <TextInput label="Password" type="password" value={form.password} onChange={setField("password")} />
-                  <TextInput label="Confirm Password" type="password" value={form.confirmPassword} onChange={setField("confirmPassword")} />
-                </div>
-
-                <div className="pt-1 flex flex-col gap-3">
-                  <PrimaryButton className="w-full" disabled={loading} type="submit">
-                    {loading ? "Creating..." : "Create Account"}
-                  </PrimaryButton>
-                </div>
-              </form>
-
-              <div className="google-btn-wrap mt-3">
-                <GoogleButton
-                  onClick={(e) => {
-                    e?.preventDefault?.();
-                    e?.stopPropagation?.();
-                    handleGoogleSignup();
-                  }}
-                  loading={loading}
-                />
-              </div>
-
-              <p className="text-[13px] text-black/80 mt-4">
-                Already have an account?{" "}
-                <Link
-                  to="/login"
-                  className="font-extrabold underline underline-offset-4 decoration-black/50 hover:decoration-black/80 whitespace-nowrap"
-                >
-                  Login
-                </Link>
+              <p className="text-[13px] sm:text-[15px] text-black/80 mt-2">
+                Create your account. It only takes a minute.
               </p>
+
+                            <div className="mt-6 rounded-[18px] bg-white border border-black/10 p-5 sm:p-7 shadow-[0_14px_28px_rgba(0,0,0,0.08)]">
+                <form
+                                className="flex flex-col gap-4"
+                                onSubmit={handleCreateAccount}
+                              >
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                  <FieldInput
+                                    label="First Name"
+                                    value={form.firstName}
+                                    onChange={setField("firstName")}
+                                    disabled={loading}
+                                    errorText={fieldErrors.firstName}
+                                  />
+                                  <FieldInput
+                                    label="Last Name"
+                                    value={form.lastName}
+                                    onChange={setField("lastName")}
+                                    disabled={loading}
+                                    errorText={fieldErrors.lastName}
+                                  />
+                                </div>
+
+                                <FieldInput
+                                  label="Email"
+                                  value={form.email}
+                                  onChange={setField("email")}
+                                  disabled={loading}
+                                  errorText={fieldErrors.email}
+                                />
+
+                                <FieldInput
+                                  label="Username"
+                                  value={form.username}
+                                  onChange={setField("username")}
+                                  disabled={loading}
+                                  errorText={fieldErrors.username}
+                                />
+
+                                <FieldInput
+                                  label="Student number"
+                                  value={form.studentNumber}
+                                  onChange={setField("studentNumber")}
+                                  disabled={loading}
+                                  errorText={fieldErrors.studentNumber}
+                                />
+
+                                <CourseDropdown
+                                  label="Course"
+                                  value={form.course}
+                                  onChange={setField("course")}
+                                  options={COURSES}
+                                  disabled={loading}
+                                  errorText={fieldErrors.course}
+                                />
+
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                  <PasswordField
+                                    label="Password"
+                                    value={form.password}
+                                    onChange={setField("password")}
+                                    disabled={loading}
+                                    errorText={fieldErrors.password}
+                                  />
+                                  <PasswordField
+                                    label="Confirm Password"
+                                    value={form.confirmPassword}
+                                    onChange={setField("confirmPassword")}
+                                    disabled={loading}
+                                    errorText={fieldErrors.confirmPassword}
+                                  />
+                                </div>
+
+                                <div className="pt-1 flex flex-col gap-3">
+                                  <button
+                  type="submit"
+                  disabled={loading}
+                  className={`w-full rounded-[12px] py-3 text-[14px] font-extrabold transition
+                    ${
+                      loading
+                        ? "bg-black/20 text-white cursor-not-allowed"
+                        : "bg-black text-white hover:opacity-90"
+                    }`}
+                >
+                  {loading ? (
+                    <span className="inline-flex items-center gap-2 justify-center">
+                      <Spinner />
+                      Creating…
+                    </span>
+                  ) : (
+                    "Create Account"
+                  )}
+                </button>
+                                </div>
+                              </form>
+                <div className="mt-4">
+                  <OrDivider />
+                </div>
+
+                <div className="google-btn-wrap mt-3">
+                  <GoogleCTAButton
+                    onClick={(e) => {
+                      e?.preventDefault?.();
+                      e?.stopPropagation?.();
+                      handleGoogleSignup();
+                    }}
+                    loading={loading}
+                    label="Sign up with Google"
+                  />
+                </div>
+
+                <div className="flex items-center justify-between text-[13px] pt-2">
+                  <span className="text-black/60">Already have an account?</span>
+                  <Link
+                    to="/login"
+                    className="font-bold underline underline-offset-4"
+                  >
+                    Login
+                  </Link>
+                </div>
+              </div>
             </div>
           </section>
 
-          <section className="hidden xl:block pointer-events-none" />
+          {/* RIGHT: DOME */}
+          <section className="hidden lg:flex items-start justify-center self-stretch lg:pl-8 xl:pl-12">
+            <div
+              className="w-full h-full flex items-start justify-center"
+              style={{ minHeight: "620px" }}
+            >
+              <div
+                className="w-full"
+                style={{
+                  width: "min(145%, 1000px)",
+                  height: "min(calc(100vh - 140px), 1000px)",
+                  aspectRatio: "1 / 1",
+                  transform: "translateY(-26px)",
+                }}
+              >
+                <DomeGallery
+                  className="w-full h-full"
+                  autoRotate
+                  autoRotateDegPerSec={10}
+                  autoRotateIdleDelayMs={2000}
+                  disableInteractionMaxWidth={1024}
+                  viewerFrameShiftEnabled={false}
+                  fit={0.62}
+                  fitBasis="min"
+                  minRadius={500}
+                  maxRadius={700}
+                  padFactor={0.08}
+                  showBackdrop={false}
+                  showVignette={false}
+                />
+              </div>
+            </div>
+          </section>
         </div>
       </div>
     </div>

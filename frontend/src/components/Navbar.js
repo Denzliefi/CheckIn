@@ -430,28 +430,6 @@ export default function Navbar() {
                     </div>
                   </div>
                 )}
-
-                {/* ✅ Emergency call icon (911) */}
-                <a
-                  href={emergencyHref}
-                  aria-label={`Call emergency ${EMERGENCY_TEL}`}
-                  className="
-                    relative h-10 w-10
-                    rounded-full
-                    bg-[#F59E0B]
-                    flex items-center justify-center
-                    shadow-md
-                    transition-all duration-300
-                    hover:scale-110 hover:-translate-y-[1px]
-                    active:scale-95
-                  "
-                  title={`Call ${EMERGENCY_TEL}`}
-                >
-                  <span className="absolute inset-0 rounded-full bg-[#F59E0B]/30 animate-ping" />
-                  <span className="relative z-10 text-white">
-                    <PhoneIcon className="h-[18px] w-[18px]" />
-                  </span>
-                </a>
               </div>
             </div>
 
