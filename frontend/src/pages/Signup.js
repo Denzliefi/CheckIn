@@ -16,151 +16,6 @@ import poster7 from "../assets/poster7.png";
 import poster8 from "../assets/poster8.png";
 
 /* ======================
-   TOASTER (LOCAL)
-====================== */
-
-function useToasts({ maxToasts = 4 } = {}) {
-  const [toasts, setToasts] = useState([]);
-  const timersRef = useRef(new Map());
-
-  const dismiss = useCallback((id) => {
-    const t = timersRef.current.get(id);
-    if (t) clearTimeout(t);
-    timersRef.current.delete(id);
-    setToasts((prev) => prev.filter((x) => x.id !== id));
-  }, []);
-
-  const push = useCallback(
-    ({ variant = "info", title = "", message = "", duration = 2800 } = {}) => {
-      const id = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-      const toast = { id, variant, title, message };
-
-      setToasts((prev) => {
-        const next = [...prev, toast];
-        return next.length > maxToasts
-          ? next.slice(next.length - maxToasts)
-          : next;
-      });
-
-      if (duration > 0) {
-        const timer = setTimeout(() => dismiss(id), duration);
-        timersRef.current.set(id, timer);
-      }
-
-      return id;
-    },
-    [dismiss, maxToasts],
-  );
-
-  const clear = useCallback(() => {
-    for (const t of timersRef.current.values()) clearTimeout(t);
-    timersRef.current.clear();
-    setToasts([]);
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      for (const t of timersRef.current.values()) clearTimeout(t);
-      timersRef.current.clear();
-    };
-  }, []);
-
-  return { toasts, push, dismiss, clear };
-}
-
-function ToastIcon({ variant }) {
-  const base = "h-2.5 w-2.5 rounded-full border-2 border-black";
-  if (variant === "error") return <span className={`${base} bg-red-500`} />;
-  if (variant === "success") return <span className={`${base} bg-green-500`} />;
-  return <span className={`${base} bg-black/40`} />;
-}
-
-function ToastItem({ toast, onDismiss }) {
-  const isError = toast.variant === "error";
-  const isSuccess = toast.variant === "success";
-
-  return (
-    <div
-      className={`dg-toast pointer-events-auto w-[min(420px,calc(100vw-24px))] rounded-[16px] border-2 border-black px-4 py-3 shadow-[0_16px_0_rgba(0,0,0,0.16)]
-        ${isError ? "bg-red-50" : isSuccess ? "bg-green-50" : "bg-white"}`}
-      role="status"
-      aria-live="polite"
-    >
-      <div className="flex items-start gap-3">
-        <div className="pt-1">
-          <ToastIcon variant={toast.variant} />
-        </div>
-
-        <div className="min-w-0 flex-1">
-          {toast.title ? (
-            <div className="text-[13px] font-extrabold text-black/90">
-              {toast.title}
-            </div>
-          ) : null}
-          {toast.message ? (
-            <div className="text-[13px] text-black/80 leading-snug mt-0.5 break-words">
-              {toast.message}
-            </div>
-          ) : null}
-        </div>
-
-        <button
-          type="button"
-          onClick={() => onDismiss(toast.id)}
-          className="h-9 w-9 rounded-[12px] grid place-items-center hover:bg-black/5"
-          aria-label="Dismiss notification"
-        >
-          <svg
-            width="18"
-            height="18"
-            viewBox="0 0 24 24"
-            fill="none"
-            aria-hidden="true"
-          >
-            <path
-              d="M6 6l12 12M18 6L6 18"
-              stroke="currentColor"
-              strokeWidth="2.6"
-              strokeLinecap="round"
-            />
-          </svg>
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function ToastViewport({ toasts, onDismiss }) {
-  if (typeof document === "undefined") return null;
-
-  const toastStyles = `
-    @keyframes dgToastIn {
-      from { transform: translateY(-10px); opacity: 0; }
-      to { transform: translateY(0px); opacity: 1; }
-    }
-    .dg-toast { animation: dgToastIn 220ms ease-out; }
-  `;
-
-  return createPortal(
-    <>
-      <style dangerouslySetInnerHTML={{ __html: toastStyles }} />
-      <div
-        className="fixed right-3 sm:right-5 top-3 sm:top-5 z-[1300] pointer-events-none flex flex-col gap-3"
-        style={{
-          paddingTop: "max(0px, env(safe-area-inset-top))",
-          paddingRight: "max(0px, env(safe-area-inset-right))",
-        }}
-      >
-        {toasts.map((t) => (
-          <ToastItem key={t.id} toast={t} onDismiss={onDismiss} />
-        ))}
-      </div>
-    </>,
-    document.body,
-  );
-}
-
-/* ======================
    DOME GALLERY (LOCAL)
 ====================== */
 
@@ -907,7 +762,6 @@ function DomeGallery({
     .viewer { pointer-events: none; }
     .sphere-root[data-enlarging="true"] .viewer { pointer-events: auto; }
 
-    
     .scrim {
       background: transparent !important;
       backdrop-filter: none !important;
@@ -1089,7 +943,6 @@ function Spinner({ size = 16 }) {
   );
 }
 
-
 /* ======================
    GOOGLE CTA BUTTON (LOCAL)
    - Signup page should say "Sign up with Google"
@@ -1142,7 +995,6 @@ function GoogleCTAButton({ onClick, loading, label = "Sign up with Google" }) {
     </button>
   );
 }
-
 
 /* ======================
    OR DIVIDER (LOCAL)
@@ -1243,6 +1095,13 @@ function FieldInput({
   errorText,
   rightSlot,
   rightSlotWidth = 44,
+  maxLength,
+  inputMode,
+  autoComplete,
+  spellCheck = false,
+  autoCapitalize = "none",
+  name,
+  onBlur,
 }) {
   const normError = formatFieldError(errorText);
   const isEmpty = !String(value || "").trim();
@@ -1263,9 +1122,7 @@ function FieldInput({
   return (
     <div className="w-full">
       <div className="mb-1 flex items-end justify-between gap-3">
-        <span className="block text-[13px] font-bold text-black">
-          {label}
-        </span>
+        <span className="block text-[13px] font-bold text-black">{label}</span>
 
         {topError ? (
           <span className="text-[12px] font-bold text-red-600 text-right whitespace-nowrap">
@@ -1286,6 +1143,13 @@ function FieldInput({
           onChange={onChange}
           type={type}
           disabled={disabled}
+          maxLength={maxLength}
+          inputMode={inputMode}
+          autoComplete={autoComplete}
+          spellCheck={spellCheck}
+          autoCapitalize={autoCapitalize}
+          name={name}
+          onBlur={onBlur}
           aria-invalid={Boolean(normError)}
           aria-describedby={normError ? errorId : undefined}
           placeholder={showInlineRequired ? normError : undefined}
@@ -1315,7 +1179,15 @@ function FieldInput({
   );
 }
 
-function PasswordField({ label, value, onChange, disabled, errorText }) {
+function PasswordField({
+  label,
+  value,
+  onChange,
+  disabled,
+  errorText,
+  maxLength,
+  autoComplete,
+}) {
   const [show, setShow] = useState(false);
 
   return (
@@ -1325,6 +1197,8 @@ function PasswordField({ label, value, onChange, disabled, errorText }) {
       onChange={onChange}
       type={show ? "text" : "password"}
       disabled={disabled}
+      maxLength={maxLength}
+      autoComplete={autoComplete}
       errorText={errorText}
       rightSlotWidth={54}
       rightSlot={
@@ -1468,14 +1342,7 @@ function TermsModal({ open, onClose, onAgree, agreed, setAgreed, loading }) {
    COURSE DROPDOWN
 ====================== */
 
-function CourseDropdown({
-  label,
-  value,
-  onChange,
-  options,
-  disabled,
-  errorText,
-}) {
+function CourseDropdown({ label, value, onChange, options, disabled, errorText }) {
   const wrapRef = useRef(null);
   const btnRef = useRef(null);
   const menuRef = useRef(null);
@@ -1491,7 +1358,6 @@ function CourseDropdown({
     Boolean(normError) && /^must be filled out/i.test(normError) && isEmpty;
 
   const topError = showInlineRequired ? "" : normError;
-
   const selectedLabel = value || "Select your course";
 
   useEffect(() => setMounted(true), []);
@@ -1517,10 +1383,7 @@ function CourseDropdown({
 
     const top = openUp
       ? Math.max(viewportPad, rect.top - gap - maxHeight)
-      : Math.min(
-          window.innerHeight - viewportPad - maxHeight,
-          rect.bottom + gap,
-        );
+      : Math.min(window.innerHeight - viewportPad - maxHeight, rect.bottom + gap);
 
     const left = Math.min(
       Math.max(viewportPad, rect.left),
@@ -1623,9 +1486,7 @@ function CourseDropdown({
   return (
     <div ref={wrapRef} className="relative w-full">
       <div className="mb-1 flex items-end justify-between gap-3">
-        <span className="block text-[13px] font-bold text-black">
-          {label}
-        </span>
+        <span className="block text-[13px] font-bold text-black">{label}</span>
 
         {topError ? (
           <span className="text-[12px] font-bold text-red-600 text-right whitespace-nowrap">
@@ -1725,43 +1586,147 @@ async function fetchJsonSafe(url, options) {
 }
 
 /* ======================
+   INPUT RULES (ANTI-XSS + LIMITS)
+   - Inline-only: we sanitize onChange and show field errors inline
+====================== */
+
+const INPUT_LIMITS = {
+  firstName: 50,
+  lastName: 50,
+  email: 254,
+  username: 24,
+  studentNumber: 8, // "00-00000"
+  password: 64,
+  confirmPassword: 64,
+};
+
+function stripDangerousChars(v) {
+  return String(v ?? "")
+    .replace(/[\u0000-\u001F\u007F]/g, "")
+    .replace(/[<>`]/g, "");
+}
+
+function sanitizeNameValue(raw, maxLen) {
+  const original = String(raw ?? "");
+  const cleaned = stripDangerousChars(original).replace(
+    /[^A-Za-zÀ-ÖØ-öø-ÿ'\-\s]/g,
+    "",
+  );
+  const trimmed = cleaned.replace(/\s{2,}/g, " ").slice(0, maxLen);
+  const hadBad =
+    trimmed.length !== stripDangerousChars(original).length ||
+    /[^A-Za-zÀ-ÖØ-öø-ÿ'\-\s]/.test(stripDangerousChars(original));
+  return {
+    value: trimmed,
+    error: hadBad
+      ? "Only letters, spaces, apostrophe (') and hyphen (-) are allowed."
+      : "",
+  };
+}
+
+function sanitizeUsernameValue(raw, maxLen) {
+  const original = String(raw ?? "");
+  const cleanedBase = stripDangerousChars(original).replace(/\s+/g, "");
+  const cleaned = cleanedBase.replace(/[^A-Za-z0-9._]/g, "").slice(0, maxLen);
+  const hadBad = cleaned !== cleanedBase;
+  return {
+    value: cleaned,
+    error: hadBad
+      ? "Only letters, numbers, dot (.) and underscore (_) are allowed."
+      : "",
+  };
+}
+
+function sanitizeEmailValue(raw, maxLen) {
+  const original = String(raw ?? "");
+  const cleanedBase = stripDangerousChars(original).replace(/\s+/g, "");
+  const cleaned = cleanedBase.slice(0, maxLen);
+  const hadBad = cleaned !== cleanedBase;
+  return {
+    value: cleaned,
+    error: hadBad ? "Email contains invalid characters." : "",
+  };
+}
+
+// ✅ dash appears immediately after 2 digits if user types "-"
+function formatStudentNumber(raw) {
+  const s = String(raw ?? "");
+  const digits = s.replace(/\D/g, "").slice(0, 7);
+
+  const hasDash = s.includes("-");
+  const endsWithDash = s.endsWith("-");
+
+  if (digits.length === 2 && (hasDash || endsWithDash)) return `${digits}-`;
+  if (digits.length <= 2) return digits;
+  return `${digits.slice(0, 2)}-${digits.slice(2)}`;
+}
+
+function sanitizeStudentNumberValue(raw, maxLen) {
+  const original = String(raw ?? "");
+  const base = stripDangerousChars(original);
+  const hadForbidden = /[^0-9\-\s]/.test(base);
+  const formatted = formatStudentNumber(base).slice(0, maxLen);
+  return {
+    value: formatted,
+    error: hadForbidden ? "Student number can only contain numbers and a dash (-)." : "",
+  };
+}
+
+function applyInputRules(key, rawValue) {
+  const raw = String(rawValue ?? "");
+  switch (key) {
+    case "firstName":
+      return sanitizeNameValue(raw, INPUT_LIMITS.firstName);
+    case "lastName":
+      return sanitizeNameValue(raw, INPUT_LIMITS.lastName);
+    case "username":
+      return sanitizeUsernameValue(raw, INPUT_LIMITS.username);
+    case "email":
+      return sanitizeEmailValue(raw, INPUT_LIMITS.email);
+    case "studentNumber":
+      return sanitizeStudentNumberValue(raw, INPUT_LIMITS.studentNumber);
+    case "password":
+      return {
+        value: stripDangerousChars(raw).slice(0, INPUT_LIMITS.password),
+        error: "",
+      };
+    case "confirmPassword":
+      return {
+        value: stripDangerousChars(raw).slice(0, INPUT_LIMITS.confirmPassword),
+        error: "",
+      };
+    default:
+      return { value: stripDangerousChars(raw), error: "" };
+  }
+}
+
+function isValidEmailFormat(email) {
+  const v = String(email ?? "").trim();
+  if (!v) return false;
+  return /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/.test(v);
+}
+
+function isValidStudentNumberFormat(v) {
+  return /^[0-9]{2}-[0-9]{5}$/.test(String(v ?? "").trim());
+}
+
+/* ======================
    SIGNUP PAGE
 ====================== */
 
 export default function Signup() {
   const navigate = useNavigate();
 
-  const {
-    toasts,
-    push: pushToast,
-    dismiss: dismissToast,
-  } = useToasts({ maxToasts: 4 });
-
-  const toast = useMemo(() => {
-    return {
-      info: (message, opts = {}) =>
-        pushToast({
-          variant: "info",
-          title: opts.title ?? "Info",
-          message,
-          duration: opts.duration ?? 2600,
-        }),
-      success: (message, opts = {}) =>
-        pushToast({
-          variant: "success",
-          title: opts.title ?? "Success",
-          message,
-          duration: opts.duration ?? 2600,
-        }),
-      error: (message, opts = {}) =>
-        pushToast({
-          variant: "error",
-          title: opts.title ?? "Error",
-          message,
-          duration: opts.duration ?? 2800,
-        }),
-    };
-  }, [pushToast]);
+  // Inline-only banners (no modals / no toasts)
+  const [formBanner, setFormBanner] = useState(null);
+  const clearBanner = useCallback(() => setFormBanner(null), []);
+  const showBanner = useCallback((variant, title, message) => {
+    setFormBanner({ variant, title, message });
+  }, []);
+  const showErrorBanner = useCallback(
+    (message) => showBanner("error", "Error", message),
+    [showBanner],
+  );
 
   const [loading, setLoading] = useState(false);
 
@@ -1777,17 +1742,26 @@ export default function Signup() {
   });
 
   const [fieldErrors, setFieldErrors] = useState({});
+  const [googleInlineError, setGoogleInlineError] = useState("");
+
+  // ✅ if /availability does not exist, stop calling it (prevents endless 404 spam)
+  const availabilityRef = useRef({ supported: true });
 
   const setField = (key) => (e) => {
-    const nextVal = e.target.value;
+    const raw = e?.target?.value ?? "";
+    const { value: nextVal, error } = applyInputRules(key, raw);
+
     setForm((p) => ({ ...p, [key]: nextVal }));
 
     setFieldErrors((prev) => {
-      if (!prev[key]) return prev;
       const copy = { ...prev };
-      delete copy[key];
+      if (copy[key]) delete copy[key];
+      if (error) copy[key] = error;
       return copy;
     });
+
+    clearBanner();
+    setGoogleInlineError("");
   };
 
   const [showTerms, setShowTerms] = useState(false);
@@ -1796,8 +1770,6 @@ export default function Signup() {
   const [termsLoading, setTermsLoading] = useState(false);
 
   const pendingActionRef = useRef(null);
-
-  const showError = (msg) => toast.error(msg);
 
   useEffect(() => {
     const html = document.documentElement;
@@ -1829,6 +1801,230 @@ export default function Signup() {
     setTermsAccepted(saved);
     setTermsChecked(false);
   }, []);
+
+  /* ======================
+     LIVE AVAILABILITY CHECKS (INLINE ONLY)
+  ====================== */
+
+  const liveRef = useRef({
+    usernameTimer: null,
+    emailTimer: null,
+    studentTimer: null,
+    usernameAbort: null,
+    emailAbort: null,
+    studentAbort: null,
+  });
+
+  const clearIfMatches = useCallback((field, matchText) => {
+    setFieldErrors((prev) => {
+      if (prev?.[field] !== matchText) return prev;
+      const copy = { ...prev };
+      delete copy[field];
+      return copy;
+    });
+  }, []);
+
+  const setTakenInline = useCallback((field, message) => {
+    setFieldErrors((prev) => ({ ...prev, [field]: message }));
+  }, []);
+
+  // Username live check
+  useEffect(() => {
+    const v = (form.username || "").trim();
+    const TAKEN = "Username is taken.";
+
+    if (!availabilityRef.current.supported) return;
+
+    if (v.length < 6) {
+      clearIfMatches("username", TAKEN);
+      return;
+    }
+
+    if (fieldErrors.username && fieldErrors.username !== TAKEN) return;
+    if (!API_BASE) return;
+
+    if (liveRef.current.usernameTimer) {
+      clearTimeout(liveRef.current.usernameTimer);
+      liveRef.current.usernameTimer = null;
+    }
+    if (liveRef.current.usernameAbort) {
+      liveRef.current.usernameAbort.abort();
+      liveRef.current.usernameAbort = null;
+    }
+
+    const ac = new AbortController();
+    liveRef.current.usernameAbort = ac;
+
+    liveRef.current.usernameTimer = window.setTimeout(async () => {
+      const valueAtCall = v;
+
+      try {
+        const { res, data } = await fetchJsonSafe(
+          `${API_BASE}/api/auth/availability?username=${encodeURIComponent(valueAtCall)}`,
+          { method: "GET", signal: ac.signal },
+        );
+
+        if (res.status === 404) {
+          availabilityRef.current.supported = false;
+          return;
+        }
+
+        if ((form.username || "").trim() !== valueAtCall) return;
+
+        if (res.ok) {
+          const available = data?.usernameAvailable !== false;
+          if (!available) setTakenInline("username", TAKEN);
+          else clearIfMatches("username", TAKEN);
+        }
+      } catch {
+        // ignore
+      }
+    }, 450);
+
+    return () => {
+      if (liveRef.current.usernameTimer) {
+        clearTimeout(liveRef.current.usernameTimer);
+        liveRef.current.usernameTimer = null;
+      }
+      if (liveRef.current.usernameAbort) {
+        liveRef.current.usernameAbort.abort();
+        liveRef.current.usernameAbort = null;
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.username]);
+
+  // Email live check
+  useEffect(() => {
+    const v = (form.email || "").trim();
+    const TAKEN = "Email is taken.";
+
+    if (!availabilityRef.current.supported) return;
+
+    if (!isValidEmailFormat(v)) {
+      clearIfMatches("email", TAKEN);
+      return;
+    }
+
+    if (fieldErrors.email && fieldErrors.email !== TAKEN) return;
+    if (!API_BASE) return;
+
+    if (liveRef.current.emailTimer) {
+      clearTimeout(liveRef.current.emailTimer);
+      liveRef.current.emailTimer = null;
+    }
+    if (liveRef.current.emailAbort) {
+      liveRef.current.emailAbort.abort();
+      liveRef.current.emailAbort = null;
+    }
+
+    const ac = new AbortController();
+    liveRef.current.emailAbort = ac;
+
+    liveRef.current.emailTimer = window.setTimeout(async () => {
+      const valueAtCall = v;
+
+      try {
+        const { res, data } = await fetchJsonSafe(
+          `${API_BASE}/api/auth/availability?email=${encodeURIComponent(valueAtCall)}`,
+          { method: "GET", signal: ac.signal },
+        );
+
+        if (res.status === 404) {
+          availabilityRef.current.supported = false;
+          return;
+        }
+
+        if ((form.email || "").trim() !== valueAtCall) return;
+
+        if (res.ok) {
+          const available = data?.emailAvailable !== false;
+          if (!available) setTakenInline("email", TAKEN);
+          else clearIfMatches("email", TAKEN);
+        }
+      } catch {
+        // ignore
+      }
+    }, 450);
+
+    return () => {
+      if (liveRef.current.emailTimer) {
+        clearTimeout(liveRef.current.emailTimer);
+        liveRef.current.emailTimer = null;
+      }
+      if (liveRef.current.emailAbort) {
+        liveRef.current.emailAbort.abort();
+        liveRef.current.emailAbort = null;
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.email]);
+
+  // Student number live check
+  useEffect(() => {
+    const v = (form.studentNumber || "").trim();
+    const TAKEN = "Student number is taken.";
+
+    if (!availabilityRef.current.supported) return;
+
+    if (!isValidStudentNumberFormat(v)) {
+      clearIfMatches("studentNumber", TAKEN);
+      return;
+    }
+
+    if (fieldErrors.studentNumber && fieldErrors.studentNumber !== TAKEN) return;
+    if (!API_BASE) return;
+
+    if (liveRef.current.studentTimer) {
+      clearTimeout(liveRef.current.studentTimer);
+      liveRef.current.studentTimer = null;
+    }
+    if (liveRef.current.studentAbort) {
+      liveRef.current.studentAbort.abort();
+      liveRef.current.studentAbort = null;
+    }
+
+    const ac = new AbortController();
+    liveRef.current.studentAbort = ac;
+
+    liveRef.current.studentTimer = window.setTimeout(async () => {
+      const valueAtCall = v;
+
+      try {
+        const { res, data } = await fetchJsonSafe(
+          `${API_BASE}/api/auth/availability?studentNumber=${encodeURIComponent(valueAtCall)}`,
+          { method: "GET", signal: ac.signal },
+        );
+
+        if (res.status === 404) {
+          availabilityRef.current.supported = false;
+          return;
+        }
+
+        if ((form.studentNumber || "").trim() !== valueAtCall) return;
+
+        if (res.ok) {
+          const available = data?.studentNumberAvailable !== false;
+          if (!available) setTakenInline("studentNumber", TAKEN);
+          else clearIfMatches("studentNumber", TAKEN);
+        }
+      } catch {
+        // ignore
+      }
+    }, 450);
+
+    return () => {
+      if (liveRef.current.studentTimer) {
+        clearTimeout(liveRef.current.studentTimer);
+        liveRef.current.studentTimer = null;
+      }
+      if (liveRef.current.studentAbort) {
+        liveRef.current.studentAbort.abort();
+        liveRef.current.studentAbort = null;
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.studentNumber]);
 
   const runPendingIfAny = () => {
     const pending = pendingActionRef.current;
@@ -1864,264 +2060,265 @@ export default function Signup() {
       const v = String(form[k] || "").trim();
       if (!v) nextErrors[k] = "Must be filled out";
     }
-    setFieldErrors(nextErrors);
+    setFieldErrors((prev) => ({ ...prev, ...nextErrors }));
     return Object.keys(nextErrors).length === 0;
   };
 
-    const handleGoogleSignup = async () => {
-      await requireTermsThen(async () => {
-        // UX: This is SIGN UP with Google (not login). Require identity fields so DB can store them.
-        const firstName = (form.firstName || "").trim();
-        const lastName = (form.lastName || "").trim();
-        const username = (form.username || "").trim();
-        const course = (form.course || "").trim();
-        const studentNumber = (form.studentNumber || "").trim();
-  
-        // Required for Google signup: everything EXCEPT email (email comes from Google)
-        const nextErrors = {};
-        if (!firstName) nextErrors.firstName = "Must be filled out";
-        if (!lastName) nextErrors.lastName = "Must be filled out";
-        if (!username) nextErrors.username = "Must be filled out";
-        if (!studentNumber) nextErrors.studentNumber = "Must be filled out";
-        if (!course) nextErrors.course = "Must be filled out";
-  
-        if (Object.keys(nextErrors).length) {
-          setFieldErrors(nextErrors);
-          // Inline fieldErrors are enough; avoid toaster/modal for missing required fields
+  /* ======================
+     GOOGLE SIGNUP
+     ✅ Enforced by backend: /api/auth/google must return 409 if account exists
+     ✅ Frontend: DO NOT rely on /availability (because yours is 404)
+  ====================== */
+
+  const handleGoogleSignup = async () => {
+    await requireTermsThen(async () => {
+      setGoogleInlineError("");
+
+      if (!API_BASE) {
+        setGoogleInlineError("Missing REACT_APP_API_URL. Set your backend base URL.");
+        return;
+      }
+
+      const firstName = (form.firstName || "").trim();
+      const lastName = (form.lastName || "").trim();
+      const username = (form.username || "").trim();
+      const course = (form.course || "").trim();
+      const studentNumber = (form.studentNumber || "").trim();
+
+      const nextErrors = {};
+      if (!firstName) nextErrors.firstName = "Must be filled out";
+      if (!lastName) nextErrors.lastName = "Must be filled out";
+      if (!username) nextErrors.username = "Must be filled out";
+      if (!studentNumber) nextErrors.studentNumber = "Must be filled out";
+      if (!course) nextErrors.course = "Must be filled out";
+
+      if (Object.keys(nextErrors).length) {
+        setFieldErrors((prev) => ({ ...prev, ...nextErrors }));
+        return;
+      }
+
+      if (fieldErrors.username === "Username is taken.") return;
+      if (fieldErrors.studentNumber === "Student number is taken.") return;
+
+      if (username.length < 6) {
+        setFieldErrors((prev) => ({
+          ...prev,
+          username: "Username must be at least 6 characters.",
+        }));
+        return;
+      }
+
+      if (!isValidStudentNumberFormat(studentNumber)) {
+        setFieldErrors((prev) => ({
+          ...prev,
+          studentNumber: "Invalid, please try again.",
+        }));
+        return;
+      }
+
+      setLoading(true);
+
+      try {
+        const firebaseUser = await signInWithGoogle();
+        const u = firebaseUser?.user || firebaseUser;
+
+        if (!u?.email) {
+          setGoogleInlineError("Google account has no email. Please try another account.");
           return;
         }
-  
-        // Username minimum 6 chars (same rule as manual signup)
-        if (username.length < 6) {
-          setFieldErrors((prev) => ({
-            ...prev,
-            username: "Username must be at least 6 characters.",
-          }));
-          showError("Username must be at least 6 characters.");
-          return;
-        }
-  
-        // Student Number validation
-        const studentNumberRegex = /^[0-9]{2}-[0-9]{5}$/;
-        if (!studentNumberRegex.test(studentNumber)) {
-          setFieldErrors((prev) => ({
-            ...prev,
-            studentNumber: "Invalid, please try again.",
-          }));
-          showError("Invalid, please try again.");
-          return;
-        }
-  
-        setLoading(true);
-  
-        try {
-          const firebaseUser = await signInWithGoogle();
-          const u = firebaseUser?.user || firebaseUser;
-  
-          if (!u?.email) {
-            showError("Google account has no email. Please try another account.");
+
+        // show the Google email in the form
+        setForm((p) => ({ ...p, email: u.email }));
+
+        const fullName = [firstName, lastName].filter(Boolean).join(" ").trim();
+
+        const payload = {
+          intent: "signup",
+          googleId: u?.uid,
+          email: u?.email,
+          fullName: fullName || u?.displayName || u?.email?.split("@")?.[0],
+          firstName,
+          lastName,
+          username,
+          course,
+          studentNumber,
+        };
+
+        const { res, data, raw } = await fetchJsonSafe(`${API_BASE}/api/auth/google`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+
+        if (!res.ok) {
+          // ✅ This is the required behavior: only signup once
+          if (
+            res.status === 409 &&
+            (data?.code === "ACCOUNT_EXISTS" ||
+              (data?.message || "").toLowerCase().includes("account already exists") ||
+              (data?.message || "").toLowerCase().includes("log in"))
+          ) {
+            setFieldErrors((prev) => ({ ...prev, email: "Email is taken." }));
+            setGoogleInlineError("Google account already exists. Please log in instead.");
             return;
           }
-  
-          const fullName = [firstName, lastName].filter(Boolean).join(" ").trim();
-  
-          const payload = {
-            googleId: u?.uid,
-            email: u?.email,
-            fullName: fullName || u?.displayName || u?.email?.split("@")?.[0],
-            firstName,
-            lastName,
-            username,
-            course,
-            studentNumber,
-          };
-  
-          const { res, data, raw } = await fetchJsonSafe(
-            `${API_BASE}/api/auth/google`,
-            {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(payload),
-            },
-          );
-  
-          if (!res.ok) {
-            const serverMsg = (data?.message || raw || "Google sign up failed.")
-              .toString();
-            const msg = serverMsg.toLowerCase();
-  
-            if (
-              msg.includes("email") &&
-              (msg.includes("exist") || msg.includes("taken") || msg.includes("already"))
-            ) {
-              showError("Email is taken.");
-              return;
-            }
-  
-            if (
-              msg.includes("username") &&
-              (msg.includes("exist") || msg.includes("taken") || msg.includes("already"))
-            ) {
-              showError("Username is taken.");
-              return;
-            }
-  
-            if (
-              (msg.includes("student") && msg.includes("number")) &&
-              (msg.includes("exist") || msg.includes("taken") || msg.includes("already"))
-            ) {
-              showError("Student number is taken.");
-              return;
-            }
-  
-            showError(serverMsg);
+
+          const serverMsg = (data?.message || raw || "Google sign up failed.").toString();
+          const msg = serverMsg.toLowerCase();
+
+          if (msg.includes("email") && (msg.includes("exist") || msg.includes("taken") || msg.includes("already"))) {
+            setFieldErrors((prev) => ({ ...prev, email: "Email is taken." }));
+            setGoogleInlineError("Google account already exists. Please log in instead.");
             return;
           }
-  
-          // ✅ Login behavior after Google signup: store token + go to app
-          if (data?.token) localStorage.setItem("token", data.token);
-          if (data?.user) localStorage.setItem("user", JSON.stringify(data.user));
-  
-          navigate("/");
-        } catch (err) {
-          showError(err?.message || "Google sign up failed");
-        } finally {
-          setLoading(false);
+
+          if (msg.includes("username") && (msg.includes("exist") || msg.includes("taken") || msg.includes("already"))) {
+            setFieldErrors((prev) => ({ ...prev, username: "Username is taken." }));
+            return;
+          }
+
+          if (
+            msg.includes("student") &&
+            msg.includes("number") &&
+            (msg.includes("exist") || msg.includes("taken") || msg.includes("already"))
+          ) {
+            setFieldErrors((prev) => ({ ...prev, studentNumber: "Student number is taken." }));
+            return;
+          }
+
+          setGoogleInlineError(serverMsg);
+          return;
         }
-      });
-    };
+
+        // ✅ After Google signup: DO NOT log in. Redirect to Login.
+        navigate("/login", {
+          state: { signupSuccess: "Account creation successful. Please log in." },
+        });
+      } catch (err) {
+        setGoogleInlineError(err?.message || "Google sign up failed");
+      } finally {
+        setLoading(false);
+      }
+    });
+  };
 
   const handleCreateAccount = async (e) => {
     e.preventDefault();
 
     await requireTermsThen(async () => {
-      // ✅ keep Signup.js required fields + generic missing-fields message
-      const ok = validateRequired([
+      const requiredKeys = [
         "firstName",
         "lastName",
         "email",
         "username",
-        "studentNumber",
         "course",
+        "studentNumber",
         "password",
         "confirmPassword",
-      ]);
+      ];
 
-      if (!ok) return;
+      const okRequired = validateRequired(requiredKeys);
+      if (!okRequired) return;
+
+      if (requiredKeys.some((k) => Boolean(fieldErrors?.[k]))) return;
+
+      if (!isValidEmailFormat(form.email)) {
+        setFieldErrors((prev) => ({
+          ...prev,
+          email: "Email is invalid. Please try again.",
+        }));
+        return;
+      }
+
+      if ((form.username || "").trim().length < 6) {
+        setFieldErrors((prev) => ({
+          ...prev,
+          username: "Username must be at least 6 characters.",
+        }));
+        return;
+      }
+
+      if (!isValidStudentNumberFormat(form.studentNumber)) {
+        setFieldErrors((prev) => ({
+          ...prev,
+          studentNumber: "Invalid, please try again.",
+        }));
+        return;
+      }
+
+      if ((form.password || "").length < 8) {
+        setFieldErrors((prev) => ({
+          ...prev,
+          password: "Password must be at least 8 characters.",
+        }));
+        return;
+      }
+
+      if (form.password !== form.confirmPassword) {
+        setFieldErrors((prev) => ({
+          ...prev,
+          confirmPassword: "Passwords do not match.",
+        }));
+        return;
+      }
+
+      setLoading(true);
 
       try {
-        const firstName = form.firstName.trim();
-        const lastName = form.lastName.trim();
-        const fullName = [firstName, lastName].filter(Boolean).join(" ");
+        const fullName = [form.firstName, form.lastName]
+          .filter(Boolean)
+          .join(" ")
+          .trim();
 
-        const email = form.email.trim();
-        const username = form.username.trim();
-        const studentNumber = form.studentNumber.trim();
-        const course = (form.course || "").trim();
+        const payload = {
+          fullName,
+          firstName: (form.firstName || "").trim(),
+          lastName: (form.lastName || "").trim(),
+          email: (form.email || "").trim(),
+          username: (form.username || "").trim(),
+          course: (form.course || "").trim(),
+          studentNumber: (form.studentNumber || "").trim(),
+          password: form.password,
+        };
 
-        // ✅ Email format
-        const emailRegex = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/;
-        if (!emailRegex.test(email)) {
-          setFieldErrors((prev) => ({
-            ...prev,
-            email: "Email is invalid. Please try again.",
-          }));
-          showError("Email is invalid. Please try again.");
-          return;
-        }
-
-        // ✅ Username minimum 6 chars
-        if (username.length < 6) {
-          setFieldErrors((prev) => ({
-            ...prev,
-            username: "Username must be at least 6 characters.",
-          }));
-          showError("Username must be at least 6 characters.");
-          return;
-        }
-
-        // ✅ Student Number validation (generic message only)
-        const studentNumberRegex = /^[0-9]{2}-[0-9]{5}$/;
-        if (!studentNumberRegex.test(studentNumber)) {
-          setFieldErrors((prev) => ({
-            ...prev,
-            studentNumber: "Invalid, please try again.",
-          }));
-          showError("Invalid, please try again.");
-          return;
-        }
-
-        if (form.password.length < 6) {
-          setFieldErrors((prev) => ({
-            ...prev,
-            password: "Password must be at least 6 characters.",
-          }));
-          showError("Password must be at least 6 characters.");
-          return;
-        }
-
-        if (form.password !== form.confirmPassword) {
-          setFieldErrors((prev) => ({
-            ...prev,
-            confirmPassword: "Passwords do not match.",
-          }));
-          showError("Passwords do not match.");
-          return;
-        }
-
-        setLoading(true);
-
-        const { res, data, raw } = await fetchJsonSafe(
-          `${API_BASE}/api/auth/register`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              fullName,
-              firstName,
-              lastName,
-              email,
-              username,
-              studentNumber,
-              course,
-              password: form.password,
-            }),
-          },
-        );
+        const { res, data, raw } = await fetchJsonSafe(`${API_BASE}/api/auth/register`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
 
         if (!res.ok) {
-          const serverMsg = (data?.message || raw || "Signup failed.")
-            .toString()
-            .toLowerCase();
+          const serverMsg = (data?.message || raw || "Signup failed.").toString();
+          const msg = serverMsg.toLowerCase();
 
-          if (
-            serverMsg.includes("email") &&
-            (serverMsg.includes("exist") ||
-              serverMsg.includes("taken") ||
-              serverMsg.includes("already"))
-          ) {
-            showError("Email is taken.");
+          if (msg.includes("email") && (msg.includes("exist") || msg.includes("taken") || msg.includes("already"))) {
+            setFieldErrors((prev) => ({ ...prev, email: "Email is taken." }));
+            return;
+          }
+
+          if (msg.includes("username") && (msg.includes("exist") || msg.includes("taken") || msg.includes("already"))) {
+            setFieldErrors((prev) => ({ ...prev, username: "Username is taken." }));
             return;
           }
 
           if (
-            serverMsg.includes("username") &&
-            (serverMsg.includes("exist") ||
-              serverMsg.includes("taken") ||
-              serverMsg.includes("already"))
+            msg.includes("student") &&
+            msg.includes("number") &&
+            (msg.includes("exist") || msg.includes("taken") || msg.includes("already"))
           ) {
-            showError("Username is taken.");
+            setFieldErrors((prev) => ({ ...prev, studentNumber: "Student number is taken." }));
             return;
           }
 
-          showError(data?.message || raw || "Signup failed.");
+          showErrorBanner(serverMsg);
           return;
         }
 
-        // ✅ IMPORTANT (from your Signup.js): do NOT store token/user on signup, just redirect
-        navigate("/login");
+        navigate("/login", {
+          state: { signupSuccess: "Account creation successful. Please log in." },
+        });
       } catch (err) {
-        showError(err?.message || "Signup failed");
+        showErrorBanner(err?.message || "Signup failed");
       } finally {
         setLoading(false);
       }
@@ -2142,12 +2339,8 @@ export default function Signup() {
   `;
 
   return (
-    <div
-
-    >
+    <div>
       <style dangerouslySetInnerHTML={{ __html: uiPatchStyles }} />
-
-      <ToastViewport toasts={toasts} onDismiss={dismissToast} />
 
       <TermsModal
         open={showTerms}
@@ -2177,100 +2370,137 @@ export default function Signup() {
                 Create your account. It only takes a minute.
               </p>
 
-                            <div className="mt-6 rounded-[18px] bg-white border border-black/10 p-5 sm:p-7 shadow-[0_14px_28px_rgba(0,0,0,0.08)]">
-                <form
-                                className="flex flex-col gap-4"
-                                onSubmit={handleCreateAccount}
-                              >
-                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                  <FieldInput
-                                    label="First Name"
-                                    value={form.firstName}
-                                    onChange={setField("firstName")}
-                                    disabled={loading}
-                                    errorText={fieldErrors.firstName}
-                                  />
-                                  <FieldInput
-                                    label="Last Name"
-                                    value={form.lastName}
-                                    onChange={setField("lastName")}
-                                    disabled={loading}
-                                    errorText={fieldErrors.lastName}
-                                  />
-                                </div>
+              <div className="mt-6 rounded-[18px] bg-white border border-black/10 p-5 sm:p-7 shadow-[0_14px_28px_rgba(0,0,0,0.08)]">
+                <form className="flex flex-col gap-4" onSubmit={handleCreateAccount}>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <FieldInput
+                      label="First Name"
+                      value={form.firstName}
+                      onChange={setField("firstName")}
+                      disabled={loading}
+                      maxLength={INPUT_LIMITS.firstName}
+                      autoComplete="given-name"
+                      autoCapitalize="words"
+                      errorText={fieldErrors.firstName}
+                    />
+                    <FieldInput
+                      label="Last Name"
+                      value={form.lastName}
+                      onChange={setField("lastName")}
+                      disabled={loading}
+                      maxLength={INPUT_LIMITS.lastName}
+                      autoComplete="family-name"
+                      autoCapitalize="words"
+                      errorText={fieldErrors.lastName}
+                    />
+                  </div>
 
-                                <FieldInput
-                                  label="Email"
-                                  value={form.email}
-                                  onChange={setField("email")}
-                                  disabled={loading}
-                                  errorText={fieldErrors.email}
-                                />
+                  <FieldInput
+                    label="Email"
+                    value={form.email}
+                    onChange={setField("email")}
+                    disabled={loading}
+                    maxLength={INPUT_LIMITS.email}
+                    inputMode="email"
+                    autoComplete="email"
+                    autoCapitalize="none"
+                    spellCheck={false}
+                    errorText={fieldErrors.email}
+                  />
 
-                                <FieldInput
-                                  label="Username"
-                                  value={form.username}
-                                  onChange={setField("username")}
-                                  disabled={loading}
-                                  errorText={fieldErrors.username}
-                                />
+                  <FieldInput
+                    label="Username"
+                    value={form.username}
+                    onChange={setField("username")}
+                    disabled={loading}
+                    maxLength={INPUT_LIMITS.username}
+                    autoComplete="username"
+                    autoCapitalize="none"
+                    spellCheck={false}
+                    errorText={fieldErrors.username}
+                  />
 
-                                <FieldInput
-                                  label="Student number"
-                                  value={form.studentNumber}
-                                  onChange={setField("studentNumber")}
-                                  disabled={loading}
-                                  errorText={fieldErrors.studentNumber}
-                                />
+                  <FieldInput
+                    label="Student number"
+                    value={form.studentNumber}
+                    onChange={setField("studentNumber")}
+                    disabled={loading}
+                    maxLength={INPUT_LIMITS.studentNumber}
+                    inputMode="text"
+                    autoComplete="off"
+                    autoCapitalize="none"
+                    spellCheck={false}
+                    errorText={fieldErrors.studentNumber}
+                  />
 
-                                <CourseDropdown
-                                  label="Course"
-                                  value={form.course}
-                                  onChange={setField("course")}
-                                  options={COURSES}
-                                  disabled={loading}
-                                  errorText={fieldErrors.course}
-                                />
+                  <CourseDropdown
+                    label="Course"
+                    value={form.course}
+                    onChange={setField("course")}
+                    options={COURSES}
+                    disabled={loading}
+                    errorText={fieldErrors.course}
+                  />
 
-                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                  <PasswordField
-                                    label="Password"
-                                    value={form.password}
-                                    onChange={setField("password")}
-                                    disabled={loading}
-                                    errorText={fieldErrors.password}
-                                  />
-                                  <PasswordField
-                                    label="Confirm Password"
-                                    value={form.confirmPassword}
-                                    onChange={setField("confirmPassword")}
-                                    disabled={loading}
-                                    errorText={fieldErrors.confirmPassword}
-                                  />
-                                </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <PasswordField
+                      label="Password"
+                      value={form.password}
+                      onChange={setField("password")}
+                      disabled={loading}
+                      maxLength={INPUT_LIMITS.password}
+                      autoComplete="new-password"
+                      errorText={fieldErrors.password}
+                    />
+                    <PasswordField
+                      label="Confirm Password"
+                      value={form.confirmPassword}
+                      onChange={setField("confirmPassword")}
+                      disabled={loading}
+                      maxLength={INPUT_LIMITS.confirmPassword}
+                      autoComplete="new-password"
+                      errorText={fieldErrors.confirmPassword}
+                    />
+                  </div>
 
-                                <div className="pt-1 flex flex-col gap-3">
-                                  <button
-                  type="submit"
-                  disabled={loading}
-                  className={`w-full rounded-[12px] py-3 text-[14px] font-extrabold transition
+                  {formBanner?.message ? (
+                    <div
+                      className={`rounded-[14px] border px-4 py-3 text-[13px] leading-snug ${
+                        formBanner.variant === "success"
+                          ? "border-green-500 bg-green-50 text-black"
+                          : formBanner.variant === "error"
+                            ? "border-red-500 bg-red-50 text-black"
+                            : "border-black/10 bg-white text-black"
+                      }`}
+                    >
+                      <div className="font-extrabold">{formBanner.title || "Notice"}</div>
+                      <div className="mt-0.5 text-black/80">{formBanner.message}</div>
+                    </div>
+                  ) : null}
+
+                  <div className="pt-1 flex flex-col gap-3">
+                    <button
+                      type="submit"
+                      disabled={loading}
+                      className={`w-full rounded-[12px] py-3 text-[14px] font-extrabold transition
                     ${
                       loading
                         ? "bg-black/20 text-white cursor-not-allowed"
                         : "bg-black text-white hover:opacity-90"
                     }`}
-                >
-                  {loading ? (
-                    <span className="inline-flex items-center gap-2 justify-center">
-                      <Spinner />
-                      Creating…
-                    </span>
-                  ) : (
-                    "Create Account"
-                  )}
-                </button>
-                                </div>
-                              </form>
+                    >
+                      {loading ? (
+                        <span className="inline-flex items-center gap-2 justify-center">
+                          <Spinner />
+                          Creating…
+                        </span>
+                      ) : (
+                        "Create Account"
+                      )}
+                    </button>
+                  </div>
+                </form>
+
                 <div className="mt-4">
                   <OrDivider />
                 </div>
@@ -2287,12 +2517,18 @@ export default function Signup() {
                   />
                 </div>
 
+                {googleInlineError ? (
+                  <div className="mt-3 rounded-[12px] border border-red-500 bg-red-50 px-3 py-2 text-[13px] font-bold text-red-700">
+                    <span>{googleInlineError}</span>{" "}
+                    <Link to="/login" className="underline underline-offset-4 font-extrabold">
+                      Login
+                    </Link>
+                  </div>
+                ) : null}
+
                 <div className="flex items-center justify-between text-[13px] pt-2">
                   <span className="text-black/60">Already have an account?</span>
-                  <Link
-                    to="/login"
-                    className="font-bold underline underline-offset-4"
-                  >
+                  <Link to="/login" className="font-bold underline underline-offset-4">
                     Login
                   </Link>
                 </div>
@@ -2302,10 +2538,7 @@ export default function Signup() {
 
           {/* RIGHT: DOME */}
           <section className="hidden lg:flex items-start justify-center self-stretch lg:pl-8 xl:pl-12">
-            <div
-              className="w-full h-full flex items-start justify-center"
-              style={{ minHeight: "620px" }}
-            >
+            <div className="w-full h-full flex items-start justify-center" style={{ minHeight: "620px" }}>
               <div
                 className="w-full"
                 style={{

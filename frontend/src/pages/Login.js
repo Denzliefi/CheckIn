@@ -1,9 +1,8 @@
 // src/pages/Login.js
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useGesture } from "@use-gesture/react";
-import GoogleButton from "../components/GoogleButton";
 
 import { signInWithGoogle } from "../auth";
 import { getToken, getUser, setAuth } from "../utils/auth";
@@ -133,16 +132,11 @@ function DomeGallery({
   const lastTsRef = useRef(0);
   const pauseUntilRef = useRef(0);
 
-  const items = useMemo(
-    () => dgBuildItems(images, segments),
-    [images, segments],
-  );
+  const items = useMemo(() => dgBuildItems(images, segments), [images, segments]);
 
   const [interactionsDisabled, setInteractionsDisabled] = useState(() => {
     if (typeof window === "undefined" || !window.matchMedia) return false;
-    const mqSmall = window.matchMedia(
-      `(max-width: ${disableInteractionMaxWidth}px)`,
-    );
+    const mqSmall = window.matchMedia(`(max-width: ${disableInteractionMaxWidth}px)`);
     const mqTouch = window.matchMedia("(hover: none) and (pointer: coarse)");
     return mqSmall.matches || mqTouch.matches;
   });
@@ -150,12 +144,9 @@ function DomeGallery({
   useEffect(() => {
     if (typeof window === "undefined" || !window.matchMedia) return undefined;
 
-    const mqSmall = window.matchMedia(
-      `(max-width: ${disableInteractionMaxWidth}px)`,
-    );
+    const mqSmall = window.matchMedia(`(max-width: ${disableInteractionMaxWidth}px)`);
     const mqTouch = window.matchMedia("(hover: none) and (pointer: coarse)");
-    const recompute = () =>
-      setInteractionsDisabled(mqSmall.matches || mqTouch.matches);
+    const recompute = () => setInteractionsDisabled(mqSmall.matches || mqTouch.matches);
 
     if (mqSmall.addEventListener) mqSmall.addEventListener("change", recompute);
     else mqSmall.addListener(recompute);
@@ -166,12 +157,10 @@ function DomeGallery({
     recompute();
 
     return () => {
-      if (mqSmall.removeEventListener)
-        mqSmall.removeEventListener("change", recompute);
+      if (mqSmall.removeEventListener) mqSmall.removeEventListener("change", recompute);
       else mqSmall.removeListener(recompute);
 
-      if (mqTouch.removeEventListener)
-        mqTouch.removeEventListener("change", recompute);
+      if (mqTouch.removeEventListener) mqTouch.removeEventListener("change", recompute);
       else mqTouch.removeListener(recompute);
     };
   }, [disableInteractionMaxWidth]);
@@ -223,10 +212,7 @@ function DomeGallery({
       root.style.setProperty("--viewer-pad", `${viewerPad}px`);
       root.style.setProperty("--tile-radius", imageBorderRadius);
       root.style.setProperty("--enlarge-radius", openedImageBorderRadius);
-      root.style.setProperty(
-        "--image-filter",
-        grayscale ? "grayscale(1)" : "none",
-      );
+      root.style.setProperty("--image-filter", grayscale ? "grayscale(1)" : "none");
       root.style.setProperty("--color-filter", colorFilter);
 
       applyTransform(rotationRef.current.x, rotationRef.current.y);
@@ -359,24 +345,13 @@ function DomeGallery({
         frameR && frameR.width > 0 && frameR.height > 0
           ? Math.min(frameR.width, frameR.height)
           : Math.min(rootR.width, rootR.height);
-      const desiredFromViewport =
-        Math.min(window.innerWidth, window.innerHeight) - viewerPad * 2;
+      const desiredFromViewport = Math.min(window.innerWidth, window.innerHeight) - viewerPad * 2;
 
-      let size = Math.min(
-        desiredFromFrame,
-        desiredFromViewport,
-        safeW,
-        safeH,
-        900,
-      );
+      let size = Math.min(desiredFromFrame, desiredFromViewport, safeW, safeH, 900);
       size = Math.max(size, 320);
 
-      const centerX = frameR
-        ? frameR.left + frameR.width / 2
-        : safeMinX + safeW / 2;
-      const centerY = frameR
-        ? frameR.top + frameR.height / 2
-        : safeMinY + safeH / 2;
+      const centerX = frameR ? frameR.left + frameR.width / 2 : safeMinX + safeW / 2;
+      const centerY = frameR ? frameR.top + frameR.height / 2 : safeMinY + safeH / 2;
 
       let left = Math.round(centerX - size / 2 - rootR.left);
       let top = Math.round(centerY - size / 2 - rootR.top);
@@ -487,20 +462,9 @@ function DomeGallery({
         pauseUntilRef.current = performance.now() + autoRotateIdleDelayMs;
       },
 
-      onDrag: ({
-        event,
-        last,
-        velocity: velArr = [0, 0],
-        direction: dirArr = [0, 0],
-        movement,
-      }) => {
+      onDrag: ({ event, last, velocity: velArr = [0, 0], direction: dirArr = [0, 0], movement }) => {
         if (interactionsDisabled) return;
-        if (
-          focusedElRef.current ||
-          !draggingRef.current ||
-          !startPosRef.current
-        )
-          return;
+        if (focusedElRef.current || !draggingRef.current || !startPosRef.current) return;
 
         const dxTotal = event.clientX - startPosRef.current.x;
         const dyTotal = event.clientY - startPosRef.current.y;
@@ -542,11 +506,7 @@ function DomeGallery({
         let vx = vMagX * dirX;
         let vy = vMagY * dirY;
 
-        if (
-          Math.abs(vx) < 0.001 &&
-          Math.abs(vy) < 0.001 &&
-          Array.isArray(movement)
-        ) {
+        if (Math.abs(vx) < 0.001 && Math.abs(vy) < 0.001 && Array.isArray(movement)) {
           const [mx, my] = movement;
           vx = (mx / dragSensitivity) * 0.02;
           vy = (my / dragSensitivity) * 0.02;
@@ -645,9 +605,7 @@ function DomeGallery({
       inset: 0;
       z-index: 0;
       pointer-events: none;
-      background: ${
-        showBackdrop
-          ? `
+      background: ${showBackdrop ? `
         radial-gradient(1100px 720px at 16% 16%,
           rgba(185,255,102,0.62) 0%,
           rgba(214,255,173,0.38) 32%,
@@ -663,9 +621,7 @@ function DomeGallery({
           rgba(250,252,248,1) 58%,
           rgba(245,250,244,1) 100%
         );
-      `
-          : "none"
-      };
+      ` : "none"};
     }
 
     .dg-bg::after{
@@ -857,12 +813,7 @@ function DomeGallery({
                       openItemFromElement(e.currentTarget);
                     }}
                   >
-                    <img
-                      src={it.src}
-                      draggable={false}
-                      alt={it.alt}
-                      className="dg-tile-img"
-                    />
+                    <img src={it.src} draggable={false} alt={it.alt} className="dg-tile-img" />
                   </div>
                 </div>
               ))}
@@ -911,32 +862,56 @@ function Spinner({ size = 16 }) {
       fill="none"
       aria-hidden="true"
     >
-      <circle
-        className="opacity-25"
-        cx="12"
-        cy="12"
-        r="10"
-        stroke="currentColor"
-        strokeWidth="4"
+      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+    </svg>
+  );
+}
+
+function GoogleGIcon({ size = 16 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 48 48" aria-hidden="true" focusable="false">
+      <path
+        fill="#EA4335"
+        d="M24 9.5c3.15 0 5.98 1.09 8.22 2.88l6.14-6.14C34.45 2.6 29.59 0.5 24 0.5 14.62 0.5 6.51 5.88 2.61 13.72l7.22 5.61C11.6 13.58 17.3 9.5 24 9.5z"
       />
       <path
-        className="opacity-75"
-        fill="currentColor"
-        d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"
+        fill="#4285F4"
+        d="M46.5 24.5c0-1.65-.15-3.23-.43-4.77H24v9.04h12.6c-.54 2.9-2.16 5.36-4.6 7.02l7.05 5.45c4.12-3.8 6.45-9.4 6.45-16.74z"
+      />
+      <path
+        fill="#FBBC05"
+        d="M9.83 28.67a14.5 14.5 0 0 1 0-9.34l-7.22-5.61a23.9 23.9 0 0 0 0 20.56l7.22-5.61z"
+      />
+      <path
+        fill="#34A853"
+        d="M24 47.5c5.59 0 10.3-1.85 13.73-5.03l-7.05-5.45c-1.96 1.32-4.47 2.1-6.68 2.1-6.7 0-12.4-4.08-14.17-9.83l-7.22 5.61C6.51 42.12 14.62 47.5 24 47.5z"
       />
     </svg>
   );
 }
 
+function GoogleCTAButton({ onClick, loading, label = "Login with Google" }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={loading}
+      className={`w-full rounded-[12px] border border-black/10 bg-white py-3 px-4 text-[14px] font-extrabold
+        shadow-[0_14px_28px_rgba(0,0,0,0.08)] transition
+        ${loading ? "opacity-70 cursor-not-allowed" : "hover:bg-black/5"}`}
+    >
+      <span className="inline-flex items-center justify-center gap-2">
+        {loading ? <Spinner size={16} /> : <GoogleGIcon size={16} />}
+        {label}
+      </span>
+    </button>
+  );
+}
+
 function EyeIcon({ open }) {
   return open ? (
-    <svg
-      width="18"
-      height="18"
-      viewBox="0 0 24 24"
-      fill="none"
-      aria-hidden="true"
-    >
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
       <path
         d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"
         stroke="currentColor"
@@ -953,25 +928,9 @@ function EyeIcon({ open }) {
       />
     </svg>
   ) : (
-    <svg
-      width="18"
-      height="18"
-      viewBox="0 0 24 24"
-      fill="none"
-      aria-hidden="true"
-    >
-      <path
-        d="M3 3l18 18"
-        stroke="currentColor"
-        strokeWidth="2.2"
-        strokeLinecap="round"
-      />
-      <path
-        d="M10.6 10.6a2 2 0 0 0 2.8 2.8"
-        stroke="currentColor"
-        strokeWidth="2.2"
-        strokeLinecap="round"
-      />
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M3 3l18 18" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
+      <path d="M10.6 10.6a2 2 0 0 0 2.8 2.8" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
       <path
         d="M6.2 6.2C3.8 8 2 12 2 12s3.5 7 10 7c2 0 3.7-.5 5.1-1.3"
         stroke="currentColor"
@@ -993,8 +952,7 @@ function EyeIcon({ open }) {
 function formatFieldError(errorText) {
   if (!errorText) return "";
   const norm = String(errorText).trim();
-  if (/^must be filled out/i.test(norm) && !norm.endsWith("*"))
-    return `${norm}*`;
+  if (/^must be filled out/i.test(norm) && !norm.endsWith("*")) return `${norm}*`;
   return norm;
 }
 
@@ -1038,11 +996,7 @@ function FieldInput({
         ) : null}
       </div>
 
-      {normError ? (
-        <span id={errorId} className="sr-only">
-          {normError}
-        </span>
-      ) : null}
+      {normError ? <span id={errorId} className="sr-only">{normError}</span> : null}
 
       <div className="relative">
         <input
@@ -1072,9 +1026,7 @@ function FieldInput({
         />
 
         {rightSlot ? (
-          <div className="absolute right-2 top-1/2 -translate-y-1/2">
-            {rightSlot}
-          </div>
+          <div className="absolute right-2 top-1/2 -translate-y-1/2">{rightSlot}</div>
         ) : null}
       </div>
     </div>
@@ -1126,6 +1078,7 @@ function OrDivider({ text = "OR" }) {
     </div>
   );
 }
+
 /* ======================
   TERMS MODAL (MATCH SIGNUP)
 ====================== */
@@ -1162,42 +1115,18 @@ function TermsModal({ open, onClose, onAgree, agreed, setAgreed, loading }) {
         >
           <p className="font-bold text-black/80 mb-2">Summary</p>
           <ul className="list-disc list-inside space-y-2">
-            <li>
-              CheckIn supports student well-being using journaling and PHQ-9
-              self-assessment.
-            </li>
-            <li>
-              CheckIn is <span className="font-semibold">not</span> a diagnostic
-              tool and does not replace professional care.
-            </li>
-            <li>
-              Use the platform respectfully. Do not attempt unauthorized access
-              or misuse.
-            </li>
-            <li>
-              If you are in immediate danger, contact emergency services or your
-              local hotline.
-            </li>
+            <li>CheckIn supports student well-being using journaling and PHQ-9 self-assessment.</li>
+            <li>CheckIn is <span className="font-semibold">not</span> a diagnostic tool and does not replace professional care.</li>
+            <li>Use the platform respectfully. Do not attempt unauthorized access or misuse.</li>
+            <li>If you are in immediate danger, contact emergency services or your local hotline.</li>
           </ul>
 
           <div className="mt-5">
             <p className="font-bold text-black/80 mb-2">Full Terms</p>
-            <p className="mb-3">
-              By using CheckIn, you agree to use the platform only for lawful
-              and appropriate purposes.
-            </p>
-            <p className="mb-3">
-              CheckIn may store and process information you provide to deliver
-              features and improve performance.
-            </p>
-            <p className="mb-3">
-              CheckIn is provided “as is.” We cannot guarantee uninterrupted
-              availability.
-            </p>
-            <p>
-              We may update these terms when necessary. Continued use
-              constitutes acceptance of updated terms.
-            </p>
+            <p className="mb-3">By using CheckIn, you agree to use the platform only for lawful and appropriate purposes.</p>
+            <p className="mb-3">CheckIn may store and process information you provide to deliver features and improve performance.</p>
+            <p className="mb-3">CheckIn is provided “as is.” We cannot guarantee uninterrupted availability.</p>
+            <p>We may update these terms when necessary. Continued use constitutes acceptance of updated terms.</p>
           </div>
         </div>
 
@@ -1259,10 +1188,6 @@ function redirectByRole(navigate, role) {
   return navigate("/");
 }
 
-function isBlank(v) {
-  return !v || String(v).trim().length === 0;
-}
-
 function isEmailLike(v) {
   return String(v || "").includes("@");
 }
@@ -1272,8 +1197,6 @@ const USERNAME_RE = /^[A-Za-z0-9._]+$/;
 
 /* ======================
   API BASE
-  - local:  REACT_APP_API_URL=http://localhost:5000
-  - prod:   REACT_APP_API_URL=https://<render-backend>
 ====================== */
 const API_BASE = (process.env.REACT_APP_API_URL || "").replace(/\/+$/, "");
 
@@ -1282,7 +1205,15 @@ const API_BASE = (process.env.REACT_APP_API_URL || "").replace(/\/+$/, "");
 ====================== */
 
 export default function Login() {
+  const location = useLocation();
   const navigate = useNavigate();
+
+  const [successMessage, setSuccessMessage] = useState("");
+
+  useEffect(() => {
+    const msg = location?.state?.signupSuccess;
+    if (msg) setSuccessMessage(String(msg));
+  }, [location]);
 
   const [loading, setLoading] = useState(false);
 
@@ -1405,15 +1336,18 @@ export default function Login() {
         redirectByRole(navigate, data.user?.role);
       } catch (err) {
         const msg = err?.message || "Login failed";
-        setPageError(msg);
 
         if (/invalid|incorrect|wrong|credential|401/i.test(msg)) {
+          setPageError("");
           setFieldErrors((p) => ({
             ...p,
             emailOrUsername: "Invalid username or password",
             password: "Invalid username or password",
           }));
+          return;
         }
+
+        setPageError(msg);
       } finally {
         setLoading(false);
       }
@@ -1433,6 +1367,7 @@ export default function Login() {
         const u = firebaseUser?.user || firebaseUser;
 
         const payload = {
+          intent: "login",
           googleId: u?.uid,
           email: u?.email,
           fullName: u?.displayName || u?.email?.split("@")?.[0] || "Google User",
@@ -1471,9 +1406,7 @@ export default function Login() {
   `;
 
   return (
-    <div
-
-    >
+    <div>
       <style dangerouslySetInnerHTML={{ __html: uiPatchStyles }} />
 
       <TermsModal
@@ -1496,14 +1429,22 @@ export default function Login() {
             className="w-full mx-auto lg:mx-0 lg:justify-self-start"
             style={{ maxWidth: "600px" }}
           >
-            <div className="relative  lg:gap-x-[clamp(56px,7vw,160px)] px-1 sm:px-0">
+            <div className="relative lg:gap-x-[clamp(56px,7vw,160px)] px-1 sm:px-0">
               <h1 className="text-[28px] sm:text-[36px] font-black tracking-[.22em] sm:tracking-[.26em] leading-tight text-black drop-shadow-sm">
                 LOGIN
               </h1>
               <p className="text-[13px] sm:text-[15px] text-black/80 mt-2">
                 Welcome back. Please enter your details.
               </p>
+
               <div className="mt-6 rounded-[18px] bg-white border border-black/10 p-5 sm:p-7 shadow-[0_14px_28px_rgba(0,0,0,0.08)]">
+                {successMessage ? (
+                  <div className="mb-4 rounded-[14px] border border-green-500 bg-green-50 px-4 py-3 text-[13px] leading-snug text-black">
+                    <div className="font-extrabold">Account creation successful</div>
+                    <div className="mt-0.5 text-black/80">{successMessage}</div>
+                  </div>
+                ) : null}
+
                 {pageError ? (
                   <div className="mb-4 rounded-[14px] border border-red-500 bg-red-50 px-4 py-3 text-[13px] text-black">
                     <span className="font-extrabold">Error:</span> {pageError}
@@ -1572,20 +1513,21 @@ export default function Login() {
                     </button>
                   </div>
                 </form>
+
                 <div className="mt-4">
                   <OrDivider />
                 </div>
 
+                {/* ✅ Google button now matches Signup exactly */}
                 <div className="google-btn-wrap mt-3">
-                  <GoogleButton
+                  <GoogleCTAButton
                     onClick={(e) => {
                       e?.preventDefault?.();
                       e?.stopPropagation?.();
                       handleGoogleLogin();
                     }}
                     loading={loading}
-                    disabled={loading}
-                    className="w-full"
+                    label="Login with Google"
                   />
                 </div>
 
@@ -1601,10 +1543,7 @@ export default function Login() {
 
           {/* RIGHT: DOME (match signup) */}
           <section className="hidden lg:flex items-start justify-center self-stretch lg:pl-8 xl:pl-12">
-            <div
-              className="w-full h-full flex items-start justify-center"
-              style={{ minHeight: "620px" }}
-            >
+            <div className="w-full h-full flex items-start justify-center" style={{ minHeight: "620px" }}>
               <div
                 className="w-full"
                 style={{
