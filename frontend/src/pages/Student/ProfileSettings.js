@@ -1,7 +1,6 @@
 // frontend/src/pages/Student/ProfileSettings.js
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { fetchMyProfile } from "../../api/user.api";
 import { getToken } from "../../utils/auth";
 
 const PRIMARY_GREEN = "#B9FF66";
@@ -11,6 +10,8 @@ const GREEN_SOFT = "rgba(185, 255, 102, 0.08)";
 const TEXT_MAIN = "#0F172A";
 const TEXT_MUTED = "#475569";
 const TEXT_SOFT = "#64748B";
+
+const DEFAULT_CAMPUS = "Arellano University Andres Bonifacio Campus";
 
 const EMPTY_PROFILE = {
   firstName: "",
@@ -77,6 +78,89 @@ function Spinner({ size = 18 }) {
   );
 }
 
+/* ======================
+   API BASE (Local + Render)
+   - Uses REACT_APP_API_URL (ex: http://localhost:5000 or https://checkin-backend-4xic.onrender.com)
+   - Falls back to relative /api/* for local CRA proxy setups
+====================== */
+const API_BASE = (process.env.REACT_APP_API_URL || "").replace(/\/+$/, "");
+
+async function fetchJsonSafe(url, options) {
+  const res = await fetch(url, options);
+  const raw = await res.text();
+  let data = null;
+
+  try {
+    data = raw ? JSON.parse(raw) : null;
+  } catch {
+    data = null;
+  }
+
+  return { res, data, raw };
+}
+
+/** Fetch the current user's profile from backend (JWT in Authorization header) */
+async function fetchMyProfile() {
+  const token = getToken();
+  if (!token) throw new Error("Not authorized");
+
+  const urls = [
+    API_BASE ? `${API_BASE}/api/auth/me` : "/api/auth/me",
+    API_BASE ? `${API_BASE}/api/users/me` : "/api/users/me",
+    API_BASE ? `${API_BASE}/api/users/profile` : "/api/users/profile",
+  ];
+
+  let lastErr = null;
+
+  for (const url of urls) {
+    try {
+      const { res, data, raw } = await fetchJsonSafe(url, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/json",
+        },
+      });
+
+      if (res.status === 404) continue;
+
+      if (res.status === 401 || res.status === 403) {
+        throw new Error("Not authorized");
+      }
+
+      if (!res.ok) {
+        const msg = (data?.message || raw || "Failed to load profile.").toString();
+        throw new Error(msg);
+      }
+
+      // Some APIs return { user: {...} } — unwrap safely
+      return data?.user ?? data;
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+
+  throw lastErr || new Error("Failed to load profile.");
+}
+
+function looksLikeHandle(name, username, email) {
+  const n = String(name || "").trim();
+  if (!n) return false;
+
+  const nLower = n.toLowerCase();
+  const uLower = String(username || "").trim().toLowerCase();
+  const emailPrefix = String(email || "").split("@")[0]?.trim().toLowerCase();
+
+  // Exact match with username or email prefix = likely handle
+  if (uLower && nLower === uLower) return true;
+  if (emailPrefix && nLower === emailPrefix) return true;
+
+  // No spaces + has digits = likely not a real first name
+  if (!/\s/.test(n) && /\d/.test(n)) return true;
+
+  return false;
+}
+
 export default function ProfileSettings() {
   const navigate = useNavigate();
 
@@ -101,24 +185,64 @@ export default function ProfileSettings() {
         const p = await fetchMyProfile();
         if (!alive) return;
 
-        // Your backend returns: fullName, username, etc.
-        const nameFromBackend =
-          (p?.firstName || "").trim() || (p?.fullName || "").trim() || "";
+        const backendFirst = (p?.firstName || "").trim();
+        const backendLast = (p?.lastName || "").trim();
+        const backendFull = (p?.fullName || "").trim();
+        const backendUsername = (p?.username || "").trim();
+        const backendEmail = (p?.email || "").trim();
 
-        const { firstName: fFromFull, lastName: lFromFull } = splitName(p?.fullName || "");
+        // Fallback from fullName only when it looks like a real "First Last"
+        const split = splitName(backendFull);
+        let firstName = backendFirst || split.firstName || "";
+        let lastName = backendLast || split.lastName || "";
+
+        // If the backend sends an email-handle/username as "firstName" (common with older records),
+        // don't show it as a real name.
+        const firstLooksHandle = looksLikeHandle(firstName, backendUsername, backendEmail);
+        const fullLooksHandle = looksLikeHandle(backendFull, backendUsername, backendEmail);
+
+        // Case A: first/last missing and computed from fullName, but fullName is a handle
+        if (!backendFirst && !backendLast && firstLooksHandle && !lastName) {
+          firstName = "";
+          lastName = "";
+        }
+
+        // Case B: backendFirst exists but is actually a handle and last name is missing
+        if (backendFirst && firstLooksHandle && !backendLast) {
+          // If fullName is a proper spaced name, split it instead
+          if (backendFull && backendFull.includes(" ") && !fullLooksHandle) {
+            const s2 = splitName(backendFull);
+            firstName = s2.firstName;
+            lastName = s2.lastName;
+          } else {
+            firstName = "";
+            lastName = "";
+          }
+        }
+
+        const campus = (p?.campus || "").trim() || DEFAULT_CAMPUS;
 
         setProfile({
-          firstName: (p?.firstName || fFromFull || nameFromBackend || "").trim(),
-          lastName: (p?.lastName || lFromFull || "").trim(),
+          firstName,
+          lastName,
           studentNumber: p?.studentNumber || "",
-          email: p?.email || "",
-          campus: p?.campus || "",
-          course: p?.course || "",
+          email: backendEmail || "",
+          campus,
+          course: (p?.course || "").trim(),
           accountCreation: formatDate(p?.accountCreation || p?.createdAt || p?.created_on || ""),
         });
       } catch (e) {
         if (!alive) return;
-        setPageError(e?.message || "Failed to load profile");
+
+        const msg = e?.message || "Failed to load profile";
+
+        // If auth error, push to login
+        if (String(msg).toLowerCase().includes("not authorized")) {
+          navigate("/login", { replace: true });
+          return;
+        }
+
+        setPageError(msg);
       } finally {
         if (alive) setLoading(false);
       }
@@ -147,7 +271,11 @@ export default function ProfileSettings() {
       ].join(" ")}
     >
       <div className="w-full max-w-4xl xl:max-w-5xl">
-        <div className="relative overflow-hidden rounded-2xl border border-gray-200/70 bg-white shadow-xl" role="region" aria-labelledby="profile-settings-title">
+        <div
+          className="relative overflow-hidden rounded-2xl border border-gray-200/70 bg-white shadow-xl"
+          role="region"
+          aria-labelledby="profile-settings-title"
+        >
           <div className="absolute inset-0 pointer-events-none" style={{ boxShadow: `0 0 0 6px ${GREEN_GLOW}` }} aria-hidden="true" />
 
           <div className="relative px-4 sm:px-7 lg:px-9 py-7 sm:py-9">

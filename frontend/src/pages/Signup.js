@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { createPortal } from "react-dom";
 import { useGesture } from "@use-gesture/react";
+import PrimaryButton from "../components/PrimaryButton";
 import { signInWithGoogle } from "../auth";
 
 import poster1 from "../assets/poster1.png";
@@ -14,6 +15,9 @@ import poster5 from "../assets/poster5.png";
 import poster6 from "../assets/poster6.png";
 import poster7 from "../assets/poster7.png";
 import poster8 from "../assets/poster8.png";
+
+import GoogleButton from "../components/GoogleButton";
+
 
 /* ======================
    DOME GALLERY (LOCAL)
@@ -984,9 +988,9 @@ function GoogleCTAButton({ onClick, loading, label = "Sign up with Google" }) {
       type="button"
       onClick={onClick}
       disabled={loading}
-      className={`w-full rounded-[12px] border border-black/10 bg-white py-3 px-4 text-[14px] font-extrabold
-        shadow-[0_14px_28px_rgba(0,0,0,0.08)] transition
-        ${loading ? "opacity-70 cursor-not-allowed" : "hover:bg-black/5"}`}
+      className={`w-full rounded-[14px] border-2 border-black bg-white px-4 py-3 sm:py-[14px] text-[14px] sm:text-[15px] font-extrabold
+        shadow-[0_16px_0_rgba(0,0,0,0.12)] transition
+        ${loading ? "opacity-70 cursor-not-allowed" : "hover:bg-black/5 active:translate-y-[1px] active:shadow-[0_15px_0_rgba(0,0,0,0.12)]"}` }
     >
       <span className="inline-flex items-center justify-center gap-2">
         {loading ? <Spinner size={16} /> : <GoogleGIcon size={16} />}
@@ -1003,11 +1007,11 @@ function GoogleCTAButton({ onClick, loading, label = "Sign up with Google" }) {
 function OrDivider({ text = "OR" }) {
   return (
     <div className="flex items-center gap-3 my-2">
-      <div className="h-[2px] flex-1 bg-black/10" />
-      <span className="text-[11px] sm:text-[12px] font-extrabold tracking-[0.22em] text-black/40">
+      <div className="h-[2px] flex-1 bg-black/15" />
+      <span className="text-[11px] sm:text-[12px] font-extrabold tracking-[0.22em] text-black/55">
         {text}
       </span>
-      <div className="h-[2px] flex-1 bg-black/10" />
+      <div className="h-[2px] flex-1 bg-black/15" />
     </div>
   );
 }
@@ -1092,6 +1096,7 @@ function FieldInput({
   onChange,
   type = "text",
   disabled = false,
+  paired = false,
   errorText,
   rightSlot,
   rightSlotWidth = 44,
@@ -1121,15 +1126,21 @@ function FieldInput({
 
   return (
     <div className="w-full">
-      <div className="mb-1 flex items-end justify-between gap-3">
-        <span className="block text-[13px] font-bold text-black">{label}</span>
+      <div
+        className={`mb-1 min-w-0 flex items-end justify-between gap-3 overflow-visible ${
+          paired ? "sm:h-[32px]" : ""
+        }`}
+      >
+        <span className="block text-[13px] font-extrabold text-black/90 whitespace-nowrap">
+          {label}
+        </span>
 
         {topError ? (
-          <span className="text-[12px] font-bold text-red-600 text-right whitespace-nowrap">
+          <span className="min-w-0 max-w-[72%] text-[11px] sm:text-[12px] font-extrabold text-red-600 text-right whitespace-normal break-words leading-tight relative z-10">
             {topError}
           </span>
         ) : null}
-      </div>
+      </div> 
 
       {normError ? (
         <span id={errorId} className="sr-only">
@@ -1154,16 +1165,14 @@ function FieldInput({
           aria-describedby={normError ? errorId : undefined}
           placeholder={showInlineRequired ? normError : undefined}
           className={`
-  w-full rounded-[12px]
-  bg-[#EEF5FF]
-  px-4 py-3 text-[14px]
-  outline-none
-  border
-  focus:ring-2 focus:ring-black/10
-  placeholder:text-red-600 placeholder:font-extrabold placeholder:opacity-100
-  ${disabled ? "opacity-60 cursor-not-allowed" : ""}
-  ${normError ? "border-red-500" : "border-black/10"}
-`}
+            w-full rounded-[14px] border-2 bg-white
+            px-4 py-3 sm:py-[14px]
+            text-[14px] sm:text-[15px]
+            focus:outline-none focus:ring-2 focus:ring-black/20
+            placeholder:text-red-600 placeholder:font-extrabold placeholder:opacity-100
+            ${disabled ? "opacity-60 cursor-not-allowed" : ""}
+            ${normError ? "border-red-600" : "border-black"}
+          `}
           style={{
             paddingRight: rightSlot ? rightSlotWidth + 12 : undefined,
           }}
@@ -1184,6 +1193,7 @@ function PasswordField({
   value,
   onChange,
   disabled,
+  paired = false,
   errorText,
   maxLength,
   autoComplete,
@@ -1197,6 +1207,7 @@ function PasswordField({
       onChange={onChange}
       type={show ? "text" : "password"}
       disabled={disabled}
+      paired={paired}
       maxLength={maxLength}
       autoComplete={autoComplete}
       errorText={errorText}
@@ -1205,7 +1216,7 @@ function PasswordField({
         <button
           type="button"
           onClick={() => setShow((v) => !v)}
-          className="h-10 w-10 rounded-[12px] grid place-items-center hover:bg-black/5"
+          className="h-10 w-10 rounded-[14px] grid place-items-center hover:bg-black/5"
           aria-label={show ? "Hide password" : "Show password"}
         >
           <span className="text-black/70">
@@ -1307,7 +1318,7 @@ function TermsModal({ open, onClose, onAgree, agreed, setAgreed, loading }) {
             <button
               type="button"
               onClick={onClose}
-              className="px-5 py-2 text-[13px] font-extrabold rounded-[12px] border-2 border-black bg-white hover:bg-black/5"
+              className="px-5 py-2 text-[13px] font-extrabold rounded-[14px] border-2 border-black bg-white hover:bg-black/5"
             >
               Cancel
             </button>
@@ -1316,7 +1327,7 @@ function TermsModal({ open, onClose, onAgree, agreed, setAgreed, loading }) {
               type="button"
               disabled={!agreed || loading}
               onClick={onAgree}
-              className={`px-5 py-2 text-[13px] font-extrabold rounded-[12px] border-2 border-black flex items-center gap-2 justify-center ${
+              className={`px-5 py-2 text-[13px] font-extrabold rounded-[14px] border-2 border-black flex items-center gap-2 justify-center ${
                 agreed
                   ? "bg-black text-white hover:opacity-90"
                   : "bg-black/30 text-white cursor-not-allowed"
@@ -1439,7 +1450,7 @@ function CourseDropdown({ label, value, onChange, options, disabled, errorText }
     <div
       ref={menuRef}
       role="listbox"
-      className="z-[9999] rounded-[14px] border border-black/10 bg-white shadow-[0_14px_28px_rgba(0,0,0,0.08)] overflow-hidden"
+      className="z-[9999] rounded-[14px] border-2 border-black bg-white shadow-[0_16px_0_rgba(0,0,0,0.14)] overflow-hidden"
       style={{
         position: "fixed",
         left: pos.left,
@@ -1485,11 +1496,13 @@ function CourseDropdown({ label, value, onChange, options, disabled, errorText }
 
   return (
     <div ref={wrapRef} className="relative w-full">
-      <div className="mb-1 flex items-end justify-between gap-3">
-        <span className="block text-[13px] font-bold text-black">{label}</span>
+      <div className="mb-1 min-w-0 flex items-end justify-between gap-3 overflow-visible">
+        <span className="block text-[13px] font-extrabold text-black/90 whitespace-nowrap">
+          {label}
+        </span>
 
         {topError ? (
-          <span className="text-[12px] font-bold text-red-600 text-right whitespace-nowrap">
+          <span className="min-w-0 max-w-[72%] text-[11px] sm:text-[12px] font-extrabold text-red-600 text-right whitespace-normal break-words leading-tight relative z-10">
             {topError}
           </span>
         ) : null}
@@ -1507,16 +1520,13 @@ function CourseDropdown({ label, value, onChange, options, disabled, errorText }
             setOpen((v) => !v);
           }}
           className={`
-  relative w-full text-left rounded-[12px]
-  bg-[#EEF5FF]
-  px-4 pr-11 py-3
-  text-[14px] leading-snug
-  outline-none
-  border
-  focus:ring-2 focus:ring-black/10
-  ${disabled ? "opacity-60 cursor-not-allowed" : "cursor-pointer"}
-  ${normError ? "border-red-500" : "border-black/10"}
-`}
+            relative w-full text-left rounded-[14px] border-2 bg-white
+            px-4 pr-11 py-3 sm:py-[14px]
+            text-[14px] sm:text-[15px] leading-snug
+            focus:outline-none focus:ring-2 focus:ring-black/20
+            ${disabled ? "opacity-60 cursor-not-allowed" : "cursor-pointer"}
+            ${normError ? "border-red-600" : "border-black"}
+          `}
         >
           <span
             className={`block ${
@@ -2339,7 +2349,13 @@ export default function Signup() {
   `;
 
   return (
-    <div>
+    <div
+      className="relative min-h-screen overflow-x-hidden"
+      style={{
+        background:
+          "radial-gradient(1400px 820px at 14% 12%, rgba(185,255,102,0.55) 0%, rgba(214,255,173,0.28) 36%, rgba(255,255,255,0) 74%), radial-gradient(1200px 760px at 78% 40%, rgba(214,255,173,0.38) 0%, rgba(236,255,223,0.20) 42%, rgba(255,255,255,0) 78%), linear-gradient(#ffffff,#ffffff)",
+      }}
+    >
       <style dangerouslySetInnerHTML={{ __html: uiPatchStyles }} />
 
       <TermsModal
@@ -2370,7 +2386,7 @@ export default function Signup() {
                 Create your account. It only takes a minute.
               </p>
 
-              <div className="mt-6 rounded-[18px] bg-white border border-black/10 p-5 sm:p-7 shadow-[0_14px_28px_rgba(0,0,0,0.08)]">
+              <div className="mt-6">
                 <form className="flex flex-col gap-4" onSubmit={handleCreateAccount}>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <FieldInput
@@ -2378,6 +2394,7 @@ export default function Signup() {
                       value={form.firstName}
                       onChange={setField("firstName")}
                       disabled={loading}
+                      paired
                       maxLength={INPUT_LIMITS.firstName}
                       autoComplete="given-name"
                       autoCapitalize="words"
@@ -2388,6 +2405,7 @@ export default function Signup() {
                       value={form.lastName}
                       onChange={setField("lastName")}
                       disabled={loading}
+                      paired
                       maxLength={INPUT_LIMITS.lastName}
                       autoComplete="family-name"
                       autoCapitalize="words"
@@ -2448,6 +2466,7 @@ export default function Signup() {
                       value={form.password}
                       onChange={setField("password")}
                       disabled={loading}
+                      paired
                       maxLength={INPUT_LIMITS.password}
                       autoComplete="new-password"
                       errorText={fieldErrors.password}
@@ -2457,6 +2476,7 @@ export default function Signup() {
                       value={form.confirmPassword}
                       onChange={setField("confirmPassword")}
                       disabled={loading}
+                      paired
                       maxLength={INPUT_LIMITS.confirmPassword}
                       autoComplete="new-password"
                       errorText={fieldErrors.confirmPassword}
@@ -2479,16 +2499,7 @@ export default function Signup() {
                   ) : null}
 
                   <div className="pt-1 flex flex-col gap-3">
-                    <button
-                      type="submit"
-                      disabled={loading}
-                      className={`w-full rounded-[12px] py-3 text-[14px] font-extrabold transition
-                    ${
-                      loading
-                        ? "bg-black/20 text-white cursor-not-allowed"
-                        : "bg-black text-white hover:opacity-90"
-                    }`}
-                    >
+                    <PrimaryButton className="w-full" disabled={loading} type="submit">
                       {loading ? (
                         <span className="inline-flex items-center gap-2 justify-center">
                           <Spinner />
@@ -2497,7 +2508,7 @@ export default function Signup() {
                       ) : (
                         "Create Account"
                       )}
-                    </button>
+                    </PrimaryButton>
                   </div>
                 </form>
 
@@ -2505,20 +2516,20 @@ export default function Signup() {
                   <OrDivider />
                 </div>
 
-                <div className="google-btn-wrap mt-3">
-                  <GoogleCTAButton
-                    onClick={(e) => {
-                      e?.preventDefault?.();
-                      e?.stopPropagation?.();
-                      handleGoogleSignup();
-                    }}
-                    loading={loading}
-                    label="Sign up with Google"
-                  />
-                </div>
+                <GoogleButton
+                  onClick={(e) => {
+                    e?.preventDefault?.();
+                    e?.stopPropagation?.();
+                    handleGoogleSignup();
+                  }}
+                  loading={loading}
+                  disabled={loading}
+                  label="Sign up with Google"
+                  className="w-full"
+                />
 
                 {googleInlineError ? (
-                  <div className="mt-3 rounded-[12px] border border-red-500 bg-red-50 px-3 py-2 text-[13px] font-bold text-red-700">
+                  <div className="mt-3 rounded-[14px] border-2 border-red-600 bg-red-50 px-3 py-2 text-[13px] font-bold text-red-700">
                     <span>{googleInlineError}</span>{" "}
                     <Link to="/login" className="underline underline-offset-4 font-extrabold">
                       Login

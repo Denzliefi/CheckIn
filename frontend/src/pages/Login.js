@@ -4,6 +4,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useGesture } from "@use-gesture/react";
 
+import PrimaryButton from "../components/PrimaryButton";
+import GoogleButton from "../components/GoogleButton";
+
 import { signInWithGoogle } from "../auth";
 import { getToken, getUser, setAuth } from "../utils/auth";
 
@@ -849,7 +852,7 @@ function DomeGallery({
 }
 
 /* ======================
-  UI (LOCAL) — styled like Signup
+  UI (LOCAL)
 ====================== */
 
 function Spinner({ size = 16 }) {
@@ -862,56 +865,26 @@ function Spinner({ size = 16 }) {
       fill="none"
       aria-hidden="true"
     >
-      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
-    </svg>
-  );
-}
-
-function GoogleGIcon({ size = 16 }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 48 48" aria-hidden="true" focusable="false">
-      <path
-        fill="#EA4335"
-        d="M24 9.5c3.15 0 5.98 1.09 8.22 2.88l6.14-6.14C34.45 2.6 29.59 0.5 24 0.5 14.62 0.5 6.51 5.88 2.61 13.72l7.22 5.61C11.6 13.58 17.3 9.5 24 9.5z"
+      <circle
+        className="opacity-25"
+        cx="12"
+        cy="12"
+        r="10"
+        stroke="currentColor"
+        strokeWidth="4"
       />
       <path
-        fill="#4285F4"
-        d="M46.5 24.5c0-1.65-.15-3.23-.43-4.77H24v9.04h12.6c-.54 2.9-2.16 5.36-4.6 7.02l7.05 5.45c4.12-3.8 6.45-9.4 6.45-16.74z"
-      />
-      <path
-        fill="#FBBC05"
-        d="M9.83 28.67a14.5 14.5 0 0 1 0-9.34l-7.22-5.61a23.9 23.9 0 0 0 0 20.56l7.22-5.61z"
-      />
-      <path
-        fill="#34A853"
-        d="M24 47.5c5.59 0 10.3-1.85 13.73-5.03l-7.05-5.45c-1.96 1.32-4.47 2.1-6.68 2.1-6.7 0-12.4-4.08-14.17-9.83l-7.22 5.61C6.51 42.12 14.62 47.5 24 47.5z"
+        className="opacity-75"
+        fill="currentColor"
+        d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"
       />
     </svg>
-  );
-}
-
-function GoogleCTAButton({ onClick, loading, label = "Login with Google" }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={loading}
-      className={`w-full rounded-[12px] border border-black/10 bg-white py-3 px-4 text-[14px] font-extrabold
-        shadow-[0_14px_28px_rgba(0,0,0,0.08)] transition
-        ${loading ? "opacity-70 cursor-not-allowed" : "hover:bg-black/5"}`}
-    >
-      <span className="inline-flex items-center justify-center gap-2">
-        {loading ? <Spinner size={16} /> : <GoogleGIcon size={16} />}
-        {label}
-      </span>
-    </button>
   );
 }
 
 function EyeIcon({ open }) {
   return open ? (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
       <path
         d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"
         stroke="currentColor"
@@ -928,9 +901,19 @@ function EyeIcon({ open }) {
       />
     </svg>
   ) : (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path d="M3 3l18 18" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
-      <path d="M10.6 10.6a2 2 0 0 0 2.8 2.8" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path
+        d="M3 3l18 18"
+        stroke="currentColor"
+        strokeWidth="2.2"
+        strokeLinecap="round"
+      />
+      <path
+        d="M10.6 10.6a2 2 0 0 0 2.8 2.8"
+        stroke="currentColor"
+        strokeWidth="2.2"
+        strokeLinecap="round"
+      />
       <path
         d="M6.2 6.2C3.8 8 2 12 2 12s3.5 7 10 7c2 0 3.7-.5 5.1-1.3"
         stroke="currentColor"
@@ -952,7 +935,8 @@ function EyeIcon({ open }) {
 function formatFieldError(errorText) {
   if (!errorText) return "";
   const norm = String(errorText).trim();
-  if (/^must be filled out/i.test(norm) && !norm.endsWith("*")) return `${norm}*`;
+  if (/^must be filled out/i.test(norm) && !norm.endsWith("*"))
+    return `${norm}*`;
   return norm;
 }
 
@@ -963,40 +947,23 @@ function FieldInput({
   type = "text",
   disabled = false,
   errorText,
-  placeholder,
+  placeholder = "",
   rightSlot,
   rightSlotWidth = 44,
   autoComplete,
 }) {
-  const normError = formatFieldError(errorText);
-  const isEmpty = !String(value || "").trim();
+  const err = formatFieldError(errorText);
+  const showInlineRequired = Boolean(err) && !String(value || "").trim();
 
-  const showInlineRequired =
-    Boolean(normError) && /^must be filled out/i.test(normError) && isEmpty;
-
-  const topError = showInlineRequired ? "" : normError;
-
-  const errorId = useMemo(() => {
-    const safe = String(label || "field")
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/(^-|-$)/g, "");
-    return `err-${safe}`;
-  }, [label]);
+  const effectivePlaceholder = showInlineRequired ? err : placeholder;
 
   return (
     <div className="w-full">
       <div className="mb-1 flex items-end justify-between gap-3">
-        <span className="block text-[13px] font-bold text-black">{label}</span>
-
-        {topError ? (
-          <span className="text-[12px] font-bold text-red-600 text-right whitespace-nowrap">
-            {topError}
-          </span>
-        ) : null}
+        <span className="block text-[13px] font-extrabold text-black/90">
+          {label}
+        </span>
       </div>
-
-      {normError ? <span id={errorId} className="sr-only">{normError}</span> : null}
 
       <div className="relative">
         <input
@@ -1005,20 +972,21 @@ function FieldInput({
           type={type}
           disabled={disabled}
           autoComplete={autoComplete}
-          aria-invalid={Boolean(normError)}
-          aria-describedby={normError ? errorId : undefined}
-          placeholder={showInlineRequired ? normError : placeholder}
+          aria-invalid={Boolean(errorText)}
+          placeholder={effectivePlaceholder}
           className={`
-            w-full rounded-[12px]
-            bg-[#EEF5FF]
-            px-4 py-3 text-[14px]
-            outline-none
-            border
-            focus:ring-2 focus:ring-black/10
-            placeholder:text-black/50
-            ${showInlineRequired ? "placeholder:text-red-600 placeholder:font-extrabold placeholder:opacity-100" : ""}
+            w-full rounded-[14px] border-2 bg-white
+            px-4 py-3 sm:py-[14px]
+            text-[14px] sm:text-[15px]
+            focus:outline-none focus:ring-2 focus:ring-black/20
+            placeholder:text-black/40
+            ${
+              showInlineRequired
+                ? "placeholder:text-red-600 placeholder:font-extrabold"
+                : ""
+            }
             ${disabled ? "opacity-60 cursor-not-allowed" : ""}
-            ${normError ? "border-red-500" : "border-black/10"}
+            ${errorText ? "border-red-600" : "border-black"}
           `}
           style={{
             paddingRight: rightSlot ? rightSlotWidth + 12 : undefined,
@@ -1026,9 +994,17 @@ function FieldInput({
         />
 
         {rightSlot ? (
-          <div className="absolute right-2 top-1/2 -translate-y-1/2">{rightSlot}</div>
+          <div className="absolute right-2 top-1/2 -translate-y-1/2">
+            {rightSlot}
+          </div>
         ) : null}
       </div>
+
+      {err && !showInlineRequired ? (
+        <p className="mt-1 text-[12px] font-extrabold text-red-600">{err}</p>
+      ) : (
+        <div className="mt-1 h-[18px]" />
+      )}
     </div>
   );
 }
@@ -1044,6 +1020,7 @@ function PasswordField({ label, value, onChange, disabled, errorText }) {
       type={show ? "text" : "password"}
       disabled={disabled}
       errorText={errorText}
+      placeholder="********"
       autoComplete="current-password"
       rightSlotWidth={54}
       rightSlot={
@@ -1063,18 +1040,14 @@ function PasswordField({ label, value, onChange, disabled, errorText }) {
   );
 }
 
-/* ======================
-   OR DIVIDER (LOCAL)
-====================== */
-
-function OrDivider({ text = "OR" }) {
+function OrDivider() {
   return (
-    <div className="flex items-center gap-3 my-2">
-      <div className="h-[2px] flex-1 bg-black/10" />
-      <span className="text-[11px] sm:text-[12px] font-extrabold tracking-[0.22em] text-black/40">
-        {text}
+    <div className="flex items-center gap-3 py-1">
+      <div className="h-px bg-black/15 flex-1" />
+      <span className="text-[11px] font-extrabold tracking-[0.22em] text-black/55">
+        OR
       </span>
-      <div className="h-[2px] flex-1 bg-black/10" />
+      <div className="h-px bg-black/15 flex-1" />
     </div>
   );
 }
@@ -1406,7 +1379,13 @@ export default function Login() {
   `;
 
   return (
-    <div>
+    <div
+      className="relative min-h-screen overflow-x-hidden"
+      style={{
+        background:
+          "radial-gradient(1400px 820px at 14% 12%, rgba(185,255,102,0.55) 0%, rgba(214,255,173,0.28) 36%, rgba(255,255,255,0) 74%), radial-gradient(1200px 760px at 78% 40%, rgba(214,255,173,0.38) 0%, rgba(236,255,223,0.20) 42%, rgba(255,255,255,0) 78%), linear-gradient(#ffffff,#ffffff)",
+      }}
+    >
       <style dangerouslySetInnerHTML={{ __html: uiPatchStyles }} />
 
       <TermsModal
@@ -1422,14 +1401,14 @@ export default function Login() {
         loading={termsLoading}
       />
 
-      <div className="mx-auto w-full max-w-[1500px] px-[clamp(16px,3.4vw,90px)] pt-[clamp(22px,5vh,92px)] pb-[clamp(22px,5vh,56px)]">
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-[clamp(18px,3.2vw,64px)] lg:gap-x-[clamp(56px,7vw,160px)] items-start">
+      <div className="mx-auto w-full max-w-[1500px] px-[clamp(16px,3.4vw,90px)] pt-6 sm:pt-10 lg:pt-[clamp(132px,4vh,72px)] pb-[clamp(22px,5vh,56px)]">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-[clamp(88px,3.2vw,64px)] lg:gap-x-[clamp(56px,7vw,160px)] items-start">
           {/* LEFT: LOGIN */}
           <section
             className="w-full mx-auto lg:mx-0 lg:justify-self-start"
             style={{ maxWidth: "600px" }}
           >
-            <div className="relative lg:gap-x-[clamp(56px,7vw,160px)] px-1 sm:px-0">
+            <div className="relative  lg:gap-x-[clamp(56px,7vw,160px)] px-1 sm:px-0">
               <h1 className="text-[28px] sm:text-[36px] font-black tracking-[.22em] sm:tracking-[.26em] leading-tight text-black drop-shadow-sm">
                 LOGIN
               </h1>
@@ -1437,120 +1416,121 @@ export default function Login() {
                 Welcome back. Please enter your details.
               </p>
 
-              <div className="mt-6 rounded-[18px] bg-white border border-black/10 p-5 sm:p-7 shadow-[0_14px_28px_rgba(0,0,0,0.08)]">
-                {successMessage ? (
-                  <div className="mb-4 rounded-[14px] border border-green-500 bg-green-50 px-4 py-3 text-[13px] leading-snug text-black">
-                    <div className="font-extrabold">Account creation successful</div>
-                    <div className="mt-0.5 text-black/80">{successMessage}</div>
-                  </div>
-                ) : null}
+              {successMessage ? (
+                <div className="mt-4 rounded-[16px] border-2 border-black bg-green-50 px-4 py-3 text-[13px] text-black">
+                  <div className="font-extrabold">Account creation successful</div>
+                  <div className="mt-0.5 text-black/80">{successMessage}</div>
+                </div>
+              ) : null}
 
-                {pageError ? (
-                  <div className="mb-4 rounded-[14px] border border-red-500 bg-red-50 px-4 py-3 text-[13px] text-black">
-                    <span className="font-extrabold">Error:</span> {pageError}
-                  </div>
-                ) : null}
+              {pageError ? (
+                <div className="mt-4 rounded-[16px] border-2 border-black bg-red-50 px-4 py-3 text-[13px] text-black">
+                  <span className="font-extrabold">Error:</span> {pageError}
+                </div>
+              ) : null}
 
-                <form className="flex flex-col gap-4" onSubmit={handleEmailLogin}>
-                  <FieldInput
-                    label="Email or Username"
-                    value={form.emailOrUsername}
-                    onChange={setField("emailOrUsername")}
-                    disabled={loading}
-                    errorText={fieldErrors.emailOrUsername}
-                    placeholder="Enter your email or username"
-                    autoComplete="username"
-                  />
+              <form
+                className="mt-6 flex flex-col gap-4"
+                onSubmit={handleEmailLogin}
+              >
+                <FieldInput
+                  label="Email or Username"
+                  value={form.emailOrUsername}
+                  onChange={setField("emailOrUsername")}
+                  disabled={loading}
+                  errorText={fieldErrors.emailOrUsername}
+                  placeholder="Enter your email or username"
+                  autoComplete="username"
+                />
 
-                  <PasswordField
-                    label="Password"
-                    value={form.password}
-                    onChange={setField("password")}
-                    disabled={loading}
-                    errorText={fieldErrors.password}
-                  />
+                <PasswordField
+                  label="Password"
+                  value={form.password}
+                  onChange={setField("password")}
+                  disabled={loading}
+                  errorText={fieldErrors.password}
+                />
 
-                  <div className="flex items-center justify-between text-[13px] pt-1">
-                    <label className="flex items-center gap-2">
-                      <input
-                        type="checkbox"
-                        className="accent-greenBorder"
-                        checked={rememberMe}
-                        onChange={(e) => setRememberMe(e.target.checked)}
-                        disabled={loading}
-                      />
-                      Remember me
-                    </label>
-
-                    <button
-                      type="button"
-                      className="font-bold underline underline-offset-4 decoration-black/40 hover:decoration-black/80"
-                      onClick={() => navigate("/forgotpassword")}
+                <div className="flex items-center justify-between text-[13px] pt-1">
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      className="accent-greenBorder"
+                      checked={rememberMe}
+                      onChange={(e) => setRememberMe(e.target.checked)}
                       disabled={loading}
-                    >
-                      Forgot password
-                    </button>
-                  </div>
+                    />
+                    Remember me
+                  </label>
 
-                  <div className="pt-1 flex flex-col gap-3">
-                    <button
-                      type="submit"
-                      disabled={loading}
-                      className={`w-full rounded-[12px] py-3 text-[14px] font-extrabold transition ${
-                        loading
-                          ? "bg-black/20 text-white cursor-not-allowed"
-                          : "bg-black text-white hover:opacity-90"
-                      }`}
-                    >
-                      {loading ? (
-                        <span className="inline-flex items-center gap-2 justify-center">
-                          <Spinner />
-                          Logging in...
-                        </span>
-                      ) : (
-                        "Login"
-                      )}
-                    </button>
-                  </div>
-                </form>
+                  <button
+                    type="button"
+                    className="font-extrabold underline underline-offset-4 decoration-black/40 hover:decoration-black/80"
+                    onClick={() => navigate("/forgotpassword")}
+                    disabled={loading}
+                  >
+                    Forgot password
+                  </button>
+                </div>
 
-                <div className="mt-4">
+                <div className="pt-1 flex flex-col gap-3">
+                  <PrimaryButton
+                    className="w-full"
+                    disabled={loading}
+                    type="submit"
+                  >
+                    {loading ? (
+                      <span className="inline-flex items-center gap-2">
+                        <Spinner />
+                        Logging in...
+                      </span>
+                    ) : (
+                      "Login"
+                    )}
+                  </PrimaryButton>
+
                   <OrDivider />
-                </div>
 
-                {/* ✅ Google button now matches Signup exactly */}
-                <div className="google-btn-wrap mt-3">
-                  <GoogleCTAButton
-                    onClick={(e) => {
-                      e?.preventDefault?.();
-                      e?.stopPropagation?.();
-                      handleGoogleLogin();
-                    }}
-                    loading={loading}
-                    label="Login with Google"
-                  />
+                  <div className="google-btn-wrap">
+                    <GoogleButton
+                      onClick={(e) => {
+                        e?.preventDefault?.();
+                        e?.stopPropagation?.();
+                        handleGoogleLogin();
+                      }}
+                      loading={loading}
+                      disabled={loading}
+                      className="w-full"
+                    />
+                  </div>
                 </div>
+              </form>
 
-                <div className="flex items-center justify-between text-[13px] pt-3">
-                  <span className="text-black/60">Don&apos;t have an account?</span>
-                  <Link to="/sign-up" className="font-bold underline underline-offset-4">
-                    Sign up
-                  </Link>
-                </div>
-              </div>
+              <p className="text-[13px] text-black/80 mt-4">
+                Don&apos;t have an account?{" "}
+                <Link
+                  to="/sign-up"
+                  className="font-extrabold underline underline-offset-4 decoration-black/50 hover:decoration-black/80 whitespace-nowrap"
+                >
+                  Sign up
+                </Link>
+              </p>
             </div>
           </section>
 
           {/* RIGHT: DOME (match signup) */}
           <section className="hidden lg:flex items-start justify-center self-stretch lg:pl-8 xl:pl-12">
-            <div className="w-full h-full flex items-start justify-center" style={{ minHeight: "620px" }}>
+            <div
+              className="w-full h-full flex items-start justify-center"
+              style={{ minHeight: "620px" }}
+            >
               <div
                 className="w-full"
                 style={{
                   width: "min(145%, 1000px)",
                   height: "min(calc(100vh - 140px), 1000px)",
                   aspectRatio: "1 / 1",
-                  transform: "translateY(-26px)",
+                  transform: "translateY(-106px)",
                 }}
               >
                 <DomeGallery

@@ -435,27 +435,6 @@ export default function Navbar() {
 
             {/* MOBILE RIGHT */}
             <div className="lg:hidden flex items-center gap-3">
-              <a
-                href={emergencyHref}
-                aria-label={`Call emergency ${EMERGENCY_TEL}`}
-                className="
-                  relative h-11 w-11
-                  rounded-full
-                  bg-[#F59E0B]
-                  flex items-center justify-center
-                  shadow-md
-                  transition-all duration-300
-                  hover:scale-110 hover:-translate-y-[1px]
-                  active:scale-95
-                "
-                title={`Call ${EMERGENCY_TEL}`}
-              >
-                <span className="absolute inset-0 rounded-full bg-[#F59E0B]/30 animate-ping" />
-                <span className="relative z-10 text-white">
-                  <PhoneIcon className="h-[20px] w-[20px]" />
-                </span>
-              </a>
-
               <button
                 type="button"
                 onClick={() => setOpen((v) => !v)}
