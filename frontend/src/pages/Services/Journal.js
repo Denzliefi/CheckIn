@@ -11,6 +11,68 @@ const CHECKIN_DARK = "#141414";
 ========================= */
 const ENTRIES_KEY = "journal_entries_v1";
 const TERMS_KEY = "journal_terms_accepted_v1";
+/** =========================
+    JOURNAL API (DB sync)
+    - Uses same Bearer token auth as the rest of your app
+    - Keeps localStorage as a safety net (refresh/offline)
+========================= */
+const API_BASE = (process.env.REACT_APP_API_URL || "").replace(/\/+$/, "");
+
+function getAuthTokenSafe() {
+  try {
+    return window.localStorage.getItem("token") || window.sessionStorage.getItem("token");
+  } catch {
+    return null;
+  }
+}
+
+async function apiUpsertJournalEntry(dateKey, payload, { signal } = {}) {
+  const token = getAuthTokenSafe();
+  if (!token) throw new Error("Not authorized: missing token");
+
+  const url = `${API_BASE}/api/journal/entries/${encodeURIComponent(dateKey)}`;
+
+  const res = await fetch(url, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(payload),
+    signal,
+  });
+
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data?.message || "Failed to save journal entry");
+  }
+  return data?.entry || null;
+}
+
+async function apiListJournalEntries({ from, to, limit = 500, signal } = {}) {
+  const token = getAuthTokenSafe();
+  if (!token) throw new Error("Not authorized: missing token");
+
+  const qs = new URLSearchParams();
+  if (from) qs.set("from", from);
+  if (to) qs.set("to", to);
+  if (limit) qs.set("limit", String(limit));
+
+  const url = `${API_BASE}/api/journal/entries?${qs.toString()}`;
+
+  const res = await fetch(url, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+    signal,
+  });
+
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data?.message || "Failed to load journal entries");
+  }
+  return Array.isArray(data?.entries) ? data.entries : [];
+}
+
 
 /** Notes limit */
 const NOTES_WORD_LIMIT = 100;
@@ -187,8 +249,13 @@ function buildTrackerSeries(entries, baseDateKey, days = TRACKER_DAYS) {
     const label = `${x.getMonth() + 1}/${x.getDate()}`;
     const e = getEntry(entries, key);
 
-    const mood = e.daySubmitted ? (e.mood || null) : null;
-    list.push({ key, label, mood });
+    const isToday = key === baseDateKey;
+    const submitted = !!e.daySubmitted;
+
+    // ✅ Show today's mood even if it's still a draft (autosaved)
+    const mood = submitted || isToday ? (e.mood || null) : null;
+
+    list.push({ key, label, mood, submitted, isToday });
   }
   return list;
 }
@@ -803,20 +870,25 @@ function MoodTracker({ series, todayKey, title = "Mood Tracker", subtitle = "Sav
                       </g>
 
                       {/* ✅ Today badge now follows the point (no more floating top-right) */}
-                      {isToday && (() => {
-  const badgeW = 46;
-  const badgeH = 18;
+                      {isToday &&
+                        (() => {
+                          const badgeW = p.submitted ? 46 : 64;
+                          const badgeH = 18;
+                          const label = p.submitted ? "Today" : "Draft";
 
-  // Calculate horizontal position to center it based on the mood point (p.x)
-  const rawX = p.x - badgeW / 2;
-  const tx = clamp(rawX, 6, w - badgeW - 6);
+                          const rawX = p.x - badgeW / 2;
+                          const tx = clamp(rawX, 6, w - badgeW - 6);
+                          const ty = p.y - 70;
 
-  // Move the "Today" badge above the mood emotes (Happy/Calm), making sure it's not overlapping
-  const ty = p.y - 70;  // Adjusted position to place the "Today" badge above the mood emotes
-
-  // Return the "Today" badge at the adjusted position
-  
-                      })()}
+                          return (
+                            <g transform={`translate(${tx}, ${ty})`}>
+                              <rect width={badgeW} height={badgeH} rx="9" fill="rgba(20,20,20,0.78)" />
+                              <text x={badgeW / 2} y="12.5" textAnchor="middle" fontSize="11" fill="white" fontWeight="800">
+                                {label}
+                              </text>
+                            </g>
+                          );
+                        })()}
                     </>
                   ) : (
                     <circle cx={p.x} cy={h - padYBottom} r="3.5" fill="rgba(0,0,0,0.18)" />
@@ -1368,6 +1440,72 @@ export default function Journal() {
 
   const [entries, setEntries] = useState(() => loadEntries());
   const savedEntry = useMemo(() => getEntry(entries, todayKey), [entries, todayKey]);
+  /** =========================
+      LOAD FROM CLOUD (per user)
+      - pulls DB entries and merges into local cache
+      - newest clientUpdatedAt wins
+  ========================= */
+  useEffect(() => {
+    const token = getAuthTokenSafe();
+    if (!token) return; // not logged in
+
+    let alive = true;
+    const ac = new AbortController();
+
+    (async () => {
+      try {
+        // last 180 days is plenty (adjust later if you want full history)
+        const to = todayKey;
+        const d = new Date();
+        d.setDate(d.getDate() - 180);
+        const from = d.toISOString().slice(0, 10);
+
+        const cloudEntries = await apiListJournalEntries({ from, to, limit: 1000, signal: ac.signal });
+        if (!alive) return;
+
+        if (cloudEntries.length) {
+          const merged = { ...loadEntries() };
+          for (const ce of cloudEntries) {
+            const k = String(ce.dateKey || "").trim();
+            if (!k) continue;
+
+            const local = merged[k] || {};
+            const localTs = Number(local.clientUpdatedAt || 0);
+            const cloudTs = Number(ce.clientUpdatedAt || 0);
+
+            // newest wins; also if cloud is submitted and local isn't, cloud wins
+            const cloudWins = cloudTs >= localTs || (ce.daySubmitted && !local.daySubmitted);
+
+            if (cloudWins) {
+              merged[k] = ensureEntryShape({
+                ...local,
+                ...ce,
+                daySubmittedAt: ce.daySubmittedAt || local.daySubmittedAt || null,
+              });
+            }
+          }
+
+          // write through local storage + state
+          const ok = saveEntries(merged);
+          setSaveFailed(!ok);
+          setEntries(merged);
+          setCloudSaved("Loaded your journal from cloud.");
+        } else {
+          setCloudIdle();
+        }
+      } catch (e) {
+        // Don't block UI; journal still works locally
+        setCloudError(e?.message ? `Could not load cloud journal: ${e.message}` : "Could not load cloud journal.");
+      }
+    })();
+
+    return () => {
+      alive = false;
+      ac.abort();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [todayKey]);
+
 
   const dayLocked = !!savedEntry.daySubmitted;
   const inputsDisabled = dayLocked || !termsAccepted;
@@ -1380,6 +1518,27 @@ export default function Journal() {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [savedPulse, setSavedPulse] = useState(false);
   const [saveFailed, setSaveFailed] = useState(false);
+
+  // Cloud sync status (MongoDB)
+  const [cloudSync, setCloudSync] = useState({ status: "idle", message: "" });
+  const cloudTimer = useRef(null);
+  const draftTimerRef = useRef(null);
+  const cloudAbort = useRef(null);
+  const pendingCloudRef = useRef(null);
+
+  function setCloudIdle() {
+    setCloudSync({ status: "idle", message: "" });
+  }
+  function setCloudSaving(msg = "Saving to cloud...") {
+    setCloudSync({ status: "saving", message: msg });
+  }
+  function setCloudSaved(msg = "Saved to cloud.") {
+    setCloudSync({ status: "saved", message: msg });
+  }
+  function setCloudError(msg = "Cloud sync failed. Saved locally.") {
+    setCloudSync({ status: "error", message: msg });
+  }
+
   const saveTimer = useRef(null);
 
   /** ✅ Notes are optional */
@@ -1437,6 +1596,116 @@ export default function Journal() {
     return !(sameMood && sameReason && sameNotes);
   }, [inputsDisabled, savedEntry, mood, reason, notes]);
 
+  /** =========================
+      AUTO-SAVE (LOCAL + CLOUD)
+      - Debounced local save so refresh never loses typing
+      - Debounced cloud upsert so MongoDB stays in sync
+  ========================= */
+  useEffect(() => {
+    if (inputsDisabled || !termsAccepted || dayLocked) return;
+    if (!isDirty) return;
+
+    // Debounce local save (fast)
+    if (draftTimerRef.current) window.clearTimeout(draftTimerRef.current);
+
+    const t = window.setTimeout(() => {
+
+      const clientUpdatedAt = Date.now();
+
+      const next = setEntry(entries, todayKey, {
+        mood: (mood || "").trim(),
+        reason: (reason || "").trim(),
+        notes: notes ?? "",
+        daySubmitted: false,
+        daySubmittedAt: null,
+        clientUpdatedAt,
+      });
+
+      // Save locally (always)
+      commitEntries(next);
+
+      // Queue cloud save (slightly slower debounce)
+      pendingCloudRef.current = {
+        dateKey: todayKey,
+        payload: {
+          mood: (mood || "").trim(),
+          reason: (reason || "").trim(),
+          notes: notes ?? "",
+          daySubmitted: false,
+          clientUpdatedAt,
+        },
+      };
+
+      if (cloudTimer.current) window.clearTimeout(cloudTimer.current);
+      cloudTimer.current = window.setTimeout(async () => {
+        const pending = pendingCloudRef.current;
+        if (!pending) return;
+
+        try {
+          setCloudSaving();
+          if (cloudAbort.current) cloudAbort.current.abort();
+          cloudAbort.current = new AbortController();
+
+          await apiUpsertJournalEntry(pending.dateKey, pending.payload, { signal: cloudAbort.current.signal });
+          pendingCloudRef.current = null;
+          setCloudSaved();
+        } catch (e) {
+          setCloudError(e?.message ? `Cloud sync failed: ${e.message}` : "Cloud sync failed. Saved locally.");
+        }
+      }, 900);
+    }, 450);
+    draftTimerRef.current = t;
+
+    return () => {
+      window.clearTimeout(t);
+      if (draftTimerRef.current === t) draftTimerRef.current = null;
+    };
+  }, [inputsDisabled, termsAccepted, dayLocked, isDirty, entries, todayKey, mood, reason, notes]);
+
+  
+  // ✅ On refresh/close: force-save the latest draft to localStorage synchronously (safest for production)
+  useEffect(() => {
+    const onBeforeUnload = () => {
+      if (inputsDisabled || !termsAccepted || dayLocked) return;
+      if (!isDirty) return;
+
+      const clientUpdatedAt = Date.now();
+      const next = setEntry(entries, todayKey, {
+        mood: (mood || "").trim(),
+        reason: (reason || "").trim(),
+        notes: notes ?? "",
+        daySubmitted: false,
+        daySubmittedAt: null,
+        clientUpdatedAt,
+      });
+
+      // synchronous local write (no setState needed during unload)
+      try { localStorage.setItem(ENTRIES_KEY, JSON.stringify(next)); } catch {}
+    };
+
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [inputsDisabled, termsAccepted, dayLocked, isDirty, entries, todayKey, mood, reason, notes]);
+
+// Retry any pending cloud save when the browser comes back online
+  useEffect(() => {
+    const onOnline = async () => {
+      const pending = pendingCloudRef.current;
+      if (!pending) return;
+      try {
+        setCloudSaving("Back online — syncing...");
+        await apiUpsertJournalEntry(pending.dateKey, pending.payload);
+        pendingCloudRef.current = null;
+        setCloudSaved("Synced after reconnect.");
+      } catch (e) {
+        setCloudError(e?.message ? `Cloud sync failed: ${e.message}` : "Cloud sync failed. Saved locally.");
+      }
+    };
+    window.addEventListener("online", onOnline);
+    return () => window.removeEventListener("online", onOnline);
+  }, []);
+
+
   const wellness = useMemo(() => tipsForEntry(savedEntry), [savedEntry]);
 
   const canSave = useMemo(() => {
@@ -1458,8 +1727,19 @@ export default function Journal() {
     setEntries(next);
   }
 
-  function saveNow() {
+  async function saveNow() {
     if (dayLocked || !termsAccepted) return;
+    // ✅ Prevent the draft autosave from firing after a manual Save (race condition)
+    if (draftTimerRef.current) {
+      window.clearTimeout(draftTimerRef.current);
+      draftTimerRef.current = null;
+    }
+    if (cloudTimer.current) {
+      window.clearTimeout(cloudTimer.current);
+      cloudTimer.current = null;
+    }
+    pendingCloudRef.current = null;
+
     const prevSaved = getEntry(entries, todayKey);
     const nowISO = new Date().toISOString();
 
@@ -1469,9 +1749,42 @@ export default function Journal() {
       notes: notes ?? "",
       daySubmitted: true,
       daySubmittedAt: prevSaved.daySubmittedAt || nowISO,
+      clientUpdatedAt: Date.now(),
     });
 
     commitEntries(next, { pulse: true });
+
+    // ✅ Manual save = finalize day + push to MongoDB immediately
+    try {
+      setCloudSaving("Finalizing in cloud...");
+      if (cloudAbort.current) cloudAbort.current.abort();
+      cloudAbort.current = new AbortController();
+
+      const payload = {
+        mood: (mood || "").trim(),
+        reason: (reason || "").trim(),
+        notes: notes ?? "",
+        daySubmitted: true,
+        clientUpdatedAt: Date.now(),
+      };
+
+      await apiUpsertJournalEntry(todayKey, payload, { signal: cloudAbort.current.signal });
+      pendingCloudRef.current = null;
+      setCloudSaved("Finalized and saved to cloud.");
+    } catch (e) {
+      pendingCloudRef.current = {
+        dateKey: todayKey,
+        payload: {
+          mood: (mood || "").trim(),
+          reason: (reason || "").trim(),
+          notes: notes ?? "",
+          daySubmitted: true,
+          clientUpdatedAt: Date.now(),
+        },
+      };
+      setCloudError(e?.message ? `Cloud save failed: ${e.message}` : "Cloud save failed. Saved locally.");
+    }
+
   }
 
   function clearTodayDraft() {
@@ -1638,6 +1951,16 @@ export default function Journal() {
                   </AnimatePresence>
 
                   {saveFailed && <div className="mt-2 text-[11px] font-semibold text-red-600">Storage error: couldn’t save on this device.</div>}
+                  {cloudSync.status === "saving" && (
+                    <div className="mt-2 text-[11px] font-semibold text-black/60">{cloudSync.message}</div>
+                  )}
+                  {cloudSync.status === "saved" && (
+                    <div className="mt-2 text-[11px] font-semibold text-emerald-700">{cloudSync.message}</div>
+                  )}
+                  {cloudSync.status === "error" && (
+                    <div className="mt-2 text-[11px] font-semibold text-red-600">{cloudSync.message}</div>
+                  )}
+
                 </div>
 
                 <div className="relative flex flex-wrap items-center gap-2 justify-start lg:justify-end">
@@ -1668,15 +1991,15 @@ export default function Journal() {
                   <motion.button
                     type="button"
                     onClick={saveNow}
-                    disabled={inputsDisabled || !isDirty || !canSave}
-                    whileHover={inputsDisabled || !isDirty || !canSave ? {} : { y: -1 }}
-                    whileTap={inputsDisabled || !isDirty || !canSave ? {} : { scale: 0.98 }}
+                    disabled={inputsDisabled || !canSave}
+                    whileHover={inputsDisabled || !canSave ? {} : { y: -1 }}
+                    whileTap={inputsDisabled || !canSave ? {} : { scale: 0.98 }}
                     className="h-10 rounded-full px-4 text-[13px] font-extrabold transition disabled:opacity-50 disabled:cursor-not-allowed"
                     style={{
-                      backgroundColor: !inputsDisabled && isDirty && canSave ? CHECKIN_GREEN : "rgba(0,0,0,0.05)",
+                      backgroundColor: !inputsDisabled && canSave ? CHECKIN_GREEN : "rgba(0,0,0,0.05)",
                       color: CHECKIN_DARK,
                       border: "1px solid rgba(0,0,0,0.15)",
-                      boxShadow: !inputsDisabled && isDirty && canSave ? "0 18px 50px rgba(185,255,102,0.45)" : "none",
+                      boxShadow: !inputsDisabled && canSave ? "0 18px 50px rgba(185,255,102,0.45)" : "none",
                     }}
                   >
                     {dayLocked ? "Saved ✓" : "Save"}
@@ -1698,9 +2021,11 @@ export default function Journal() {
                         ) : !termsAccepted ? (
                           <Pill tone="warn">Accept Terms</Pill>
                         ) : isDirty ? (
-                          <Pill tone="warn">Unsaved</Pill>
+                          <Pill tone="warn">Saving…</Pill>
+                        ) : (mood || reason || (notes || "").trim()) ? (
+                          <Pill>Draft saved</Pill>
                         ) : (
-                          <Pill>Saved</Pill>
+                          <Pill>Ready</Pill>
                         )}
                       </motion.div>
                     </AnimatePresence>
