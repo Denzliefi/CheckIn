@@ -9,34 +9,13 @@ const CHECKIN_DARK = "#141414";
 /** =========================
     STORAGE
 ========================= */
-const ENTRIES_KEY_BASE = "journal_entries_v1";
-const TERMS_KEY_BASE = "journal_terms_accepted_v1";
+const ENTRIES_KEY_PREFIX = "journal_entries_v1";
+const TERMS_KEY_PREFIX = "journal_terms_accepted_v1";
 
-/**
- * IMPORTANT:
- * localStorage is shared per-domain (NOT per-user).
- * Namespace Journal cache by the logged-in user's id to avoid cross-user leaks
- * when testing multiple accounts on the same browser/device.
- *
- * We read the stored auth user directly to avoid adding imports here.
- */
-function getActiveUserId() {
-  try {
-    const raw =
-      window.localStorage.getItem("user") ??
-      window.sessionStorage.getItem("user");
-    const u = raw ? JSON.parse(raw) : null;
-    return u?._id || u?.id || "unknown";
-  } catch {
-    return "unknown";
-  }
-}
-function entriesStorageKey() {
-  return `${ENTRIES_KEY_BASE}:${getActiveUserId()}`;
-}
-function termsStorageKey() {
-  return `${TERMS_KEY_BASE}:${getActiveUserId()}`;
-}
+// Legacy (older builds used global keys — dangerous across multiple users on same device)
+const LEGACY_ENTRIES_KEY = "journal_entries_v1";
+const LEGACY_TERMS_KEY = "journal_terms_accepted_v1";
+const LEGACY_OWNER_KEY = "journal_entries_owner_v1";
 
 /** Notes limit */
 const NOTES_WORD_LIMIT = 100;
@@ -47,9 +26,9 @@ const TRACKER_DAYS = 7;
 /** =========================
     Storage helpers
 ========================= */
-function loadEntries() {
+function loadEntries(key = LEGACY_ENTRIES_KEY) {
   try {
-    const raw = localStorage.getItem(entriesStorageKey());
+    const raw = localStorage.getItem(key);
     if (!raw) return {};
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
@@ -59,31 +38,134 @@ function loadEntries() {
   }
 }
 
-function saveEntries(entries) {
+function saveEntries(entries, key = LEGACY_ENTRIES_KEY) {
   try {
-    localStorage.setItem(entriesStorageKey(), JSON.stringify(entries));
+    localStorage.setItem(key, JSON.stringify(entries));
     return true;
   } catch {
     return false;
   }
 }
 
-function loadTermsAccepted() {
+function loadTermsAccepted(key = LEGACY_TERMS_KEY) {
   try {
-    return localStorage.getItem(termsStorageKey()) === "1";
+    return localStorage.getItem(key) === "1";
   } catch {
     return false;
   }
 }
 
-function saveTermsAccepted() {
+function saveTermsAccepted(key = LEGACY_TERMS_KEY) {
   try {
-    localStorage.setItem(termsStorageKey(), "1");
+    localStorage.setItem(key, "1");
     return true;
   } catch {
     return false;
   }
 }
+
+
+/* =========================
+   ✅ Auth + per-user storage keys
+   - Keeps drafts isolated per logged-in user (prevents "everyone shares one journal" on the same device).
+   - Still supports anonymous local use (falls back to :anon)
+========================= */
+function readStorageItem(key) {
+  try {
+    return localStorage.getItem(key) ?? sessionStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function getAuthFromStorage() {
+  const token = readStorageItem("token");
+  let user = null;
+  try {
+    const raw = readStorageItem("user");
+    user = raw ? JSON.parse(raw) : null;
+  } catch {
+    user = null;
+  }
+  const userId = user?._id || user?.id || null;
+  return { token, user, userId };
+}
+
+function entriesKeyForUser(userId) {
+  return `${ENTRIES_KEY_PREFIX}:${userId || "anon"}`;
+}
+
+function termsKeyForUser(userId) {
+  return `${TERMS_KEY_PREFIX}:${userId || "anon"}`;
+}
+
+/**
+ * ✅ Prevent accidental cross-user migration:
+ * Only migrate legacy global entries if they were last written by the SAME userId.
+ */
+function maybeMigrateLegacyEntries({ userId, entriesKey }) {
+  try {
+    const owner = localStorage.getItem(LEGACY_OWNER_KEY) || null;
+    if (!owner || !userId || owner !== String(userId)) return;
+
+    const already = localStorage.getItem(entriesKey);
+    if (already) return;
+
+    const legacy = localStorage.getItem(LEGACY_ENTRIES_KEY);
+    if (!legacy) return;
+
+    localStorage.setItem(entriesKey, legacy);
+    // keep legacy too (do NOT delete) — safer for recovery
+  } catch {
+    // ignore
+  }
+}
+
+/* =========================
+   ✅ API helpers (Render backend)
+========================= */
+function getApiBase() {
+  try {
+    const v =
+      typeof process !== "undefined" && process?.env?.REACT_APP_API_URL
+        ? process.env.REACT_APP_API_URL
+        : "";
+    return String(v || "").replace(/\/$/, "");
+  } catch {
+    return "";
+  }
+}
+
+async function apiJson(path, { method = "GET", token, body } = {}) {
+  const base = getApiBase();
+  const url = `${base}${path}`;
+  const headers = { "Content-Type": "application/json" };
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  const res = await fetch(url, {
+    method,
+    headers,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+
+  let data = null;
+  try {
+    data = await res.json();
+  } catch {
+    data = null;
+  }
+
+  if (!res.ok) {
+    const msg = data?.message || data?.error || `${res.status} ${res.statusText}`;
+    const err = new Error(msg);
+    err.status = res.status;
+    err.data = data;
+    throw err;
+  }
+
+  return data;
+}
+
 
 /** Keep PHQ shape for back-compat */
 function ensureEntryShape(e) {
@@ -213,7 +295,7 @@ function buildTrackerSeries(entries, baseDateKey, days = TRACKER_DAYS) {
     const label = `${x.getMonth() + 1}/${x.getDate()}`;
     const e = getEntry(entries, key);
 
-    const mood = e.daySubmitted ? (e.mood || null) : null;
+    const mood = (e.mood || "").trim() ? e.mood : null; // show draft mood too
     list.push({ key, label, mood });
   }
   return list;
@@ -1364,8 +1446,13 @@ function NotesCard({ notes, setNotes, disabled = false }) {
 export default function Journal() {
   const shouldReduceMotion = useReducedMotion();
 
+  // ✅ who is using the journal (scopes local cache + cloud writes)
+  const { token, userId } = getAuthFromStorage();
+  const entriesStorageKey = entriesKeyForUser(userId);
+  const termsStorageKey = termsKeyForUser(userId);
+
   const [todayKey, setTodayKey] = useState(() => getTodayKey());
-  const [termsAccepted, setTermsAccepted] = useState(() => loadTermsAccepted());
+  const [termsAccepted, setTermsAccepted] = useState(() => loadTermsAccepted(termsStorageKey));
 
   /** ✅ Refresh “Today” on focus + at local midnight (no interval spam) */
   useEffect(() => {
@@ -1392,7 +1479,103 @@ export default function Journal() {
     };
   }, []);
 
-  const [entries, setEntries] = useState(() => loadEntries());
+  const [entries, setEntries] = useState(() => {
+    maybeMigrateLegacyEntries({ userId, entriesKey: entriesStorageKey });
+    return loadEntries(entriesStorageKey);
+  });
+  // Keep a ref for effects (avoid dependency loops)
+const entriesRef = useRef(entries);
+useEffect(() => {
+  entriesRef.current = entries;
+}, [entries]);
+
+// ✅ When user changes (login/logout), load that user's local cache + terms
+useEffect(() => {
+  setEntries(loadEntries(entriesStorageKey));
+  setTermsAccepted(loadTermsAccepted(termsStorageKey));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [entriesStorageKey, termsStorageKey]);
+
+// Cloud state (inline message; no modals)
+const [cloudError, setCloudError] = useState("");
+const [cloudReady, setCloudReady] = useState(false);
+
+// ✅ Load journal from DB for this user (so yesterday shows after login)
+useEffect(() => {
+  let cancelled = false;
+
+  async function run() {
+    if (!token || !userId) return;
+
+    try {
+      setCloudError("");
+      const to = todayKey; // YYYY-MM-DD local
+      const d = dateFromKeyLocal(todayKey);
+      const fromDate = new Date(d);
+      fromDate.setDate(fromDate.getDate() - 120);
+      const from = keyFromDateLocal(fromDate);
+
+      const qs = `?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&limit=1000`;
+      const data = await apiJson(`/api/journal/entries${qs}`, { method: "GET", token });
+
+      const serverEntries = Array.isArray(data?.entries) ? data.entries : [];
+
+      // Merge: newest clientUpdatedAt wins; submitted entries are never overwritten by drafts
+      const local = loadEntries(entriesStorageKey);
+      const merged = { ...(local || {}) };
+
+      for (const se of serverEntries) {
+        const k = String(se?.dateKey || "").trim();
+        if (!isDateKey(k)) continue;
+
+        const existingLocal = ensureEntryShape(merged[k]);
+        const incoming = ensureEntryShape(se);
+
+        const localTs = Number(existingLocal?.clientUpdatedAt || 0);
+        const serverTs = Number(incoming?.clientUpdatedAt || 0);
+
+        // Server submitted always wins (it is the official record)
+        if (incoming.daySubmitted) {
+          merged[k] = { ...existingLocal, ...incoming, daySubmitted: true };
+          continue;
+        }
+
+        // Otherwise newest wins
+        if (serverTs >= localTs) {
+          merged[k] = { ...existingLocal, ...incoming };
+        }
+      }
+
+      if (!cancelled) {
+        saveEntries(merged, entriesStorageKey);
+        setEntries(merged);
+        setCloudReady(true);
+      }
+
+      // Best-effort sync local drafts up to server (controller refuses overwriting locked days)
+      const localList = Object.keys(merged || {})
+        .filter(isDateKey)
+        .map((k) => ({ dateKey: k, ...ensureEntryShape(merged[k]) }))
+        .filter((e) => Number(e.clientUpdatedAt || 0) > 0);
+
+      if (localList.length) {
+        try {
+          await apiJson(`/api/journal/sync`, { method: "POST", token, body: { entries: localList } });
+        } catch {
+          // ignore — local cache remains the safety net
+        }
+      }
+    } catch (e) {
+      if (!cancelled) setCloudError(e?.message || "Could not load cloud journal.");
+    }
+  }
+
+  run();
+  return () => {
+    cancelled = true;
+  };
+}, [token, userId, todayKey, entriesStorageKey]);
+
   const savedEntry = useMemo(() => getEntry(entries, todayKey), [entries, todayKey]);
 
   const dayLocked = !!savedEntry.daySubmitted;
@@ -1407,6 +1590,8 @@ export default function Journal() {
   const [savedPulse, setSavedPulse] = useState(false);
   const [saveFailed, setSaveFailed] = useState(false);
   const saveTimer = useRef(null);
+  const cloudTimer = useRef(null);
+  const inFlightCloud = useRef(false);
 
   /** ✅ Notes are optional */
   const step = useMemo(() => {
@@ -1478,11 +1663,83 @@ export default function Journal() {
 
   /** ✅ No side-effects inside setEntries updater */
   function commitEntries(next, { pulse = false } = {}) {
-    const ok = saveEntries(next);
+    try { if (userId) localStorage.setItem(LEGACY_OWNER_KEY, String(userId)); } catch {}
+    const ok = saveEntries(next, entriesStorageKey);
     setSaveFailed(!ok);
     if (ok && pulse) pulseSaved();
     setEntries(next);
   }
+
+
+function cancelCloudTimer() {
+  if (cloudTimer.current) {
+    clearTimeout(cloudTimer.current);
+    cloudTimer.current = null;
+  }
+}
+
+async function pushEntryToCloud(dateKey, entryPatch, { immediate = false } = {}) {
+  if (!token || !userId) return;
+
+  const payload = {
+    mood: (entryPatch?.mood ?? "").toString(),
+    reason: (entryPatch?.reason ?? "").toString(),
+    notes: (entryPatch?.notes ?? "").toString(),
+    daySubmitted: entryPatch?.daySubmitted === true,
+    clientUpdatedAt: Number(entryPatch?.clientUpdatedAt || Date.now()) || Date.now(),
+  };
+
+  const doRequest = async () => {
+    inFlightCloud.current = true;
+    try {
+      const data = await apiJson(`/api/journal/entries/${encodeURIComponent(dateKey)}`, {
+        method: "PUT",
+        token,
+        body: payload,
+      });
+
+      const serverEntry = ensureEntryShape(data?.entry);
+      const next = setEntry(entriesRef.current || {}, dateKey, serverEntry);
+      saveEntries(next, entriesStorageKey);
+      setEntries(next);
+
+      setCloudError("");
+      setCloudReady(true);
+    } catch (e) {
+      setCloudError(e?.message || "Could not save to cloud.");
+    } finally {
+      inFlightCloud.current = false;
+    }
+  };
+
+  if (immediate) return doRequest();
+
+  cancelCloudTimer();
+  cloudTimer.current = setTimeout(doRequest, 850);
+}
+
+// ✅ Dynamic autosave (local immediately + cloud debounced)
+useEffect(() => {
+  if (!termsAccepted) return;
+  if (dayLocked) return;
+
+  const hasSomething = !!((mood || "").trim() || (reason || "").trim() || (notes || "").trim());
+  if (!hasSomething) return;
+
+  const now = Date.now();
+  const draft = {
+    mood: (mood || "").trim(),
+    reason: (reason || "").trim(),
+    notes: notes ?? "",
+    daySubmitted: false,
+    clientUpdatedAt: now,
+  };
+
+  const next = setEntry(entriesRef.current || {}, todayKey, draft);
+  commitEntries(next);
+  pushEntryToCloud(todayKey, draft, { immediate: false });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [mood, reason, notes, todayKey, termsAccepted, dayLocked]);
 
   function saveNow() {
     if (dayLocked || !termsAccepted) return;
@@ -1498,6 +1755,9 @@ export default function Journal() {
     });
 
     commitEntries(next, { pulse: true });
+
+    // ✅ Manual save = finalize in DB immediately
+    pushEntryToCloud(todayKey, { ...getEntry(next, todayKey), daySubmitted: true, clientUpdatedAt: Date.now() }, { immediate: true });
   }
 
   function clearTodayDraft() {
@@ -1509,8 +1769,9 @@ export default function Journal() {
     setMoodCollapsed(false);
     setSaveFailed(false);
 
-    const next = setEntry(entries, todayKey, { mood: "", reason: "", notes: "", daySubmitted: false, daySubmittedAt: null });
+    const next = setEntry(entriesRef.current || {}, todayKey, { mood: "", reason: "", notes: "", daySubmitted: false, daySubmittedAt: null, clientUpdatedAt: Date.now() });
     commitEntries(next);
+    pushEntryToCloud(todayKey, getEntry(next, todayKey), { immediate: true });
   }
 
   const trackerSeries = useMemo(() => buildTrackerSeries(entries, todayKey, TRACKER_DAYS), [entries, todayKey]);
@@ -1601,7 +1862,7 @@ export default function Journal() {
       <TermsModal
         open={!termsAccepted}
         onAgree={() => {
-          const ok = saveTermsAccepted();
+          const ok = saveTermsAccepted(termsStorageKey);
           if (ok) setTermsAccepted(true);
         }}
       />
@@ -1664,6 +1925,14 @@ export default function Journal() {
                   </AnimatePresence>
 
                   {saveFailed && <div className="mt-2 text-[11px] font-semibold text-red-600">Storage error: couldn’t save on this device.</div>}
+
+                  {token && userId && (
+                    cloudError ? (
+                      <div className="mt-2 text-[11px] font-semibold text-red-600">Cloud sync error: {cloudError}</div>
+                    ) : cloudReady ? (
+                      <div className="mt-2 text-[11px] font-semibold text-emerald-700">Cloud synced.</div>
+                    ) : null
+                  )}
                 </div>
 
                 <div className="relative flex flex-wrap items-center gap-2 justify-start lg:justify-end">
