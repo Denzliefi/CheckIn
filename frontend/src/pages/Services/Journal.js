@@ -12,10 +12,73 @@ const CHECKIN_DARK = "#141414";
 const ENTRIES_KEY_PREFIX = "journal_entries_v1";
 const TERMS_KEY_PREFIX = "journal_terms_accepted_v1";
 
-// Legacy (older builds used global keys — dangerous across multiple users on same device)
+// Legacy (older builds used global keys — unsafe across multiple users on same device)
 const LEGACY_ENTRIES_KEY = "journal_entries_v1";
 const LEGACY_TERMS_KEY = "journal_terms_accepted_v1";
 const LEGACY_OWNER_KEY = "journal_entries_owner_v1";
+
+/** =========================
+    JOURNAL API (DB sync)
+    - Uses same Bearer token auth as the rest of your app
+    - Keeps localStorage as a safety net (refresh/offline)
+========================= */
+const API_BASE = (process.env.REACT_APP_API_URL || "").replace(/\/+$/, "");
+
+function getAuthTokenSafe() {
+  try {
+    return window.localStorage.getItem("token") || window.sessionStorage.getItem("token");
+  } catch {
+    return null;
+  }
+}
+
+async function apiUpsertJournalEntry(dateKey, payload, { signal } = {}) {
+  const token = getAuthTokenSafe();
+  if (!token) throw new Error("Not authorized: missing token");
+
+  const url = `${API_BASE}/api/journal/entries/${encodeURIComponent(dateKey)}`;
+
+  const res = await fetch(url, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(payload),
+    signal,
+  });
+
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data?.message || "Failed to save journal entry");
+  }
+  return data?.entry || null;
+}
+
+async function apiListJournalEntries({ from, to, limit = 500, signal } = {}) {
+  const token = getAuthTokenSafe();
+  if (!token) throw new Error("Not authorized: missing token");
+
+  const qs = new URLSearchParams();
+  if (from) qs.set("from", from);
+  if (to) qs.set("to", to);
+  if (limit) qs.set("limit", String(limit));
+
+  const url = `${API_BASE}/api/journal/entries?${qs.toString()}`;
+
+  const res = await fetch(url, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+    signal,
+  });
+
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data?.message || "Failed to load journal entries");
+  }
+  return Array.isArray(data?.entries) ? data.entries : [];
+}
+
 
 /** Notes limit */
 const NOTES_WORD_LIMIT = 100;
@@ -64,10 +127,9 @@ function saveTermsAccepted(key = LEGACY_TERMS_KEY) {
   }
 }
 
-
 /* =========================
    ✅ Auth + per-user storage keys
-   - Keeps drafts isolated per logged-in user (prevents "everyone shares one journal" on the same device).
+   - Keeps drafts isolated per logged-in user (prevents shared journal on the same device).
    - Still supports anonymous local use (falls back to :anon)
 ========================= */
 function readStorageItem(key) {
@@ -120,52 +182,6 @@ function maybeMigrateLegacyEntries({ userId, entriesKey }) {
     // ignore
   }
 }
-
-/* =========================
-   ✅ API helpers (Render backend)
-========================= */
-function getApiBase() {
-  try {
-    const v =
-      typeof process !== "undefined" && process?.env?.REACT_APP_API_URL
-        ? process.env.REACT_APP_API_URL
-        : "";
-    return String(v || "").replace(/\/$/, "");
-  } catch {
-    return "";
-  }
-}
-
-async function apiJson(path, { method = "GET", token, body } = {}) {
-  const base = getApiBase();
-  const url = `${base}${path}`;
-  const headers = { "Content-Type": "application/json" };
-  if (token) headers.Authorization = `Bearer ${token}`;
-
-  const res = await fetch(url, {
-    method,
-    headers,
-    body: body ? JSON.stringify(body) : undefined,
-  });
-
-  let data = null;
-  try {
-    data = await res.json();
-  } catch {
-    data = null;
-  }
-
-  if (!res.ok) {
-    const msg = data?.message || data?.error || `${res.status} ${res.statusText}`;
-    const err = new Error(msg);
-    err.status = res.status;
-    err.data = data;
-    throw err;
-  }
-
-  return data;
-}
-
 
 /** Keep PHQ shape for back-compat */
 function ensureEntryShape(e) {
@@ -295,7 +311,7 @@ function buildTrackerSeries(entries, baseDateKey, days = TRACKER_DAYS) {
     const label = `${x.getMonth() + 1}/${x.getDate()}`;
     const e = getEntry(entries, key);
 
-    const mood = (e.mood || "").trim() ? e.mood : null; // show draft mood too
+    const mood = e.daySubmitted ? (e.mood || null) : null;
     list.push({ key, label, mood });
   }
   return list;
@@ -693,6 +709,8 @@ function Pill({ children, tone = "light" }) {
       ? { background: "rgba(20,20,20,0.92)", border: "rgba(0,0,0,0.12)", color: "white" }
       : tone === "warn"
       ? { background: "rgba(255, 214, 102,0.55)", border: "rgba(0,0,0,0.14)", color: CHECKIN_DARK }
+      : tone === "error"
+      ? { background: "rgba(255, 120, 120, 0.20)", border: "rgba(220, 38, 38, 0.35)", color: "rgba(185, 28, 28, 0.95)" }
       : { background: "rgba(0,0,0,0.03)", border: "rgba(0,0,0,0.12)", color: "rgba(0,0,0,0.70)" };
 
   return (
@@ -706,6 +724,63 @@ function Pill({ children, tone = "light" }) {
 }
 
 
+
+
+function IconMiniCheck({ className = "" }) {
+  return (
+    <svg viewBox="0 0 20 20" className={className} fill="none" aria-hidden="true">
+      <path d="M16.2 5.8 8.7 13.3 3.8 8.4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function IconMiniCloud({ className = "" }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} fill="none" aria-hidden="true">
+      <path
+        d="M7.5 18.5h9.2a4.3 4.3 0 0 0 .6-8.6A5.7 5.7 0 0 0 6.6 8.6 4.2 4.2 0 0 0 7.5 18.5Z"
+        stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function IconMiniWarn({ className = "" }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} fill="none" aria-hidden="true">
+      <path d="M12 3.5 22 20.5H2L12 3.5Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+      <path d="M12 9v5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      <path d="M12 17.2h.01" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function SpinnerMini({ className = "" }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} fill="none" aria-hidden="true">
+      <path
+        d="M12 2.8a9.2 9.2 0 1 0 9.2 9.2"
+        stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+function CloudStatusPill({ status, message }) {
+  const tone = status === "saved" ? "green" : status === "error" ? "error" : "light";
+  const Icon = status === "saving" ? SpinnerMini : status === "saved" ? IconMiniCheck : status === "error" ? IconMiniWarn : IconMiniCloud;
+
+  return (
+    <Pill tone={tone}>
+      <span className="inline-flex items-center gap-2">
+        <span className={status === "saving" ? "animate-spin" : ""}>
+          <Icon className="h-4 w-4" />
+        </span>
+        <span>{message}</span>
+      </span>
+    </Pill>
+  );
+}
 function Card({ title, right, children, className = "" }) {
   return (
     <div className={`rounded-[26px] border border-black/10 bg-white/85 backdrop-blur-xl shadow-[0_18px_60px_rgba(0,0,0,0.08)] overflow-hidden ${className}`}>
@@ -973,18 +1048,61 @@ function MoodTracker({ series, todayKey, title = "Mood Tracker", subtitle = "Sav
 function HistoryModal({ open, onClose, items, entries, trackerSeriesForDate, todayKey }) {
   const [page, setPage] = useState("list");
   const [selectedDate, setSelectedDate] = useState(null);
+  const [visibleCount, setVisibleCount] = useState(7);
+
 
   const listScrollRef = useRef(null);
   const detailScrollRef = useRef(null);
+  const listSentinelRef = useRef(null);
+
+  const visibleItems = useMemo(
+    () => items.slice(0, Math.min(items.length, Math.max(7, visibleCount))),
+    [items, visibleCount]
+  );
 
   useEffect(() => {
     if (!open) return;
     setPage("list");
     setSelectedDate(null);
+    setVisibleCount(7);
     requestAnimationFrame(() => {
       if (listScrollRef.current) listScrollRef.current.scrollTop = 0;
     });
   }, [open]);
+
+  // Keep visibleCount within bounds when items change
+  useEffect(() => {
+    setVisibleCount((v) => {
+      const min = 7;
+      const max = items.length || min;
+      return Math.max(min, Math.min(v, max));
+    });
+  }, [items.length]);
+
+  // Infinite-scroll style: show latest 7 first, then load earlier entries as you scroll
+  useEffect(() => {
+    if (!open) return;
+    if (page !== "list") return;
+
+    const root = listScrollRef.current;
+    const sentinel = listSentinelRef.current;
+
+    if (!root || !sentinel) return;
+    if (visibleCount >= items.length) return;
+
+    const obs = new IntersectionObserver(
+      (obsEntries) => {
+        if (obsEntries.some((e) => e.isIntersecting)) {
+          setVisibleCount((v) => Math.min(items.length, v + 14));
+        }
+      },
+      { root, rootMargin: "140px" }
+    );
+
+    obs.observe(sentinel);
+    return () => obs.disconnect();
+  }, [open, page, items.length, visibleCount]);
+
 
   const detailEntry = useMemo(() => (selectedDate ? getEntry(entries, selectedDate) : null), [entries, selectedDate]);
   const detailTracker = useMemo(() => (selectedDate ? trackerSeriesForDate?.(selectedDate) || [] : []), [selectedDate, trackerSeriesForDate]);
@@ -1068,7 +1186,12 @@ function HistoryModal({ open, onClose, items, entries, trackerSeriesForDate, tod
                         pb-20 sm:pb-24
                       "
                     >
-                      {items.map((it, idx) => (
+                      {/* Latest-first view (default: 7 days). Scroll down to load earlier entries. */}
+                      <div className="sticky top-0 z-10 bg-white/90 backdrop-blur px-3 sm:px-4 py-2 border-b border-black/10 text-[11px] text-black/55 font-semibold">
+                        Showing latest {visibleItems.length} of {items.length}. Scroll down to load earlier entries.
+                      </div>
+
+                      {visibleItems.map((it, idx) => (
                         <button
                           key={it.date}
                           type="button"
@@ -1105,9 +1228,27 @@ function HistoryModal({ open, onClose, items, entries, trackerSeriesForDate, tod
                             )}
                           </div>
 
-                          {idx !== items.length - 1 && <div className="mt-3 h-px bg-black/10" />}
+                          {idx !== visibleItems.length - 1 && <div className="mt-3 h-px bg-black/10" />}
                         </button>
                       ))}
+
+                      {/* Sentinel for auto-loading earlier entries */}
+                      <div ref={listSentinelRef} className="h-10" />
+
+                      {visibleCount < items.length && (
+                        <div className="px-3 sm:px-4 pb-4">
+                          <button
+                            type="button"
+                            onClick={() => setVisibleCount((v) => Math.min(items.length, v + 14))}
+                            className="w-full rounded-xl border border-black/10 bg-black/[0.02] px-4 py-2 text-[12px] font-extrabold text-[#141414] hover:bg-black/[0.04] transition"
+                          >
+                            Load earlier entries
+                          </button>
+                          <div className="mt-2 text-[11px] text-black/55 font-semibold">
+                            Tip: keep scrolling to load more.
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -1446,8 +1587,8 @@ function NotesCard({ notes, setNotes, disabled = false }) {
 export default function Journal() {
   const shouldReduceMotion = useReducedMotion();
 
-  // ✅ who is using the journal (scopes local cache + cloud writes)
-  const { token, userId } = getAuthFromStorage();
+  // ✅ who is using the journal (scopes local cache + terms)
+  const { userId } = getAuthFromStorage();
   const entriesStorageKey = entriesKeyForUser(userId);
   const termsStorageKey = termsKeyForUser(userId);
 
@@ -1483,100 +1624,81 @@ export default function Journal() {
     maybeMigrateLegacyEntries({ userId, entriesKey: entriesStorageKey });
     return loadEntries(entriesStorageKey);
   });
-  // Keep a ref for effects (avoid dependency loops)
-const entriesRef = useRef(entries);
-useEffect(() => {
-  entriesRef.current = entries;
-}, [entries]);
 
-// ✅ When user changes (login/logout), load that user's local cache + terms
-useEffect(() => {
-  setEntries(loadEntries(entriesStorageKey));
-  setTermsAccepted(loadTermsAccepted(termsStorageKey));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-}, [entriesStorageKey, termsStorageKey]);
-
-// Cloud state (inline message; no modals)
-const [cloudError, setCloudError] = useState("");
-const [cloudReady, setCloudReady] = useState(false);
-
-// ✅ Load journal from DB for this user (so yesterday shows after login)
-useEffect(() => {
-  let cancelled = false;
-
-  async function run() {
-    if (!token || !userId) return;
-
-    try {
-      setCloudError("");
-      const to = todayKey; // YYYY-MM-DD local
-      const d = dateFromKeyLocal(todayKey);
-      const fromDate = new Date(d);
-      fromDate.setDate(fromDate.getDate() - 120);
-      const from = keyFromDateLocal(fromDate);
-
-      const qs = `?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&limit=1000`;
-      const data = await apiJson(`/api/journal/entries${qs}`, { method: "GET", token });
-
-      const serverEntries = Array.isArray(data?.entries) ? data.entries : [];
-
-      // Merge: newest clientUpdatedAt wins; submitted entries are never overwritten by drafts
-      const local = loadEntries(entriesStorageKey);
-      const merged = { ...(local || {}) };
-
-      for (const se of serverEntries) {
-        const k = String(se?.dateKey || "").trim();
-        if (!isDateKey(k)) continue;
-
-        const existingLocal = ensureEntryShape(merged[k]);
-        const incoming = ensureEntryShape(se);
-
-        const localTs = Number(existingLocal?.clientUpdatedAt || 0);
-        const serverTs = Number(incoming?.clientUpdatedAt || 0);
-
-        // Server submitted always wins (it is the official record)
-        if (incoming.daySubmitted) {
-          merged[k] = { ...existingLocal, ...incoming, daySubmitted: true };
-          continue;
-        }
-
-        // Otherwise newest wins
-        if (serverTs >= localTs) {
-          merged[k] = { ...existingLocal, ...incoming };
-        }
-      }
-
-      if (!cancelled) {
-        saveEntries(merged, entriesStorageKey);
-        setEntries(merged);
-        setCloudReady(true);
-      }
-
-      // Best-effort sync local drafts up to server (controller refuses overwriting locked days)
-      const localList = Object.keys(merged || {})
-        .filter(isDateKey)
-        .map((k) => ({ dateKey: k, ...ensureEntryShape(merged[k]) }))
-        .filter((e) => Number(e.clientUpdatedAt || 0) > 0);
-
-      if (localList.length) {
-        try {
-          await apiJson(`/api/journal/sync`, { method: "POST", token, body: { entries: localList } });
-        } catch {
-          // ignore — local cache remains the safety net
-        }
-      }
-    } catch (e) {
-      if (!cancelled) setCloudError(e?.message || "Could not load cloud journal.");
-    }
-  }
-
-  run();
-  return () => {
-    cancelled = true;
-  };
-}, [token, userId, todayKey, entriesStorageKey]);
+  // ✅ When user changes (login/logout), load that user's local cache + terms
+  useEffect(() => {
+    setEntries(loadEntries(entriesStorageKey));
+    setTermsAccepted(loadTermsAccepted(termsStorageKey));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entriesStorageKey, termsStorageKey]);
 
   const savedEntry = useMemo(() => getEntry(entries, todayKey), [entries, todayKey]);
+  /** =========================
+      LOAD FROM CLOUD (per user)
+      - pulls DB entries and merges into local cache
+      - newest clientUpdatedAt wins
+  ========================= */
+  useEffect(() => {
+    const token = getAuthTokenSafe();
+    if (!token) return; // not logged in
+
+    let alive = true;
+    const ac = new AbortController();
+
+    (async () => {
+      try {
+        // last 180 days is plenty (adjust later if you want full history)
+        const to = todayKey;
+        const d = new Date();
+        d.setDate(d.getDate() - 180);
+        const from = d.toISOString().slice(0, 10);
+
+        const cloudEntries = await apiListJournalEntries({ from, to, limit: 1000, signal: ac.signal });
+        if (!alive) return;
+
+        if (cloudEntries.length) {
+          const merged = { ...loadEntries(entriesStorageKey) };
+          for (const ce of cloudEntries) {
+            const k = String(ce.dateKey || "").trim();
+            if (!k) continue;
+
+            const local = merged[k] || {};
+            const localTs = Number(local.clientUpdatedAt || 0);
+            const cloudTs = Number(ce.clientUpdatedAt || 0);
+
+            // newest wins; also if cloud is submitted and local isn't, cloud wins
+            const cloudWins = cloudTs >= localTs || (ce.daySubmitted && !local.daySubmitted);
+
+            if (cloudWins) {
+              merged[k] = ensureEntryShape({
+                ...local,
+                ...ce,
+                daySubmittedAt: ce.daySubmittedAt || local.daySubmittedAt || null,
+              });
+            }
+          }
+
+          // write through local storage + state
+          const ok = saveEntries(merged, entriesStorageKey);
+          setSaveFailed(!ok);
+          setEntries(merged);
+          setCloudSaved("Synced from cloud — you’re up to date.");
+        } else {
+          setCloudIdle();
+        }
+      } catch (e) {
+        // Don't block UI; journal still works locally
+        setCloudError(e?.message ? `Could not load cloud journal: ${e.message}` : "Could not load cloud journal.");
+      }
+    })();
+
+    return () => {
+      alive = false;
+      ac.abort();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [todayKey, entriesStorageKey]);
+
 
   const dayLocked = !!savedEntry.daySubmitted;
   const inputsDisabled = dayLocked || !termsAccepted;
@@ -1589,9 +1711,63 @@ useEffect(() => {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [savedPulse, setSavedPulse] = useState(false);
   const [saveFailed, setSaveFailed] = useState(false);
-  const saveTimer = useRef(null);
+
+  // Cloud sync status (MongoDB)
+  const [cloudSync, setCloudSync] = useState({ status: "idle", message: "" });
   const cloudTimer = useRef(null);
-  const inFlightCloud = useRef(false);
+  const cloudAbort = useRef(null);
+  const pendingCloudRef = useRef(null);
+
+  // UX: show sync as a small pill and auto-hide success after a moment
+  const [showCloudPill, setShowCloudPill] = useState(false);
+  const cloudPillTimer = useRef(null);
+
+  useEffect(() => {
+    // idle: hide
+    if (cloudSync.status === "idle") {
+      setShowCloudPill(false);
+      if (cloudPillTimer.current) {
+        clearTimeout(cloudPillTimer.current);
+        cloudPillTimer.current = null;
+      }
+      return;
+    }
+
+    // saving/error/saved: show
+    setShowCloudPill(true);
+
+    // auto-hide ONLY the success state (Option A)
+    if (cloudSync.status === "saved") {
+      if (cloudPillTimer.current) clearTimeout(cloudPillTimer.current);
+      cloudPillTimer.current = setTimeout(() => setShowCloudPill(false), 2600);
+    } else {
+      if (cloudPillTimer.current) {
+        clearTimeout(cloudPillTimer.current);
+        cloudPillTimer.current = null;
+      }
+    }
+  }, [cloudSync.status, cloudSync.message]);
+
+  useEffect(() => {
+    return () => {
+      if (cloudPillTimer.current) clearTimeout(cloudPillTimer.current);
+    };
+  }, []);
+
+  function setCloudIdle() {
+    setCloudSync({ status: "idle", message: "" });
+  }
+  function setCloudSaving(msg = "Saving to cloud...") {
+    setCloudSync({ status: "saving", message: msg });
+  }
+  function setCloudSaved(msg = "Saved to cloud.") {
+    setCloudSync({ status: "saved", message: msg });
+  }
+  function setCloudError(msg = "Cloud sync failed. Saved locally.") {
+    setCloudSync({ status: "error", message: msg });
+  }
+
+  const saveTimer = useRef(null);
 
   /** ✅ Notes are optional */
   const step = useMemo(() => {
@@ -1648,6 +1824,109 @@ useEffect(() => {
     return !(sameMood && sameReason && sameNotes);
   }, [inputsDisabled, savedEntry, mood, reason, notes]);
 
+  /** =========================
+      AUTO-SAVE (LOCAL + CLOUD)
+      - Debounced local save so refresh never loses typing
+      - Debounced cloud upsert so MongoDB stays in sync
+  ========================= */
+  useEffect(() => {
+    if (inputsDisabled || !termsAccepted || dayLocked) return;
+    if (!isDirty) return;
+
+    // Debounce local save (fast)
+    const t = window.setTimeout(() => {
+      const clientUpdatedAt = Date.now();
+
+      const next = setEntry(entries, todayKey, {
+        mood: (mood || "").trim(),
+        reason: (reason || "").trim(),
+        notes: notes ?? "",
+        daySubmitted: false,
+        daySubmittedAt: null,
+        clientUpdatedAt,
+      });
+
+      // Save locally (always)
+      commitEntries(next);
+
+      // Queue cloud save (slightly slower debounce)
+      pendingCloudRef.current = {
+        dateKey: todayKey,
+        payload: {
+          mood: (mood || "").trim(),
+          reason: (reason || "").trim(),
+          notes: notes ?? "",
+          daySubmitted: false,
+          clientUpdatedAt,
+        },
+      };
+
+      if (cloudTimer.current) window.clearTimeout(cloudTimer.current);
+      cloudTimer.current = window.setTimeout(async () => {
+        const pending = pendingCloudRef.current;
+        if (!pending) return;
+
+        try {
+          setCloudSaving();
+          if (cloudAbort.current) cloudAbort.current.abort();
+          cloudAbort.current = new AbortController();
+
+          await apiUpsertJournalEntry(pending.dateKey, pending.payload, { signal: cloudAbort.current.signal });
+          pendingCloudRef.current = null;
+          setCloudSaved();
+        } catch (e) {
+          setCloudError(e?.message ? `Cloud sync failed: ${e.message}` : "Cloud sync failed. Saved locally.");
+        }
+      }, 900);
+    }, 450);
+
+    return () => window.clearTimeout(t);
+  }, [inputsDisabled, termsAccepted, dayLocked, isDirty, entries, todayKey, mood, reason, notes, entriesStorageKey]);
+
+  
+  // ✅ On refresh/close: force-save the latest draft to localStorage synchronously (safest for production)
+  useEffect(() => {
+    const onBeforeUnload = () => {
+      if (inputsDisabled || !termsAccepted || dayLocked) return;
+      if (!isDirty) return;
+
+      const clientUpdatedAt = Date.now();
+      const next = setEntry(entries, todayKey, {
+        mood: (mood || "").trim(),
+        reason: (reason || "").trim(),
+        notes: notes ?? "",
+        daySubmitted: false,
+        daySubmittedAt: null,
+        clientUpdatedAt,
+      });
+
+      // synchronous local write (no setState needed during unload)
+      try { localStorage.setItem(entriesStorageKey, JSON.stringify(next)); } catch {}
+    };
+
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [inputsDisabled, termsAccepted, dayLocked, isDirty, entries, todayKey, mood, reason, notes]);
+
+// Retry any pending cloud save when the browser comes back online
+  useEffect(() => {
+    const onOnline = async () => {
+      const pending = pendingCloudRef.current;
+      if (!pending) return;
+      try {
+        setCloudSaving("Back online — syncing...");
+        await apiUpsertJournalEntry(pending.dateKey, pending.payload);
+        pendingCloudRef.current = null;
+        setCloudSaved("Synced after reconnect.");
+      } catch (e) {
+        setCloudError(e?.message ? `Cloud sync failed: ${e.message}` : "Cloud sync failed. Saved locally.");
+      }
+    };
+    window.addEventListener("online", onOnline);
+    return () => window.removeEventListener("online", onOnline);
+  }, []);
+
+
   const wellness = useMemo(() => tipsForEntry(savedEntry), [savedEntry]);
 
   const canSave = useMemo(() => {
@@ -1663,86 +1942,25 @@ useEffect(() => {
 
   /** ✅ No side-effects inside setEntries updater */
   function commitEntries(next, { pulse = false } = {}) {
-    try { if (userId) localStorage.setItem(LEGACY_OWNER_KEY, String(userId)); } catch {}
     const ok = saveEntries(next, entriesStorageKey);
     setSaveFailed(!ok);
     if (ok && pulse) pulseSaved();
     setEntries(next);
   }
 
-
-function cancelCloudTimer() {
-  if (cloudTimer.current) {
-    clearTimeout(cloudTimer.current);
-    cloudTimer.current = null;
-  }
-}
-
-async function pushEntryToCloud(dateKey, entryPatch, { immediate = false } = {}) {
-  if (!token || !userId) return;
-
-  const payload = {
-    mood: (entryPatch?.mood ?? "").toString(),
-    reason: (entryPatch?.reason ?? "").toString(),
-    notes: (entryPatch?.notes ?? "").toString(),
-    daySubmitted: entryPatch?.daySubmitted === true,
-    clientUpdatedAt: Number(entryPatch?.clientUpdatedAt || Date.now()) || Date.now(),
-  };
-
-  const doRequest = async () => {
-    inFlightCloud.current = true;
-    try {
-      const data = await apiJson(`/api/journal/entries/${encodeURIComponent(dateKey)}`, {
-        method: "PUT",
-        token,
-        body: payload,
-      });
-
-      const serverEntry = ensureEntryShape(data?.entry);
-      const next = setEntry(entriesRef.current || {}, dateKey, serverEntry);
-      saveEntries(next, entriesStorageKey);
-      setEntries(next);
-
-      setCloudError("");
-      setCloudReady(true);
-    } catch (e) {
-      setCloudError(e?.message || "Could not save to cloud.");
-    } finally {
-      inFlightCloud.current = false;
-    }
-  };
-
-  if (immediate) return doRequest();
-
-  cancelCloudTimer();
-  cloudTimer.current = setTimeout(doRequest, 850);
-}
-
-// ✅ Dynamic autosave (local immediately + cloud debounced)
-useEffect(() => {
-  if (!termsAccepted) return;
-  if (dayLocked) return;
-
-  const hasSomething = !!((mood || "").trim() || (reason || "").trim() || (notes || "").trim());
-  if (!hasSomething) return;
-
-  const now = Date.now();
-  const draft = {
-    mood: (mood || "").trim(),
-    reason: (reason || "").trim(),
-    notes: notes ?? "",
-    daySubmitted: false,
-    clientUpdatedAt: now,
-  };
-
-  const next = setEntry(entriesRef.current || {}, todayKey, draft);
-  commitEntries(next);
-  pushEntryToCloud(todayKey, draft, { immediate: false });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-}, [mood, reason, notes, todayKey, termsAccepted, dayLocked]);
-
-  function saveNow() {
+  async function saveNow() {
     if (dayLocked || !termsAccepted) return;
+    if (!canSave) {
+      setCloudError("Please select a Mood and Reason before saving.");
+      return;
+    }
+
+    // Cancel any pending draft cloud sync so it can’t overwrite the finalized save
+    if (cloudTimer.current) {
+      window.clearTimeout(cloudTimer.current);
+      cloudTimer.current = null;
+    }
+    pendingCloudRef.current = null;
     const prevSaved = getEntry(entries, todayKey);
     const nowISO = new Date().toISOString();
 
@@ -1756,8 +1974,37 @@ useEffect(() => {
 
     commitEntries(next, { pulse: true });
 
-    // ✅ Manual save = finalize in DB immediately
-    pushEntryToCloud(todayKey, { ...getEntry(next, todayKey), daySubmitted: true, clientUpdatedAt: Date.now() }, { immediate: true });
+    // ✅ Manual save = finalize day + push to MongoDB immediately
+    try {
+      setCloudSaving("Finalizing in cloud...");
+      if (cloudAbort.current) cloudAbort.current.abort();
+      cloudAbort.current = new AbortController();
+
+      const payload = {
+        mood: (mood || "").trim(),
+        reason: (reason || "").trim(),
+        notes: notes ?? "",
+        daySubmitted: true,
+        clientUpdatedAt: Date.now(),
+      };
+
+      await apiUpsertJournalEntry(todayKey, payload, { signal: cloudAbort.current.signal });
+      pendingCloudRef.current = null;
+      setCloudSaved("Finalized and saved to cloud.");
+    } catch (e) {
+      pendingCloudRef.current = {
+        dateKey: todayKey,
+        payload: {
+          mood: (mood || "").trim(),
+          reason: (reason || "").trim(),
+          notes: notes ?? "",
+          daySubmitted: true,
+          clientUpdatedAt: Date.now(),
+        },
+      };
+      setCloudError(e?.message ? `Cloud save failed: ${e.message}` : "Cloud save failed. Saved locally.");
+    }
+
   }
 
   function clearTodayDraft() {
@@ -1769,9 +2016,8 @@ useEffect(() => {
     setMoodCollapsed(false);
     setSaveFailed(false);
 
-    const next = setEntry(entriesRef.current || {}, todayKey, { mood: "", reason: "", notes: "", daySubmitted: false, daySubmittedAt: null, clientUpdatedAt: Date.now() });
+    const next = setEntry(entries, todayKey, { mood: "", reason: "", notes: "", daySubmitted: false, daySubmittedAt: null });
     commitEntries(next);
-    pushEntryToCloud(todayKey, getEntry(next, todayKey), { immediate: true });
   }
 
   const trackerSeries = useMemo(() => buildTrackerSeries(entries, todayKey, TRACKER_DAYS), [entries, todayKey]);
@@ -1926,13 +2172,12 @@ useEffect(() => {
 
                   {saveFailed && <div className="mt-2 text-[11px] font-semibold text-red-600">Storage error: couldn’t save on this device.</div>}
 
-                  {token && userId && (
-                    cloudError ? (
-                      <div className="mt-2 text-[11px] font-semibold text-red-600">Cloud sync error: {cloudError}</div>
-                    ) : cloudReady ? (
-                      <div className="mt-2 text-[11px] font-semibold text-emerald-700">Cloud synced.</div>
-                    ) : null
+                  {showCloudPill && cloudSync.status !== "idle" && (
+                    <div className="mt-2">
+                      <CloudStatusPill status={cloudSync.status} message={cloudSync.message} />
+                    </div>
                   )}
+
                 </div>
 
                 <div className="relative flex flex-wrap items-center gap-2 justify-start lg:justify-end">
@@ -1963,15 +2208,15 @@ useEffect(() => {
                   <motion.button
                     type="button"
                     onClick={saveNow}
-                    disabled={inputsDisabled || !isDirty || !canSave}
-                    whileHover={inputsDisabled || !isDirty || !canSave ? {} : { y: -1 }}
-                    whileTap={inputsDisabled || !isDirty || !canSave ? {} : { scale: 0.98 }}
+                    disabled={inputsDisabled || dayLocked || !canSave}
+                    whileHover={inputsDisabled || dayLocked || !canSave ? {} : { y: -1 }}
+                    whileTap={inputsDisabled || dayLocked || !canSave ? {} : { scale: 0.98 }}
                     className="h-10 rounded-full px-4 text-[13px] font-extrabold transition disabled:opacity-50 disabled:cursor-not-allowed"
                     style={{
-                      backgroundColor: !inputsDisabled && isDirty && canSave ? CHECKIN_GREEN : "rgba(0,0,0,0.05)",
+                      backgroundColor: !inputsDisabled && !dayLocked && canSave ? CHECKIN_GREEN : "rgba(0,0,0,0.05)",
                       color: CHECKIN_DARK,
                       border: "1px solid rgba(0,0,0,0.15)",
-                      boxShadow: !inputsDisabled && isDirty && canSave ? "0 18px 50px rgba(185,255,102,0.45)" : "none",
+                      boxShadow: !inputsDisabled && !dayLocked && canSave ? "0 18px 50px rgba(185,255,102,0.45)" : "none",
                     }}
                   >
                     {dayLocked ? "Saved ✓" : "Save"}
