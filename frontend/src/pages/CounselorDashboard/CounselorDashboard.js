@@ -4,22 +4,31 @@ import { useNavigate } from "react-router-dom";
 
 import { getCounselorDashboardStats } from "./counselor.api";
 
-// sections (make sure these paths match your folders exactly)
+// sections
 import Inbox from "./Sections/Inbox";
 import MeetRequests from "./Sections/MeetRequests";
 import Calendar from "./Sections/Calendar";
-import Incidents from "./Sections/Incident";
+import Phq from "./Sections/Phq";
 import AccountSettings from "./Sections/AccountSettings";
 import Logout from "./Sections/Logout";
-
-// ✅ NEW SECTION
 import StudentAccounts from "./Sections/StudentAccounts";
-
-// components
-import StatCard from "./Components/StatCard";
 
 /* ===================== THEME ===================== */
 const BRAND = "#B9FF66"; // accent only
+
+/* ===================== ENV HELPERS ===================== */
+function isProductionEnv() {
+  if (typeof process !== "undefined" && process?.env?.NODE_ENV) {
+    return process.env.NODE_ENV === "production";
+  }
+  try {
+    // eslint-disable-next-line no-new-func
+    const meta = new Function("return import.meta")();
+    return Boolean(meta?.env?.PROD);
+  } catch {
+    return false;
+  }
+}
 
 /* ===================== SVG ICONS ===================== */
 const IconMenu = ({ className }) => (
@@ -30,8 +39,12 @@ const IconMenu = ({ className }) => (
     stroke="currentColor"
     strokeWidth="2"
     strokeLinecap="round"
+    strokeLinejoin="round"
+    aria-hidden="true"
   >
-    <path d="M5 7h14M5 12h14M5 17h10" />
+    <line x1="4" y1="7" x2="20" y2="7" />
+    <line x1="4" y1="12" x2="20" y2="12" />
+    <line x1="4" y1="17" x2="20" y2="17" />
   </svg>
 );
 
@@ -44,6 +57,7 @@ const IconInbox = ({ className }) => (
     strokeWidth="2"
     strokeLinecap="round"
     strokeLinejoin="round"
+    aria-hidden="true"
   >
     <path d="M22 12h-6l-2 3h-4l-2-3H2" />
     <path d="M5 7h14v10a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V7z" />
@@ -59,11 +73,14 @@ const IconMeet = ({ className }) => (
     strokeWidth="2"
     strokeLinecap="round"
     strokeLinejoin="round"
+    aria-hidden="true"
   >
     <rect x="3" y="4" width="18" height="18" rx="2" />
-    <line x1="16" y1="2" x2="16" y2="6" />
     <line x1="8" y1="2" x2="8" y2="6" />
+    <line x1="16" y1="2" x2="16" y2="6" />
     <line x1="3" y1="10" x2="21" y2="10" />
+    <line x1="12" y1="14" x2="12" y2="18" />
+    <line x1="10" y1="16" x2="14" y2="16" />
   </svg>
 );
 
@@ -76,6 +93,7 @@ const IconCalendar = ({ className }) => (
     strokeWidth="2"
     strokeLinecap="round"
     strokeLinejoin="round"
+    aria-hidden="true"
   >
     <rect x="3" y="4" width="18" height="18" rx="2" />
     <line x1="16" y1="2" x2="16" y2="6" />
@@ -84,7 +102,7 @@ const IconCalendar = ({ className }) => (
   </svg>
 );
 
-const IconIncident = ({ className }) => (
+const IconPHQ = ({ className }) => (
   <svg
     className={className}
     viewBox="0 0 24 24"
@@ -93,10 +111,13 @@ const IconIncident = ({ className }) => (
     strokeWidth="2"
     strokeLinecap="round"
     strokeLinejoin="round"
+    aria-hidden="true"
   >
-    <path d="M12 9v4" />
-    <path d="M12 17h.01" />
-    <path d="M3 21h18L12 3 3 21z" />
+    <path d="M9 5H7a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2" />
+    <path d="M9 5a3 3 0 0 1 6 0v2H9V5z" />
+    <path d="M8 11h8" />
+    <path d="M8 15h8" />
+    <path d="M8 19h5" />
   </svg>
 );
 
@@ -109,6 +130,7 @@ const IconSettings = ({ className }) => (
     strokeWidth="2"
     strokeLinecap="round"
     strokeLinejoin="round"
+    aria-hidden="true"
   >
     <path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z" />
     <path d="M19.4 15a7.8 7.8 0 0 0 .1-1 7.8 7.8 0 0 0-.1-1l2-1.6-2-3.4-2.4 1a7.4 7.4 0 0 0-1.7-1L12.9 2h-3.8L8.7 4.9a7.4 7.4 0 0 0-1.7 1l-2.4-1-2 3.4 2 1.6a7.8 7.8 0 0 0-.1 1 7.8 7.8 0 0 0 .1 1l-2 1.6 2 3.4 2.4-1a7.4 7.4 0 0 0 1.7 1l.4 2.9h3.8l.4-2.9a7.4 7.4 0 0 0 1.7-1l2.4 1 2-3.4-2-1.6z" />
@@ -124,6 +146,7 @@ const IconLogout = ({ className }) => (
     strokeWidth="2"
     strokeLinecap="round"
     strokeLinejoin="round"
+    aria-hidden="true"
   >
     <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
     <path d="M16 17l5-5-5-5" />
@@ -131,7 +154,6 @@ const IconLogout = ({ className }) => (
   </svg>
 );
 
-// ✅ NEW ICON FOR STUDENT ACCOUNTS TAB
 const IconUsers = ({ className }) => (
   <svg
     className={className}
@@ -141,6 +163,7 @@ const IconUsers = ({ className }) => (
     strokeWidth="2"
     strokeLinecap="round"
     strokeLinejoin="round"
+    aria-hidden="true"
   >
     <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
     <path d="M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8" />
@@ -150,53 +173,102 @@ const IconUsers = ({ className }) => (
 );
 
 /* ===================== TABS ===================== */
-const TABS = [
+const MAIN_TABS = [
   { key: "inbox", label: "Inbox", Icon: IconInbox },
   { key: "meet", label: "Meet Requests", Icon: IconMeet },
   { key: "calendar", label: "Calendar", Icon: IconCalendar },
-  { key: "incidents", label: "Incidents", Icon: IconIncident },
-
-  // ✅ NEW TAB
+  { key: "phq", label: "PHQ", Icon: IconPHQ },
   { key: "students", label: "Student Accounts", Icon: IconUsers },
+];
 
+const BOTTOM_TABS = [
   { key: "settings", label: "Account Settings", Icon: IconSettings },
   { key: "logout", label: "Logout", Icon: IconLogout },
 ];
+
+const ALL_TABS = [...MAIN_TABS, ...BOTTOM_TABS];
+
+function SidebarTooltip({ show, text }) {
+  if (!show) return null;
+
+  return (
+    <span
+      className={[
+        "hidden sm:block",
+        "pointer-events-none select-none",
+        "absolute left-full top-1/2 -translate-y-1/2 ml-3 z-[60]",
+        "px-3 py-1.5 rounded-xl",
+        "bg-slate-900 text-white text-[12px] font-extrabold whitespace-nowrap",
+        "opacity-0 translate-x-1",
+        "group-hover:opacity-100 group-hover:translate-x-0",
+        "transition duration-150",
+        "shadow-lg",
+      ].join(" ")}
+      role="tooltip"
+    >
+      {text}
+    </span>
+  );
+}
+
+function SidebarTabButton({ tab, activeTab, onClickTab, sidebarCollapsed }) {
+  const active = tab.key === activeTab;
+
+  return (
+    <li className="relative group overflow-x-clip">
+      <button
+        type="button"
+        onClick={() => onClickTab(tab.key)}
+        aria-label={tab.label}
+        className={[
+          "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl",
+          "text-sm font-extrabold transition",
+          sidebarCollapsed ? "sm:justify-center sm:px-2" : "",
+          active ? "bg-slate-900 text-white" : "text-slate-700 hover:bg-slate-100",
+        ].join(" ")}
+      >
+        <tab.Icon
+          className={[
+            "w-5 h-5 shrink-0",
+            active ? "text-white" : "text-slate-500",
+          ].join(" ")}
+        />
+
+        <span className={sidebarCollapsed ? "hidden sm:hidden" : "flex-1 text-left"}>
+          {tab.label}
+        </span>
+
+        {!sidebarCollapsed && active ? (
+          <span className="w-2 h-2 rounded-full" style={{ background: BRAND }} />
+        ) : null}
+      </button>
+
+      <SidebarTooltip show={sidebarCollapsed} text={tab.label} />
+    </li>
+  );
+}
 
 export default function CounselorDashboard() {
   const navigate = useNavigate();
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [activeTab, setActiveTab] = useState("inbox");
 
-  const [stats, setStats] = useState({
-    pendingAsk: 0,
-    pendingMeet: 0,
-    todaysSessions: 0,
-    openIncidents: 0,
-  });
-
-  /* ===================== ROLE GUARD (DEV-SAFE) ===================== */
   useEffect(() => {
     const role = (localStorage.getItem("role") || "").trim().toLowerCase();
-    const isProd =
-      typeof import.meta !== "undefined"
-        ? import.meta.env?.PROD
-        : process.env.NODE_ENV === "production";
-
-    if (isProd && role !== "counselor") {
-      navigate("/unauthorized", { replace: true });
-    }
+    const isProd = isProductionEnv();
+    if (isProd && role !== "counselor") navigate("/unauthorized", { replace: true });
   }, [navigate]);
 
-  /* ===================== LOAD STATS ===================== */
   useEffect(() => {
     let mounted = true;
     (async () => {
       try {
-        const data = await getCounselorDashboardStats({ counselorId: "C-001" });
-        if (mounted) setStats(data);
+        await getCounselorDashboardStats({ counselorId: "C-001" });
+        if (!mounted) return;
       } catch (e) {
+        // eslint-disable-next-line no-console
         console.error("Failed to load counselor stats:", e);
       }
     })();
@@ -205,36 +277,48 @@ export default function CounselorDashboard() {
     };
   }, []);
 
+  // ✅ Enhancements: Esc closes sidebar, prevent body scrolling when open
+  useEffect(() => {
+    if (!sidebarOpen) return undefined;
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    const onKeyDown = (e) => {
+      if (e.key === "Escape") setSidebarOpen(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [sidebarOpen]);
+
   const onClickTab = (key) => {
     setActiveTab(key);
     setSidebarOpen(false);
   };
 
-  const activeLabel = useMemo(() => {
-    return TABS.find((t) => t.key === activeTab)?.label || "Dashboard";
-  }, [activeTab]);
+  const activeLabel = useMemo(
+    () => ALL_TABS.find((t) => t.key === activeTab)?.label || "Dashboard",
+    [activeTab]
+  );
 
   const renderActiveSection = () => {
     switch (activeTab) {
       case "meet":
         return <MeetRequests />;
-
       case "calendar":
         return <Calendar />;
-
-      case "incidents":
-        return <Incidents />;
-
-      // ✅ NEW
+      case "phq":
+        return <Phq />;
       case "students":
         return <StudentAccounts />;
-
       case "settings":
         return <AccountSettings />;
-
       case "logout":
         return <Logout />;
-
       case "inbox":
       default:
         return <Inbox />;
@@ -242,9 +326,14 @@ export default function CounselorDashboard() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 font-[Nunito]">
-      {/* Mobile top bar */}
-      <div className="sm:hidden sticky top-0 z-30 bg-white/90 backdrop-blur border-b border-slate-200">
+    <div className="h-dvh overflow-hidden bg-slate-50 text-slate-900 font-[Nunito] flex flex-col">
+      {/* Cross-browser: hide scrollbars while preserving scrolling */}
+      <style>{`
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+      `}</style>
+
+      <div className="sm:hidden sticky top-0 z-30 bg-white/90 backdrop-blur border-b border-slate-200 shrink-0">
         <div className="flex items-center gap-3 px-4 py-3">
           <button
             type="button"
@@ -259,14 +348,11 @@ export default function CounselorDashboard() {
             <div className="text-sm font-extrabold leading-5 truncate">
               Counselor Dashboard
             </div>
-            <div className="text-xs font-bold text-slate-500 truncate">
-              {activeLabel}
-            </div>
+            <div className="text-xs font-bold text-slate-500 truncate">{activeLabel}</div>
           </div>
         </div>
       </div>
 
-      {/* Overlay (mobile) */}
       {sidebarOpen ? (
         <div
           className="fixed inset-0 z-40 bg-black/40 sm:hidden"
@@ -274,109 +360,133 @@ export default function CounselorDashboard() {
         />
       ) : null}
 
-      {/* Sidebar */}
       <aside
         className={[
-          "fixed top-0 left-0 z-50 h-full w-72 bg-white border-r border-slate-200",
-          "transition-transform duration-200",
+          "fixed top-0 left-0 z-50 h-full bg-white border-r border-slate-200",
+          "transition-[transform,width] duration-200",
+          "w-[85vw] max-w-[20rem]",
+          sidebarCollapsed ? "sm:w-20" : "sm:w-72",
           sidebarOpen ? "translate-x-0" : "-translate-x-full",
           "sm:translate-x-0",
+          "overflow-x-clip", // ✅ kills horizontal scrollbar reliably
         ].join(" ")}
         aria-label="Sidebar"
       >
-        <div className="h-full overflow-y-auto">
-          {/* Sidebar header */}
-          <div className="px-5 pt-5 pb-4 border-b border-slate-200">
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <div className="text-base font-black tracking-tight">
-                  CheckIn • Counselor
+        {/* ✅ Column layout, main scroll region only */}
+        <div className="h-full flex flex-col overflow-x-clip">
+          <div
+            className={[
+              "border-b border-slate-200 shrink-0",
+              sidebarCollapsed ? "px-3 pt-4 pb-3" : "px-5 pt-5 pb-4",
+            ].join(" ")}
+          >
+            {sidebarCollapsed ? (
+              <div className="flex flex-col items-center justify-start gap-2">
+                <button
+                  type="button"
+                  onClick={() => setSidebarCollapsed((v) => !v)}
+                  className="hidden sm:inline-flex items-center justify-center w-10 h-10 rounded-xl border border-slate-200 hover:bg-slate-50"
+                  aria-label="Expand sidebar"
+                >
+                  <IconMenu className="w-5 h-5 text-slate-700" />
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setSidebarOpen(false)}
+                  className="sm:hidden inline-flex items-center justify-center w-9 h-9 rounded-xl border border-slate-200 hover:bg-slate-50"
+                  aria-label="Close sidebar"
+                >
+                  <span className="text-slate-700 font-black">✕</span>
+                </button>
+              </div>
+            ) : (
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-base font-black tracking-tight truncate">
+                    CheckIn • Counselor
+                  </div>
+                  <div className="text-xs font-bold text-slate-500 mt-1 truncate" />
                 </div>
-                <div className="text-xs font-bold text-slate-500 mt-1">
-                  Clean navigation for faster work
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setSidebarCollapsed((v) => !v)}
+                    className="hidden sm:inline-flex items-center justify-center w-9 h-9 rounded-xl border border-slate-200 hover:bg-slate-50"
+                    aria-label="Collapse sidebar"
+                  >
+                    <IconMenu className="w-5 h-5 text-slate-700" />
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setSidebarOpen(false)}
+                    className="sm:hidden inline-flex items-center justify-center w-9 h-9 rounded-xl border border-slate-200 hover:bg-slate-50"
+                    aria-label="Close sidebar"
+                  >
+                    <span className="text-slate-700 font-black">✕</span>
+                  </button>
                 </div>
               </div>
-
-              {/* close button only on mobile */}
-              <button
-                type="button"
-                onClick={() => setSidebarOpen(false)}
-                className="sm:hidden inline-flex items-center justify-center w-9 h-9 rounded-xl border border-slate-200 hover:bg-slate-50"
-                aria-label="Close sidebar"
-              >
-                <span className="text-slate-700 font-black">✕</span>
-              </button>
-            </div>
+            )}
           </div>
 
-          {/* Nav */}
-          <nav className="px-3 py-4">
-            <div className="px-2 text-[11px] font-extrabold text-slate-500 uppercase tracking-wider">
-              Navigation
+          {/* Main nav scrolls; x is clipped (tooltip won't create scrollbar) */}
+          <nav className="px-3 py-4 flex-1 min-h-0 overflow-y-auto overflow-x-clip">
+            <div
+              className={[
+                "px-2 text-[11px] font-extrabold text-slate-500 uppercase tracking-wider",
+                sidebarCollapsed ? "hidden sm:block sm:text-center sm:px-0" : "",
+              ].join(" ")}
+            >
+              {sidebarCollapsed ? "" : "Navigation"}
             </div>
 
             <ul className="mt-2 space-y-1">
-              {TABS.map((t) => {
-                const active = t.key === activeTab;
-                return (
-                  <li key={t.key}>
-                    <button
-                      type="button"
-                      onClick={() => onClickTab(t.key)}
-                      className={[
-                        "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl",
-                        "text-sm font-extrabold transition",
-                        active
-                          ? "bg-slate-900 text-white"
-                          : "text-slate-700 hover:bg-slate-100",
-                      ].join(" ")}
-                    >
-                      <t.Icon
-                        className={[
-                          "w-5 h-5 shrink-0",
-                          active ? "text-white" : "text-slate-500",
-                        ].join(" ")}
-                      />
-                      <span className="flex-1 text-left">{t.label}</span>
-
-                      {active ? (
-                        <span
-                          className="w-2 h-2 rounded-full"
-                          style={{ background: BRAND }}
-                        />
-                      ) : null}
-                    </button>
-                  </li>
-                );
-              })}
+              {MAIN_TABS.map((t) => (
+                <SidebarTabButton
+                  key={t.key}
+                  tab={t}
+                  activeTab={activeTab}
+                  onClickTab={onClickTab}
+                  sidebarCollapsed={sidebarCollapsed}
+                />
+              ))}
             </ul>
-
-            <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3">
-              <div className="text-xs font-extrabold text-slate-700">
-                Privacy rule
-              </div>
-              <div className="mt-1 text-[12px] font-bold text-slate-500 leading-relaxed">
-                Anonymous identity can only be unmasked after an incident is
-                created and investigation is approved.
-              </div>
-            </div>
           </nav>
+
+          {/* ✅ Bottom pinned */}
+          <div className="px-3 pb-4 pt-2 shrink-0 border-t border-slate-200 overflow-x-clip">
+            <ul className="space-y-1">
+              {BOTTOM_TABS.map((t) => (
+                <SidebarTabButton
+                  key={t.key}
+                  tab={t}
+                  activeTab={activeTab}
+                  onClickTab={onClickTab}
+                  sidebarCollapsed={sidebarCollapsed}
+                />
+              ))}
+            </ul>
+          </div>
         </div>
       </aside>
 
-      {/* Content */}
-      <div className="sm:ml-72">
-        <div className="p-4 sm:p-6 lg:p-8">
-          {/* Desktop header */}
-          <header className="hidden sm:block mb-5">
+      <div
+        className={[
+          "flex-1 min-h-0 overflow-hidden transition-[margin] duration-200",
+          sidebarCollapsed ? "sm:ml-20" : "sm:ml-72",
+        ].join(" ")}
+      >
+        <div className="h-full min-h-0 p-4 sm:p-6 lg:p-8 flex flex-col">
+          <header className="hidden sm:block mb-5 shrink-0">
             <div className="flex items-end justify-between gap-4 flex-wrap">
               <div>
                 <h1 className="text-2xl lg:text-3xl font-black tracking-tight">
                   Counselor Dashboard
                 </h1>
-                <p className="mt-1 text-sm font-bold text-slate-500">
-                  {activeLabel}
-                </p>
+                <p className="mt-1 text-sm font-bold text-slate-500">{activeLabel}</p>
               </div>
 
               <div
@@ -388,22 +498,15 @@ export default function CounselorDashboard() {
             </div>
           </header>
 
-          {/* Summary Cards (hide when on Logout) */}
-          {activeTab !== "logout" ? (
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 mb-4">
-              <StatCard label="Pending Questions" value={stats.pendingAsk} />
-              <StatCard label="Meet Requests" value={stats.pendingMeet} />
-              <StatCard label="Today's Sessions" value={stats.todaysSessions} />
-              <StatCard
-                label="Open Incidents"
-                value={stats.openIncidents}
-                highlight
-              />
-            </div>
-          ) : null}
-
-          {/* Main section */}
-          <main className="min-w-0">{renderActiveSection()}</main>
+          {/* ✅ Inbox: hide scrollbar but keep scroll */}
+          <main
+            className={[
+              "min-w-0 flex-1 min-h-0 overflow-auto",
+              activeTab === "inbox" ? "no-scrollbar" : "",
+            ].join(" ")}
+          >
+            {renderActiveSection()}
+          </main>
         </div>
       </div>
     </div>
