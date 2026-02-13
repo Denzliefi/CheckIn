@@ -1,6 +1,7 @@
 // /components/PHQ9.jsx
 import { useMemo, useRef, useState, useEffect, useCallback, useId } from "react";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
+import { getToken, getUser } from "../../utils/auth";
 
 /** CheckIn palette (match Journal) */
 const CHECKIN_GREEN = "#B9FF66";
@@ -9,6 +10,75 @@ const CHECKIN_DARK = "#141414";
 const ANSWER_COUNT = 9;
 const AUTO_NEXT_MS = 180;
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** API (Render backend) */
+const API_BASE = process.env.REACT_APP_API_URL || "";
+const API_ROOT = API_BASE ? `${API_BASE}/api` : "/api";
+
+function safeGetToken() {
+  try {
+    const t = typeof getToken === "function" ? getToken() : null;
+    if (t) return t;
+  } catch {
+    // ignore
+  }
+  if (typeof window === "undefined") return null;
+  return window.localStorage.getItem("token") || window.sessionStorage.getItem("token") || null;
+}
+
+function safeGetUserId() {
+  try {
+    const u = typeof getUser === "function" ? getUser() : null;
+    const id = u?._id || u?.id || u?.user?._id || u?.user?.id;
+    return id ? String(id) : null;
+  } catch {
+    // ignore
+  }
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem("user");
+    if (!raw) return null;
+    const u = JSON.parse(raw);
+    const id = u?._id || u?.id || u?.user?._id || u?.user?.id;
+    return id ? String(id) : null;
+  } catch {
+    return null;
+  }
+}
+
+function makeScopedKey(base, userId) {
+  const id = userId || "unknown";
+  return `checkin:${base}:${id}`;
+}
+
+async function apiFetch(path, { method = "GET", token, body } = {}) {
+  const url = `${API_ROOT}${path}`;
+  const headers = { "Content-Type": "application/json" };
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  const res = await fetch(url, {
+    method,
+    headers,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+
+  const text = await res.text();
+  let data = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    data = { message: text || "Unexpected server response" };
+  }
+
+  if (!res.ok) {
+    const msg = data?.message || `Request failed (${res.status})`;
+    const err = new Error(msg);
+    err.status = res.status;
+    err.data = data;
+    throw err;
+  }
+  return data;
+}
 
 /**
  * ✅ Layout spacing (readable + navbar-safe)
@@ -127,12 +197,14 @@ const PUBLIC_STORAGE = {
   },
 };
 
-const LS_KEYS = {
-  answers: "phq9_answers",
-  submitted: "phq9_submitted",
+const LS_KEYS_BASE = {
+  answersDraft: "phq9_answers_draft",
   termsAccepted: "phq9_terms_accepted",
   lastSubmittedAt: "phq9_last_submitted_at",
 };
+
+// legacy (older builds) — delete to prevent cross-user leakage on shared devices
+const LEGACY_GLOBAL_KEYS = ["phq9_answers", "phq9_submitted", "phq9_terms_accepted", "phq9_last_submitted_at"];
 
 /** Questions */
 const QUESTIONS = [
@@ -890,6 +962,12 @@ export default function PHQ9() {
   const shouldReduceMotion = useReducedMotion();
   const progressId = useId();
 
+  const [userId, setUserId] = useState(null);
+  const [apiLoading, setApiLoading] = useState(true);
+  const [apiError, setApiError] = useState(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [serverHistory, setServerHistory] = useState([]);
+
   const [answers, setAnswers] = useState(() => Array(ANSWER_COUNT).fill(null));
   const [submitted, setSubmitted] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
@@ -906,6 +984,14 @@ export default function PHQ9() {
   const userNavigatedRef = useRef(false);
   const navDirRef = useRef(1);
 
+  const scopedKeys = useMemo(() => {
+    return {
+      answersDraft: makeScopedKey(LS_KEYS_BASE.answersDraft, userId),
+      termsAccepted: makeScopedKey(LS_KEYS_BASE.termsAccepted, userId),
+      lastSubmittedAt: makeScopedKey(LS_KEYS_BASE.lastSubmittedAt, userId),
+    };
+  }, [userId]);
+
   const answeredCount = useMemo(() => answers.filter((a) => a !== null).length, [answers]);
   const canSubmit = answeredCount === ANSWER_COUNT;
 
@@ -919,7 +1005,7 @@ export default function PHQ9() {
     return nowMs < lockUntilMs;
   }, [nowMs, lockUntilMs]);
 
-  const readOnly = submitted || weeklyLocked;
+  const readOnly = weeklyLocked || isSubmitting;
 
   const nextAvailableText = useMemo(() => {
     if (!lockUntilMs) return null;
@@ -931,7 +1017,7 @@ export default function PHQ9() {
     return formatDateTime(lastSubmittedAt);
   }, [lastSubmittedAt]);
 
-  const canSubmitNow = canSubmit && !submitted && termsAccepted && !weeklyLocked;
+  const canSubmitNow = canSubmit && termsAccepted && !weeklyLocked && !isSubmitting;
   const isModalOpen = infoOpen || confirmReset || reviewOpen;
 
   const clearAutoNext = useCallback(() => {
@@ -951,34 +1037,89 @@ export default function PHQ9() {
     [clearAutoNext]
   );
 
-  /** Load from storage */
+    /** Resolve user (for per-user draft keys) */
+  useEffect(() => {
+    if (!isBrowser()) return;
+    const id = safeGetUserId();
+    setUserId(id);
+  }, []);
+
+  /** Load draft from storage + load latest from DB */
   useEffect(() => {
     if (!isBrowser()) return;
 
-    const savedAnswers = normalizeAnswers(safeParseJSON(STORAGE.getItem(LS_KEYS.answers), Array(ANSWER_COUNT).fill(null)));
-    const savedTerms = Boolean(safeParseJSON(STORAGE.getItem(LS_KEYS.termsAccepted), false));
+    // Always wipe legacy global keys (prevents cross-user leakage on shared devices)
+    for (const k of LEGACY_GLOBAL_KEYS) {
+      STORAGE.removeItem(k);
+      PUBLIC_STORAGE.removeItem(k);
+    }
 
-    const allAnswered = savedAnswers.every((v) => v !== null);
-    const savedSubmittedRaw = Boolean(safeParseJSON(STORAGE.getItem(LS_KEYS.submitted), false));
-    const savedSubmitted = savedSubmittedRaw && allAnswered;
+    // If we don't know the user yet, still allow UI, but skip API
+    const token = safeGetToken();
 
-    const savedLastSubmittedAt = safeParseJSON(PUBLIC_STORAGE.getItem(LS_KEYS.lastSubmittedAt), null);
-    const parsedLast = typeof savedLastSubmittedAt === "number" ? savedLastSubmittedAt : null;
+    const savedAnswers = normalizeAnswers(
+      safeParseJSON(STORAGE.getItem(scopedKeys.answersDraft), Array(ANSWER_COUNT).fill(null))
+    );
+    const savedTerms = Boolean(safeParseJSON(STORAGE.getItem(scopedKeys.termsAccepted), false));
 
     setAnswers(savedAnswers);
     setTermsAccepted(savedTerms);
-    setSubmitted(savedSubmitted);
-    setLastSubmittedAt(parsedLast);
     setNowMs(Date.now());
 
     if (!savedTerms) setInfoOpen(true);
-  }, []);
 
-  /** Persist */
-  useEffect(() => STORAGE.setItem(LS_KEYS.answers, JSON.stringify(answers)), [answers]);
-  useEffect(() => STORAGE.setItem(LS_KEYS.submitted, JSON.stringify(submitted)), [submitted]);
-  useEffect(() => STORAGE.setItem(LS_KEYS.termsAccepted, JSON.stringify(termsAccepted)), [termsAccepted]);
-  useEffect(() => PUBLIC_STORAGE.setItem(LS_KEYS.lastSubmittedAt, JSON.stringify(lastSubmittedAt)), [lastSubmittedAt]);
+    // Fetch server state (source of truth for submissions + lock)
+    const run = async () => {
+      if (!API_BASE) {
+        setApiError("Missing REACT_APP_API_URL (API base).");
+        setApiLoading(false);
+        return;
+      }
+      if (!token) {
+        setApiError("Not authenticated. Please login again.");
+        setApiLoading(false);
+        return;
+      }
+
+      setApiLoading(true);
+      setApiError(null);
+
+      try {
+        const data = await apiFetch("/assessments/phq9/me", { token });
+        const latest = data?.latest || null;
+        const items = Array.isArray(data?.items) ? data.items : [];
+
+        setServerHistory(items);
+
+        if (latest) {
+          const lastMs = new Date(latest.createdAt || latest.submittedAt || latest.updatedAt || Date.now()).getTime();
+          setLastSubmittedAt(lastMs);
+
+          const lockedNow = Date.now() < lastMs + WEEK_MS;
+          // If locked, show the last submitted answers read-only (matches your counselor view too)
+          if (lockedNow && Array.isArray(latest.answers) && latest.answers.length === ANSWER_COUNT) {
+            setAnswers(normalizeAnswers(latest.answers));
+            setActiveIndex(0);
+          }
+        } else {
+          // no server submissions yet
+          setLastSubmittedAt(null);
+        }
+      } catch (e) {
+        setApiError(e?.message || "Failed to load PHQ-9 history.");
+      } finally {
+        setApiLoading(false);
+      }
+    };
+
+    run();
+  }, [scopedKeys.answersDraft, scopedKeys.termsAccepted, scopedKeys.lastSubmittedAt, userId]);
+
+  /** Persist per-user draft + terms + lastSubmittedAt fallback */
+  useEffect(() => STORAGE.setItem(scopedKeys.answersDraft, JSON.stringify(answers)), [scopedKeys.answersDraft, answers]);
+  useEffect(() => STORAGE.setItem(scopedKeys.termsAccepted, JSON.stringify(termsAccepted)), [scopedKeys.termsAccepted, termsAccepted]);
+  useEffect(() => PUBLIC_STORAGE.setItem(scopedKeys.lastSubmittedAt, JSON.stringify(lastSubmittedAt)), [scopedKeys.lastSubmittedAt, lastSubmittedAt]);
+
 
   /** Keep clock updated while locked */
   useEffect(() => {
@@ -987,6 +1128,11 @@ export default function PHQ9() {
     const id = window.setInterval(() => setNowMs(Date.now()), 15_000);
     return () => window.clearInterval(id);
   }, [weeklyLocked]);
+
+  /** Keep submitted state aligned with weekly lock (prevents permanent lock after 7 days) */
+  useEffect(() => {
+    if (submitted !== weeklyLocked) setSubmitted(weeklyLocked);
+  }, [weeklyLocked, submitted]);
 
   /** If answers become incomplete, ensure submitted can't stay true */
   useEffect(() => {
@@ -1035,13 +1181,68 @@ export default function PHQ9() {
     }
   }
 
-  function handleSubmit() {
+  async function handleSubmit() {
     if (!canSubmitNow) return;
+
+    if (!API_BASE) {
+      setApiError("Missing REACT_APP_API_URL (API base).");
+      return;
+    }
+
+    const token = safeGetToken();
+    if (!token) {
+      setApiError("Not authenticated. Please login again.");
+      return;
+    }
+
     clearAutoNext();
-    const ts = Date.now();
-    setLastSubmittedAt(ts);
-    setNowMs(ts);
-    setSubmitted(true);
+
+    try {
+      setIsSubmitting(true);
+      setApiError(null);
+
+      const payload = {
+        answers,
+        clientSubmittedAt: new Date().toISOString(),
+      };
+
+      const data = await apiFetch("/assessments/phq9", { method: "POST", token, body: payload });
+
+      const item = data?.item;
+      const ts = item?.createdAt ? new Date(item.createdAt).getTime() : Date.now();
+
+      // Lock starts now (server enforces; UI mirrors it)
+      setLastSubmittedAt(ts);
+      setNowMs(Date.now());
+      setSubmitted(true);
+
+      // Use server answers as source-of-truth
+      if (Array.isArray(item?.answers) && item.answers.length === ANSWER_COUNT) {
+        setAnswers(normalizeAnswers(item.answers));
+      }
+
+      // Update local history cache (optional, used later for counselor-style modal if you add it)
+      setServerHistory((prev) => (item ? [item, ...prev] : prev));
+
+      // Clear draft (fresh draft will start after lock expires)
+      STORAGE.removeItem(scopedKeys.answersDraft);
+    } catch (e) {
+      // Weekly lock from server
+      if (e?.status === 429) {
+        const last = e?.data?.lastSubmittedAt ? new Date(e.data.lastSubmittedAt).getTime() : lastSubmittedAt;
+        if (typeof last === "number") {
+          setLastSubmittedAt(last);
+          setNowMs(Date.now());
+          setSubmitted(true);
+        }
+        setApiError(e?.data?.message || e.message || "Weekly lock active.");
+        return;
+      }
+
+      setApiError(e?.message || "Failed to submit PHQ-9.");
+    } finally {
+      setIsSubmitting(false);
+    }
   }
 
   function resetAssessment() {
@@ -1130,6 +1331,8 @@ export default function PHQ9() {
   }
 
   const headerStatusText = useMemo(() => {
+    if (apiLoading) return "Loading your PHQ-9 history…";
+    if (apiError) return apiError;
     if (!termsAccepted) return "Accept Terms & Privacy to begin.";
     if (submitted) return "Submitted (read-only).";
     if (weeklyLocked && nextAvailableText) return `Weekly lock — next submit: ${nextAvailableText}`;
@@ -1138,6 +1341,7 @@ export default function PHQ9() {
   }, [termsAccepted, submitted, weeklyLocked, nextAvailableText, canSubmit]);
 
   const primaryActionLabel = useMemo(() => {
+    if (isSubmitting) return "Submitting…";
     if (submitted) return "Submitted";
     if (weeklyLocked) return "Weekly lock active";
     if (!termsAccepted) return "Accept to begin";
