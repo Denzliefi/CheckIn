@@ -9,6 +9,40 @@ import React, {
 } from "react";
 import { useNavigate } from "react-router-dom";
 
+/* ===================== API ===================== */
+const API_BASE_URL = process.env.REACT_APP_API_URL || "";
+
+function getAuthToken() {
+  return (
+    localStorage.getItem("token") ||
+    localStorage.getItem("authToken") ||
+    localStorage.getItem("accessToken") ||
+    ""
+  );
+}
+
+async function apiRequest(path, { method = "GET", body } = {}) {
+  const token = getAuthToken();
+  const headers = { "Content-Type": "application/json" };
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  const res = await fetch(`${API_BASE_URL}${path}`, {
+    method,
+    headers,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const msg = data?.message || data?.error || `Request failed (${res.status})`;
+    const err = new Error(msg);
+    err.status = res.status;
+    err.data = data;
+    throw err;
+  }
+  return data;
+}
+
 /* ===================== THEME ===================== */
 /** Target green */
 const PRIMARY = "#B9FF66";
@@ -541,6 +575,35 @@ export default function ViewRequest() {
   const [page, setPage] = useState(1);
 
   const [refreshKey, setRefreshKey] = useState(0);
+
+  const [dbRequests, setDbRequests] = useState([]);
+  const [dbLoaded, setDbLoaded] = useState(false);
+  const [dbError, setDbError] = useState("");
+
+  useEffect(() => {
+    let mounted = true;
+
+    (async () => {
+      try {
+        setDbError("");
+        const data = await apiRequest("/api/counseling/requests");
+        const items = Array.isArray(data?.items) ? data.items : [];
+        if (!mounted) return;
+        setDbRequests(items);
+        setDbLoaded(true);
+      } catch (e) {
+        if (!mounted) return;
+        setDbError(e?.message || "Failed to load requests.");
+        setDbLoaded(false);
+        setDbRequests([]);
+      }
+    })();
+
+    return () => {
+      mounted = false;
+    };
+  }, [refreshKey]);
+
   const refresh = useCallback(() => setRefreshKey((k) => k + 1), []);
 
   const [detailsAnimKey, setDetailsAnimKey] = useState(0);
@@ -585,7 +648,7 @@ export default function ViewRequest() {
   const patchRequest = useCallback(
     (id, patch) => {
       const now = new Date().toISOString();
-      const list = loadList();
+      const list = dbLoaded ? dbRequests : loadList();
       const cur = loadCurrentRequest();
 
       const apply = (r) => (r.id === id ? stripMeta({ ...r, ...patch, updatedAt: now }) : r);
@@ -600,7 +663,7 @@ export default function ViewRequest() {
   );
 
   const allRequests = useMemo(() => {
-    const list = loadList();
+    const list = dbLoaded ? dbRequests : loadList();
     const cur = loadCurrentRequest();
     const merged = cur?.id && !list.some((x) => x.id === cur.id) ? [cur, ...list] : list;
 
@@ -611,7 +674,7 @@ export default function ViewRequest() {
     });
 
     return sorted.map((r) => ({ ...r, _haystack: buildHaystack(r) }));
-  }, [refreshKey, sort]);
+  }, [refreshKey, sort, dbLoaded, dbRequests]);
 
   useEffect(() => {
     if (!selectedId) return;

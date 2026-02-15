@@ -8,6 +8,40 @@ import { cancelCurrentRequest } from "./Request"; // adjust path if needed
 
 
 
+/* ===================== API ===================== */
+const API_BASE_URL = process.env.REACT_APP_API_URL || "";
+
+function getAuthToken() {
+  return (
+    localStorage.getItem("token") ||
+    localStorage.getItem("authToken") ||
+    localStorage.getItem("accessToken") ||
+    ""
+  );
+}
+
+async function apiRequest(path, { method = "GET", body } = {}) {
+  const token = getAuthToken();
+  const headers = { "Content-Type": "application/json" };
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  const res = await fetch(`${API_BASE_URL}${path}`, {
+    method,
+    headers,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const msg = data?.message || data?.error || `Request failed (${res.status})`;
+    const err = new Error(msg);
+    err.status = res.status;
+    err.data = data;
+    throw err;
+  }
+  return data;
+}
+
 /* ===================== THEME ===================== */
 const LOGIN_PRIMARY = "#B9FF66";
 const TEXT_MAIN = "#141414";
@@ -73,12 +107,7 @@ const REASONS = [
   "Other",
 ];
 
-const COUNSELORS = [
-  { id: "C-101", name: "Counselor A" },
-  { id: "C-102", name: "Counselor B" },
-  { id: "C-103", name: "Counselor C" },
-  { id: "C-104", name: "Counselor D" },
-];
+const COUNSELORS_FALLBACK = []; // populated from API at runtime (fallback empty)
 
 const HOLIDAYS = [
   "2026-01-01",
@@ -482,6 +511,41 @@ export default function Request({ onClose }) {
     notes: "",
   });
 
+  const [counselorsList, setCounselorsList] = useState(COUNSELORS_FALLBACK);
+  const [counselorsError, setCounselorsError] = useState("");
+
+  useEffect(() => {
+    let mounted = true;
+
+    (async () => {
+      try {
+        setCounselorsError("");
+        const data = await apiRequest("/api/counseling/counselors");
+        const items = Array.isArray(data?.items) ? data.items : [];
+
+        if (!mounted) return;
+        setCounselorsList(
+          items.map((c) => ({
+            id: c.id,
+            name: c.fullName || c.name || "Counselor",
+            counselorCode: c.counselorCode || "",
+            specialty: Array.isArray(c.specialty) ? c.specialty : [],
+          }))
+        );
+      } catch (e) {
+        if (!mounted) return;
+        setCounselorsError(e?.message || "Failed to load counselors.");
+        setCounselorsList([]);
+      }
+    })();
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+
+
   const [meetError, setMeetError] = useState("");
   const [meetSuccess, setMeetSuccess] = useState("");
 
@@ -534,12 +598,12 @@ export default function Request({ onClose }) {
   const availabilityByCounselor = useMemo(() => {
     const out = {};
     if (!meet.date) return out;
-    for (const c of COUNSELORS) out[c.id] = getCounselorAvailability(c.id, meet.date);
+    for (const c of counselorsList) out[c.id] = getCounselorAvailability(c.id, meet.date);
     return out;
   }, [meet.date]);
 
   const counselorsComputed = useMemo(() => {
-    return COUNSELORS.map((c) => {
+    return counselorsList.map((c) => {
       if (!meet.date) return { ...c, _status: "Select date", _openCount: 0, _onLeave: false, _booked: new Set() };
 
       const info = availabilityByCounselor[c.id];
@@ -582,7 +646,7 @@ export default function Request({ onClose }) {
 
     SCHOOL_SLOTS.forEach((t) => {
       let any = false;
-      for (const c of COUNSELORS) {
+      for (const c of counselorsList) {
         const info = availabilityByCounselor[c.id];
         if (!info.onLeave && !info.booked.has(t)) {
           any = true;
@@ -596,14 +660,14 @@ export default function Request({ onClose }) {
     return out;
   }, [meet.date, meet.counselorId, dayState.ok, dayState.label, availabilityByCounselor]);
 
-  const selectedCounselor = useMemo(() => COUNSELORS.find((c) => c.id === meet.counselorId) || null, [meet.counselorId]);
+  const selectedCounselor = useMemo(() => counselorsList.find((c) => c.id === meet.counselorId) || null, [meet.counselorId]);
 
   const autoAssignCounselor = useCallback(
     (dateStr, timeStr) => {
       const useCache = dateStr === meet.date;
       if (timeStr === LUNCH_SLOT) return null;
 
-      for (const c of COUNSELORS) {
+      for (const c of counselorsList) {
         const info = useCache ? availabilityByCounselor[c.id] : getCounselorAvailability(c.id, dateStr);
         if (info && !info.onLeave && !info.booked.has(timeStr)) return c;
       }
@@ -699,7 +763,7 @@ export default function Request({ onClose }) {
     setStep((s) => Math.max(0, s - 1));
   };
 
-  const submitMeet = () => {
+  const submitMeet = async () => {
     clearMeetFeedback();
 
     if (pendingLocked) {
@@ -728,32 +792,40 @@ export default function Request({ onClose }) {
       time: meet.time,
       notes: meet.notes,
       counselorId: assigned.id,
-      counselorName: assigned.name,
-      status: "Pending",
-      updatedAt: Date.now(),
     };
 
-    const newReq = { id: makeId("REQ-MEET"), createdAt: Date.now(), ...payload };
-    setCurrentRequest(newReq);
-    setMeetSuccess("Request sent. You’ll receive a confirmation once approved.");
-    setStep(6);
+    try {
+      const created = await apiRequest("/api/counseling/requests/meet", { method: "POST", body: payload });
 
-    // ✅ Write to shared list so ViewRequest.js can see it
-    upsertRequest({
-      id: newReq.id,
-      type: "MEET",
-      status: "Pending",
-      sessionType: newReq.sessionType,
-      reason: newReq.reason,
-      date: newReq.date,
-      time: formatTime12(newReq.time),
-      counselorName: newReq.counselorName || "Any counselor",
-      notes: newReq.notes || "",
-      createdAt: new Date(newReq.createdAt).toISOString(),
-      completedAt: "",
-    });
+      const newReq = {
+        id: created.id,
+        createdAt: created.createdAt ? new Date(created.createdAt).getTime() : Date.now(),
+        ...created,
+      };
 
-    refreshPendingLock();
+      setCurrentRequest(newReq);
+      setMeetSuccess("Request sent. You’ll receive a confirmation once approved.");
+      setStep(6);
+
+      // ✅ Write to shared list so ViewRequest.js can see it (temporary UX cache)
+      upsertRequest({
+        id: String(newReq.id),
+        type: "MEET",
+        status: newReq.status || "Pending",
+        sessionType: newReq.sessionType,
+        reason: newReq.reason,
+        date: newReq.date,
+        time: formatTime12(newReq.time),
+        counselorName: assigned.name || "Counselor",
+        notes: newReq.notes || "",
+        createdAt: new Date(newReq.createdAt || Date.now()).toISOString(),
+        completedAt: "",
+      });
+
+      refreshPendingLock();
+    } catch (e) {
+      setMeetError(e?.message || "Failed to submit request.");
+    }
   };
 
   const tapClass = "active:scale-[0.98] transition-transform";
