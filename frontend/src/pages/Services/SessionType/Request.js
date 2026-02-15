@@ -5,9 +5,6 @@ import { useNavigate } from "react-router-dom";
 import MessagesDrawer from "../../../components/Message/MessagesDrawer";
 import FloatingMessagesPill from "../../../components/Message/FloatingMessagesPill";
 
-// ✅ IMPORTANT: Production builds must call the backend domain (Vercel frontend != Render backend)
-const API_BASE_URL = process.env.REACT_APP_API_URL || "";
-
 
 
 /* ===================== THEME ===================== */
@@ -18,51 +15,21 @@ const TEXT_SOFT = "rgba(20,20,20,0.66)";
 const ERROR_TEXT = "#C62828";
 const PH_TZ = "Asia/Manila";
 
-/* ===================== STORAGE (shared with ViewRequest.js) ===================== */
-const REQUESTS_STORAGE_KEY = "checkin:counseling_requests"; // ✅ same key used by ViewRequest.js
-
-function safeJSONParse(v, fallback) {
-  try {
-    const x = JSON.parse(v);
-    return x ?? fallback;
-  } catch {
-    return fallback;
-  }
-}
+/* ===================== STORAGE (DB only - no localStorage) ===================== */
+/**
+ * IMPORTANT:
+ * Counseling requests are stored in MongoDB.
+ * We DO NOT cache requests in localStorage (cross-browser / privacy).
+ * The only thing kept in localStorage is the auth token handled elsewhere.
+ */
+const REQUESTS_STORAGE_KEY = "checkin:counseling_requests"; // kept for backward compatibility (unused)
 
 function loadAllRequests() {
-  try {
-    const raw = window.localStorage.getItem(REQUESTS_STORAGE_KEY);
-    const list = safeJSONParse(raw || "[]", []);
-    return Array.isArray(list) ? list : [];
-  } catch {
-    return [];
-  }
+  return [];
 }
-
-function saveAllRequests(list) {
-  try {
-    window.localStorage.setItem(REQUESTS_STORAGE_KEY, JSON.stringify(list));
-  } catch {}
-}
-
-function upsertRequest(item) {
-  const list = loadAllRequests();
-  const idx = list.findIndex((r) => r.id === item.id);
-  if (idx >= 0) {
-    const next = list.slice();
-    next[idx] = { ...next[idx], ...item };
-    saveAllRequests(next);
-    return;
-  }
-  saveAllRequests([item, ...list]);
-}
-
-function patchRequest(id, patch) {
-  const list = loadAllRequests();
-  const next = list.map((r) => (r.id === id ? { ...r, ...patch } : r));
-  saveAllRequests(next);
-}
+function saveAllRequests() {}
+function upsertRequest() {}
+function patchRequest() {}
 
 /* ===================== DATA ===================== */
 const REASONS = [
@@ -335,10 +302,7 @@ function counselorStatus(onLeave, openCount) {
 }
 
 /* ===================== PENDING LOCK ===================== */
-function hasAnyPendingMeetRequest() {
-  const list = loadAllRequests();
-  return list.some((r) => r && r.type === "MEET" && (r.status || "Pending") === "Pending");
-}
+function hasAnyPendingMeetRequest() { return false; }
 
 /* ===================== COMPONENT ===================== */
 export default function Request({ onClose }) {
@@ -384,34 +348,17 @@ export default function Request({ onClose }) {
   const [termsAccepted, setTermsAccepted] = useState(false);
   const [showTerms, setShowTerms] = useState(false);
 
-  // Request state (cancel only) - legacy key for this page
-  const [currentRequest, setCurrentRequest] = useState(() => {
-    try {
-      if (typeof window === "undefined") return null;
-      const raw = window.localStorage.getItem("currentRequest");
-      return raw ? JSON.parse(raw) : null;
-    } catch {
-      return null;
-    }
-  });
+  // Request state (cancel only) - kept in memory (DB is source of truth)
+  const [currentRequest, setCurrentRequest] = useState(null);
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
 
-  // ✅ Pending lock will be enforced by the backend (DB source of truth).
-  // Frontend keeps a lightweight flag only to prevent accidental double-submits.
+  // ✅ Single pending meet lock state
+  // Backend enforces this (one active meet per week). No localStorage-based lock.
   const [pendingLocked, setPendingLocked] = useState(false);
+
   const refreshPendingLock = useCallback(() => {
-    // no-op (backend will enforce)
+    setPendingLocked(false);
   }, []);
-
-  // Persist legacy currentRequest
-  useEffect(() => {
-    try {
-      if (typeof window === "undefined") return;
-      if (!currentRequest) window.localStorage.removeItem("currentRequest");
-      else window.localStorage.setItem("currentRequest", JSON.stringify(currentRequest));
-    } catch {}
-  }, [currentRequest]);
-
   // Persist pillUnlocked
   useEffect(() => {
     try {
@@ -496,7 +443,7 @@ export default function Request({ onClose }) {
   });
 
 
-  const [counselorsList, setCounselorsList] = useState([]);
+  const [counselorsList, setCounselorsList] = useState(counselorsList);
   const [availability, setAvailability] = useState(null);
   const [availabilityErr, setAvailabilityErr] = useState("");
 
@@ -509,17 +456,12 @@ export default function Request({ onClose }) {
   }, []);
 
   const apiFetch = useCallback(
-    async (path, options = {}) => {
+    async (path) => {
       const headers = { "Content-Type": "application/json" };
       const token = getToken();
       if (token) headers.Authorization = `Bearer ${token}`;
 
-      const url = path.startsWith("http") ? path : `${API_BASE_URL}${path}`;
-      const res = await fetch(url, {
-        method: options.method || "GET",
-        headers: { ...headers, ...(options.headers || {}) },
-        body: options.body,
-      });
+      const res = await fetch(path, { headers });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data?.message || `Request failed (${res.status})`);
       return data;
@@ -536,6 +478,7 @@ export default function Request({ onClose }) {
           items.map((c) => ({
             id: c.id,
             name: c.name || c.fullName || "Counselor",
+            specialty: Array.isArray(c.specialty) ? c.specialty : [],
           }))
         );
       }
@@ -581,9 +524,14 @@ export default function Request({ onClose }) {
     return () => clearInterval(id);
   }, []);
 
-  // ✅ Keep pending lock fresh (source of truth = DB)
+  // ✅ Keep pending lock fresh (in case ViewRequest updates status)
   useEffect(() => {
     refreshPendingLock();
+    const onStorage = (e) => {
+      if (e.key === REQUESTS_STORAGE_KEY) refreshPendingLock();
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
   }, [refreshPendingLock]);
 
   // ✅ Backward compatibility: if legacy currentRequest exists, ensure it is stored in shared list
@@ -792,7 +740,7 @@ const autoAssignCounselor = useCallback(
     setStep((s) => Math.max(0, s - 1));
   };
 
-  const submitMeet = async () => {
+  const submitMeet = () => {
     clearMeetFeedback();
 
     if (pendingLocked) {
@@ -811,30 +759,42 @@ const autoAssignCounselor = useCallback(
     const slot = slotAvailability[meet.time];
     if (!slot || !slot.enabled) return setMeetError(`Time not available${slot?.reason ? ` (${slot.reason})` : ""}.`);
 
-    if (!meet.counselorId) return setMeetError("Choose a counselor.");
+    const assigned = meet.counselorId ? selectedCounselor : autoAssignCounselor(normalizeTo24h(meet.time));
+    if (!assigned) return setMeetError("No counselor available for that slot.");
 
-    try {
-      const body = JSON.stringify({
-        sessionType: meet.sessionType,
-        reason: meet.reason,
-        date: meet.date,
-        time: normalizeTo24h(meet.time),
-        counselorId: meet.counselorId,
-        notes: meet.notes,
-      });
+    const payload = {
+      sessionType: meet.sessionType,
+      reason: meet.reason,
+      date: meet.date,
+      time: meet.time,
+      notes: meet.notes,
+      counselorId: assigned.id,
+      counselorName: assigned.name,
+      status: "Pending",
+      updatedAt: Date.now(),
+    };
 
-      const created = await apiFetch("/api/counseling/requests/meet", {
-        method: "POST",
-        body,
-      });
+    const newReq = { id: makeId("REQ-MEET"), createdAt: Date.now(), ...payload };
+    setCurrentRequest(newReq);
+    setMeetSuccess("Request sent. You’ll receive a confirmation once approved.");
+    setStep(6);
 
-      setCurrentRequest(created);
-      setPendingLocked(true);
-      setMeetSuccess("Request sent. You’ll receive a confirmation once approved.");
-      setStep(6);
-    } catch (e) {
-      setMeetError(e?.message || "Failed to submit request.");
-    }
+    // ✅ Write to shared list so ViewRequest.js can see it
+    upsertRequest({
+      id: newReq.id,
+      type: "MEET",
+      status: "Pending",
+      sessionType: newReq.sessionType,
+      reason: newReq.reason,
+      date: newReq.date,
+      time: formatTime12(newReq.time),
+      counselorName: newReq.counselorName || "Any counselor",
+      notes: newReq.notes || "",
+      createdAt: new Date(newReq.createdAt).toISOString(),
+      completedAt: "",
+    });
+
+    refreshPendingLock();
   };
 
   const tapClass = "active:scale-[0.98] transition-transform";
