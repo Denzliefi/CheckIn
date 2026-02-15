@@ -1,12 +1,11 @@
-// src/pages/Services/SessionType/Request.js
 import React, { useMemo, useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-
-
-const API_BASE_URL = process.env.REACT_APP_API_URL || "";
 import MessagesDrawer from "../../../components/Message/MessagesDrawer";
 import FloatingMessagesPill from "../../../components/Message/FloatingMessagesPill";
 
+const API_BASE_URL = process.env.REACT_APP_API_URL || "";
+
+// src/pages/Services/SessionType/Request.js
 
 
 /* ===================== THEME ===================== */
@@ -807,7 +806,7 @@ const autoAssignCounselor = useCallback(
 const isOverlayOpen = showTerms || showCancelConfirm;
 
   return (
-    
+
     <div className={rootClass}>
      {pillUnlocked && termsAccepted && !isOverlayOpen ? (
   <FloatingMessagesPill
