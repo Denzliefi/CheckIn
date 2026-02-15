@@ -1,6 +1,7 @@
-const API_BASE_URL = process.env.REACT_APP_API_URL || "";
 // src/pages/Services/Counseling/ViewRequest.js
+
 import React, {
+
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -8,6 +9,9 @@ import React, {
   useRef,
   useState,
 } from "react";
+
+const API_BASE_URL = process.env.REACT_APP_API_URL || "";
+
 import { useNavigate } from "react-router-dom";
 
 /* ===================== THEME ===================== */
@@ -1694,4 +1698,3 @@ const STYLE = `
     .cc-row{ padding-left: 12px !important; padding-right: 12px !important; }
   }
 `;
-
