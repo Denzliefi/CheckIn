@@ -13,7 +13,6 @@ const TEXT_MAIN = "#141414";
 const TEXT_MUTED = "rgba(20,20,20,0.82)";
 const TEXT_SOFT = "rgba(20,20,20,0.66)";
 const ERROR_TEXT = "#C62828";
-const API_BASE_URL = process.env.REACT_APP_API_URL || "";
 const PH_TZ = "Asia/Manila";
 
 /* ===================== STORAGE (shared with ViewRequest.js) ===================== */
@@ -501,7 +500,7 @@ export default function Request({ onClose }) {
   });
 
 
-  const [counselorsList, setCounselorsList] = useState(counselorsList);
+  const [counselorsList, setCounselorsList] = useState([]);
   const [availability, setAvailability] = useState(null);
   const [availabilityErr, setAvailabilityErr] = useState("");
 
@@ -519,7 +518,7 @@ export default function Request({ onClose }) {
       const token = getToken();
       if (token) headers.Authorization = `Bearer ${token}`;
 
-      const res = await fetch(`${API_BASE_URL}${path}`, { headers });
+      const res = await fetch(path, { headers });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data?.message || `Request failed (${res.status})`);
       return data;
@@ -536,7 +535,7 @@ export default function Request({ onClose }) {
           items.map((c) => ({
             id: c.id,
             name: c.name || c.fullName || "Counselor",
-            
+            specialty: Array.isArray(c.specialty) ? c.specialty : [],
           }))
         );
       }
