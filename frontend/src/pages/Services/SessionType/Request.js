@@ -1,45 +1,12 @@
 // src/pages/Services/SessionType/Request.js
 import React, { useMemo, useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
+import { getToken, getUser } from "../../../utils/auth";
 
 import MessagesDrawer from "../../../components/Message/MessagesDrawer";
 import FloatingMessagesPill from "../../../components/Message/FloatingMessagesPill";
 
 
-
-/* ===================== API ===================== */
-const API_BASE_URL = process.env.REACT_APP_API_URL || "";
-
-function getAuthToken() {
-  return (
-    localStorage.getItem("token") ||
-    localStorage.getItem("authToken") ||
-    localStorage.getItem("accessToken") ||
-    ""
-  );
-}
-
-async function apiRequest(path, { method = "GET", body } = {}) {
-  const token = getAuthToken();
-  const headers = { "Content-Type": "application/json" };
-  if (token) headers.Authorization = `Bearer ${token}`;
-
-  const res = await fetch(`${API_BASE_URL}${path}`, {
-    method,
-    headers,
-    body: body ? JSON.stringify(body) : undefined,
-  });
-
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    const msg = data?.message || data?.error || `Request failed (${res.status})`;
-    const err = new Error(msg);
-    err.status = res.status;
-    err.data = data;
-    throw err;
-  }
-  return data;
-}
 
 /* ===================== THEME ===================== */
 const LOGIN_PRIMARY = "#B9FF66";
@@ -50,7 +17,17 @@ const ERROR_TEXT = "#C62828";
 const PH_TZ = "Asia/Manila";
 
 /* ===================== STORAGE (shared with ViewRequest.js) ===================== */
-const REQUESTS_STORAGE_KEY = "checkin:counseling_requests"; // ✅ same key used by ViewRequest.js
+const REQUESTS_STORAGE_KEY = (() => {
+  const u = getUser();
+  const uid = String(u?._id || u?.id || "").trim();
+  return uid ? `checkin:counseling_requests:${uid}` : "checkin:counseling_requests";
+})();
+
+const CURRENT_REQUEST_KEY = (() => {
+  const u = getUser();
+  const uid = String(u?._id || u?.id || "").trim();
+  return uid ? `currentRequest:${uid}` : "currentRequest";
+})();
 
 function safeJSONParse(v, fallback) {
   try {
@@ -106,7 +83,12 @@ const REASONS = [
   "Other",
 ];
 
-const COUNSELORS_FALLBACK = []; // populated from API at runtime (fallback empty)
+const COUNSELORS = [
+  { id: "C-101", name: "Counselor A" },
+  { id: "C-102", name: "Counselor B" },
+  { id: "C-103", name: "Counselor C" },
+  { id: "C-104", name: "Counselor D" },
+];
 
 const HOLIDAYS = [
   "2026-01-01",
@@ -248,6 +230,17 @@ function addDaysISO(iso, days) {
   const dt = new Date(Date.UTC(y, m - 1, d, 12));
   dt.setUTCDate(dt.getUTCDate() + days);
   return `${dt.getUTCFullYear()}-${pad2(dt.getUTCMonth() + 1)}-${pad2(dt.getUTCDate())}`;
+}
+function normalizeTo24h(label) {
+  // Accepts "8:00 AM" -> "08:00"
+  const m = String(label || "").trim().match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+  if (!m) return String(label || "").trim();
+  let hh = parseInt(m[1], 10);
+  const mm = m[2];
+  const ap = m[3].toUpperCase();
+  if (ap === "PM" && hh !== 12) hh += 12;
+  if (ap === "AM" && hh === 12) hh = 0;
+  return `${String(hh).padStart(2, "0")}:${mm}`;
 }
 function isoToNice(iso) {
   const [y, m, d] = iso.split("-").map(Number);
@@ -396,7 +389,7 @@ export default function Request({ onClose }) {
   const [currentRequest, setCurrentRequest] = useState(() => {
     try {
       if (typeof window === "undefined") return null;
-      const raw = window.localStorage.getItem("currentRequest");
+      const raw = window.localStorage.getItem(CURRENT_REQUEST_KEY);
       return raw ? JSON.parse(raw) : null;
     } catch {
       return null;
@@ -422,8 +415,8 @@ export default function Request({ onClose }) {
   useEffect(() => {
     try {
       if (typeof window === "undefined") return;
-      if (!currentRequest) window.localStorage.removeItem("currentRequest");
-      else window.localStorage.setItem("currentRequest", JSON.stringify(currentRequest));
+      if (!currentRequest) window.localStorage.removeItem(CURRENT_REQUEST_KEY);
+      else window.localStorage.setItem(CURRENT_REQUEST_KEY, JSON.stringify(currentRequest));
     } catch {}
   }, [currentRequest]);
 
@@ -510,39 +503,8 @@ export default function Request({ onClose }) {
     notes: "",
   });
 
-  const [counselorsList, setCounselorsList] = useState(COUNSELORS_FALLBACK);
-  const [counselorsError, setCounselorsError] = useState("");
-
-  useEffect(() => {
-    let mounted = true;
-
-    (async () => {
-      try {
-        setCounselorsError("");
-        const data = await apiRequest("/api/counseling/counselors");
-        const items = Array.isArray(data?.items) ? data.items : [];
-
-        if (!mounted) return;
-        setCounselorsList(
-          items.map((c) => ({
-            id: c.id,
-            name: c.fullName || c.name || "Counselor",
-            counselorCode: c.counselorCode || "",
-            specialty: Array.isArray(c.specialty) ? c.specialty : [],
-          }))
-        );
-      } catch (e) {
-        if (!mounted) return;
-        setCounselorsError(e?.message || "Failed to load counselors.");
-        setCounselorsList([]);
-      }
-    })();
-
-    return () => {
-      mounted = false;
-    };
-  }, []);
-
+  const [availability, setAvailability] = useState(null);
+  const [availabilityErr, setAvailabilityErr] = useState("");
 
 
   const [meetError, setMeetError] = useState("");
@@ -597,12 +559,12 @@ export default function Request({ onClose }) {
   const availabilityByCounselor = useMemo(() => {
     const out = {};
     if (!meet.date) return out;
-    for (const c of counselorsList) out[c.id] = getCounselorAvailability(c.id, meet.date);
+    for (const c of COUNSELORS) out[c.id] = getCounselorAvailability(c.id, meet.date);
     return out;
   }, [meet.date]);
 
   const counselorsComputed = useMemo(() => {
-    return counselorsList.map((c) => {
+    return COUNSELORS.map((c) => {
       if (!meet.date) return { ...c, _status: "Select date", _openCount: 0, _onLeave: false, _booked: new Set() };
 
       const info = availabilityByCounselor[c.id];
@@ -625,48 +587,62 @@ export default function Request({ onClose }) {
   }, [meet.date, availabilityByCounselor]);
 
   const slotAvailability = useMemo(() => {
-    const out = {};
+  const out = {};
 
-    if (!meet.date || !dayState.ok) {
-      SCHOOL_SLOTS.forEach((t) => (out[t] = { enabled: false, reason: dayState.label }));
-      return out;
-    }
+  if (!meet.date || !dayState.ok) {
+    SCHOOL_SLOTS.forEach((t) => (out[t] = { enabled: false, reason: dayState.label }));
+    return out;
+  }
 
-    if (meet.counselorId) {
-      const info = availabilityByCounselor[meet.counselorId];
-      SCHOOL_SLOTS.forEach((t) => {
-        const enabled = !info.onLeave && !info.booked.has(t);
-        out[t] = { enabled, reason: enabled ? "" : info.onLeave ? "On leave" : "Booked" };
-      });
-
-      out[LUNCH_SLOT] = { enabled: false, reason: LUNCH_REASON };
-      return out;
-    }
-
+  // ✅ Prefer server-driven availability when present
+  if (availability?.slots?.length) {
+    const server = new Map(availability.slots.map((s) => [s.time, s]));
     SCHOOL_SLOTS.forEach((t) => {
-      let any = false;
-      for (const c of counselorsList) {
-        const info = availabilityByCounselor[c.id];
-        if (!info.onLeave && !info.booked.has(t)) {
-          any = true;
-          break;
-        }
-      }
-      out[t] = { enabled: any, reason: any ? "" : "No counselors available" };
+      const key = normalizeTo24h(t);
+      const s = server.get(key);
+      const enabled = !!s?.enabled;
+      out[t] = { enabled, reason: enabled ? "" : s?.reason || "Unavailable" };
+    });
+    out[LUNCH_SLOT] = { enabled: false, reason: LUNCH_REASON };
+    return out;
+  }
+
+  // Fallback: local mock availability
+  if (meet.counselorId) {
+    const info = availabilityByCounselor[meet.counselorId];
+    SCHOOL_SLOTS.forEach((t) => {
+      const enabled = !info.onLeave && !info.booked.has(t);
+      out[t] = { enabled, reason: enabled ? "" : info.onLeave ? "On leave" : "Booked" };
     });
 
     out[LUNCH_SLOT] = { enabled: false, reason: LUNCH_REASON };
     return out;
-  }, [meet.date, meet.counselorId, dayState.ok, dayState.label, availabilityByCounselor]);
+  }
 
-  const selectedCounselor = useMemo(() => counselorsList.find((c) => c.id === meet.counselorId) || null, [meet.counselorId]);
+  SCHOOL_SLOTS.forEach((t) => {
+    let any = false;
+    for (const c of COUNSELORS) {
+      const info = availabilityByCounselor[c.id];
+      if (!info.onLeave && !info.booked.has(t)) {
+        any = true;
+        break;
+      }
+    }
+    out[t] = { enabled: any, reason: any ? "" : "No counselors available" };
+  });
+
+  out[LUNCH_SLOT] = { enabled: false, reason: LUNCH_REASON };
+  return out;
+}, [meet.date, meet.counselorId, dayState.ok, dayState.label, availabilityByCounselor, availability]);
+
+  const selectedCounselor = useMemo(() => COUNSELORS.find((c) => c.id === meet.counselorId) || null, [meet.counselorId]);
 
   const autoAssignCounselor = useCallback(
     (dateStr, timeStr) => {
       const useCache = dateStr === meet.date;
       if (timeStr === LUNCH_SLOT) return null;
 
-      for (const c of counselorsList) {
+      for (const c of COUNSELORS) {
         const info = useCache ? availabilityByCounselor[c.id] : getCounselorAvailability(c.id, dateStr);
         if (info && !info.onLeave && !info.booked.has(timeStr)) return c;
       }
@@ -685,7 +661,32 @@ export default function Request({ onClose }) {
       time: "",
       counselorId: ds.ok ? p.counselorId : "",
     }));
-  };
+  };const fetchAvailability = useCallback(async () => {
+  if (!meet.date) return;
+  try {
+    setAvailabilityErr("");
+    const token = getToken();
+    const params = new URLSearchParams({ date: meet.date });
+    if (meet.counselorId) params.set("counselorId", meet.counselorId);
+
+    const res = await fetch(`/api/counseling/availability?${params.toString()}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.message || `Availability error (${res.status})`);
+
+    setAvailability(data);
+  } catch (e) {
+    setAvailability(null);
+    setAvailabilityErr(e?.message || "Availability error");
+  }
+}, [meet.date, meet.counselorId]);
+
+useEffect(() => {
+  fetchAvailability();
+}, [fetchAvailability]);
+
 
   const requireTermsOr = (fn) => {
     if (!termsAccepted) return setShowTerms(true);
@@ -762,7 +763,7 @@ export default function Request({ onClose }) {
     setStep((s) => Math.max(0, s - 1));
   };
 
-  const submitMeet = async () => {
+  const submitMeet = () => {
     clearMeetFeedback();
 
     if (pendingLocked) {
@@ -791,40 +792,32 @@ export default function Request({ onClose }) {
       time: meet.time,
       notes: meet.notes,
       counselorId: assigned.id,
+      counselorName: assigned.name,
+      status: "Pending",
+      updatedAt: Date.now(),
     };
 
-    try {
-      const created = await apiRequest("/api/counseling/requests/meet", { method: "POST", body: payload });
+    const newReq = { id: makeId("REQ-MEET"), createdAt: Date.now(), ...payload };
+    setCurrentRequest(newReq);
+    setMeetSuccess("Request sent. You’ll receive a confirmation once approved.");
+    setStep(6);
 
-      const newReq = {
-        id: created.id,
-        createdAt: created.createdAt ? new Date(created.createdAt).getTime() : Date.now(),
-        ...created,
-      };
+    // ✅ Write to shared list so ViewRequest.js can see it
+    upsertRequest({
+      id: newReq.id,
+      type: "MEET",
+      status: "Pending",
+      sessionType: newReq.sessionType,
+      reason: newReq.reason,
+      date: newReq.date,
+      time: formatTime12(newReq.time),
+      counselorName: newReq.counselorName || "Any counselor",
+      notes: newReq.notes || "",
+      createdAt: new Date(newReq.createdAt).toISOString(),
+      completedAt: "",
+    });
 
-      setCurrentRequest(newReq);
-      setMeetSuccess("Request sent. You’ll receive a confirmation once approved.");
-      setStep(6);
-
-      // ✅ Write to shared list so ViewRequest.js can see it (temporary UX cache)
-      upsertRequest({
-        id: String(newReq.id),
-        type: "MEET",
-        status: newReq.status || "Pending",
-        sessionType: newReq.sessionType,
-        reason: newReq.reason,
-        date: newReq.date,
-        time: formatTime12(newReq.time),
-        counselorName: assigned.name || "Counselor",
-        notes: newReq.notes || "",
-        createdAt: new Date(newReq.createdAt || Date.now()).toISOString(),
-        completedAt: "",
-      });
-
-      refreshPendingLock();
-    } catch (e) {
-      setMeetError(e?.message || "Failed to submit request.");
-    }
+    refreshPendingLock();
   };
 
   const tapClass = "active:scale-[0.98] transition-transform";
@@ -882,39 +875,20 @@ const isOverlayOpen = showTerms || showCancelConfirm;
             <ConfirmCancelModal
               accent={LOGIN_PRIMARY}
               onClose={() => setShowCancelConfirm(false)}
-              onConfirm={async () => {
+              onConfirm={() => {
                 setShowCancelConfirm(false);
 
-                try {
-                  if (displayReq?.id) {
-                    const canceled = await apiRequest(`/api/counseling/requests/${displayReq.id}/cancel`, {
-                      method: "PATCH",
-                    });
-
-                    // Keep UI consistent with DB response
-                    const canceledAt = canceled.canceledAt || canceled.cancelledAt || new Date().toISOString();
-                    const status = "Canceled";
-
-                    patchRequest(displayReq.id, { status, canceledAt, updatedAt: new Date().toISOString() });
-
-                    setCurrentRequest((prev) =>
-                      prev
-                        ? {
-                            ...prev,
-                            status,
-                            canceledAt,
-                            updatedAt: Date.now(),
-                          }
-                        : prev
-                    );
-                  }
-
-                  setMeetSuccess("Request canceled.");
-                  setStep(6);
-                  refreshPendingLock();
-                } catch (err) {
-                  setMeetError(err?.message || "Failed to cancel request.");
+                if (displayReq?.id) {
+                  // ✅ cancel legacy currentRequest + shared list entry
+                  patchRequest(displayReq.id, { status: "Canceled", canceledAt: new Date().toISOString() });
                 }
+
+                setCurrentRequest((prev) =>
+                  prev ? { ...prev, status: "Canceled", canceledAt: Date.now(), updatedAt: Date.now() } : prev
+                );
+                setMeetSuccess("Request canceled.");
+                setStep(6);
+                refreshPendingLock();
               }}
             />
           ) : null}
