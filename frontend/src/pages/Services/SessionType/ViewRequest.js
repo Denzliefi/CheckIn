@@ -1,3 +1,4 @@
+const API_BASE_URL = process.env.REACT_APP_API_URL || "";
 // src/pages/Services/Counseling/ViewRequest.js
 import React, {
   useCallback,
@@ -8,40 +9,6 @@ import React, {
   useState,
 } from "react";
 import { useNavigate } from "react-router-dom";
-
-/* ===================== API ===================== */
-const API_BASE_URL = process.env.REACT_APP_API_URL || "";
-
-function getAuthToken() {
-  return (
-    localStorage.getItem("token") ||
-    localStorage.getItem("authToken") ||
-    localStorage.getItem("accessToken") ||
-    ""
-  );
-}
-
-async function apiRequest(path, { method = "GET", body } = {}) {
-  const token = getAuthToken();
-  const headers = { "Content-Type": "application/json" };
-  if (token) headers.Authorization = `Bearer ${token}`;
-
-  const res = await fetch(`${API_BASE_URL}${path}`, {
-    method,
-    headers,
-    body: body ? JSON.stringify(body) : undefined,
-  });
-
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    const msg = data?.message || data?.error || `Request failed (${res.status})`;
-    const err = new Error(msg);
-    err.status = res.status;
-    err.data = data;
-    throw err;
-  }
-  return data;
-}
 
 /* ===================== THEME ===================== */
 /** Target green */
@@ -553,6 +520,37 @@ function buildPageModel(page, totalPages) {
 /* ===================== MAIN ===================== */
 export default function ViewRequest() {
   const navigate = useNavigate();
+
+  const [counselorMap, setCounselorMap] = useState({});
+
+  const getToken = useCallback(() => {
+    try {
+      return window.localStorage.getItem("token") || "";
+    } catch {
+      return "";
+    }
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const token = getToken();
+        const res = await fetch(`${API_BASE_URL}/api/counseling/counselors`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) return;
+
+        const items = Array.isArray(data?.items) ? data.items : [];
+        const map = {};
+        for (const c of items) {
+          map[String(c.id)] = c.name || c.fullName || "";
+        }
+        setCounselorMap(map);
+      } catch {}
+    })();
+  }, [getToken]);
+
   const isMobile = useMediaQuery("(max-width: 768px)");
 
   useEffect(() => {
@@ -575,35 +573,6 @@ export default function ViewRequest() {
   const [page, setPage] = useState(1);
 
   const [refreshKey, setRefreshKey] = useState(0);
-
-  const [dbRequests, setDbRequests] = useState([]);
-  const [dbLoaded, setDbLoaded] = useState(false);
-  const [dbError, setDbError] = useState("");
-
-  useEffect(() => {
-    let mounted = true;
-
-    (async () => {
-      try {
-        setDbError("");
-        const data = await apiRequest("/api/counseling/requests");
-        const items = Array.isArray(data?.items) ? data.items : [];
-        if (!mounted) return;
-        setDbRequests(items);
-        setDbLoaded(true);
-      } catch (e) {
-        if (!mounted) return;
-        setDbError(e?.message || "Failed to load requests.");
-        setDbLoaded(false);
-        setDbRequests([]);
-      }
-    })();
-
-    return () => {
-      mounted = false;
-    };
-  }, [refreshKey]);
-
   const refresh = useCallback(() => setRefreshKey((k) => k + 1), []);
 
   const [detailsAnimKey, setDetailsAnimKey] = useState(0);
@@ -648,7 +617,7 @@ export default function ViewRequest() {
   const patchRequest = useCallback(
     (id, patch) => {
       const now = new Date().toISOString();
-      const list = dbLoaded ? dbRequests : loadList();
+      const list = loadList();
       const cur = loadCurrentRequest();
 
       const apply = (r) => (r.id === id ? stripMeta({ ...r, ...patch, updatedAt: now }) : r);
@@ -663,7 +632,7 @@ export default function ViewRequest() {
   );
 
   const allRequests = useMemo(() => {
-    const list = dbLoaded ? dbRequests : loadList();
+    const list = loadList();
     const cur = loadCurrentRequest();
     const merged = cur?.id && !list.some((x) => x.id === cur.id) ? [cur, ...list] : list;
 
@@ -674,7 +643,7 @@ export default function ViewRequest() {
     });
 
     return sorted.map((r) => ({ ...r, _haystack: buildHaystack(r) }));
-  }, [refreshKey, sort, dbLoaded, dbRequests]);
+  }, [refreshKey, sort]);
 
   useEffect(() => {
     if (!selectedId) return;
@@ -811,7 +780,7 @@ export default function ViewRequest() {
         {selected && isMobile && (
           <BottomSheetModal title="Request details" onClose={closeDetails}>
             <div key={`${selected.id}-${detailsAnimKey}`} className="cc-fade-up">
-              <DetailsCard item={selected} />
+              <DetailsCard item={selected} counselorMap={counselorMap} />
             </div>
           </BottomSheetModal>
         )}
@@ -819,7 +788,7 @@ export default function ViewRequest() {
         {selected && !isMobile && (
           <CenterModal title="Request details" onClose={closeDetails}>
             <div key={`${selected.id}-${detailsAnimKey}`} className="cc-fade-up">
-              <DetailsCard item={selected} />
+              <DetailsCard item={selected} counselorMap={counselorMap} />
             </div>
           </CenterModal>
         )}
@@ -1119,7 +1088,7 @@ function Pagination({ page, totalPages, onChange, animDir }) {
 }
 
 /* ===================== DETAILS ===================== */
-function DetailsCard({ item }) {
+function DetailsCard({ item, counselorMap }) {
   const isMeet = item.type === "MEET";
   const badge = statusBadge(item.status || "Pending");
   const [toast, setToast] = useState("");
@@ -1167,7 +1136,7 @@ function DetailsCard({ item }) {
               <KeyValue label="Session type" value={item.sessionType || "—"} />
               <KeyValue label="Reason" value={item.reason || "—"} />
               <KeyValue label="Date & time" value={`${formatDate(item.date)} • ${item.time || "—"}`} />
-              <KeyValue label="Counselor" value={item.counselorName || "Any"} />
+              <KeyValue label="Counselor" value={item.counselorName || counselorMap[item.counselorId] || "Any"} />
 
               {canShowMeetingLink(item) ? (
                 <div className="mt-2 rounded-xl border border-gray-200 bg-white p-3">
