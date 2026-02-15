@@ -456,22 +456,35 @@ export default function Request({ onClose }) {
     }
   }, []);
 
-  const apiFetch = useCallback(
-    async (path) => {
-      const headers = { "Content-Type": "application/json" };
+    const apiFetch = useCallback(
+    async (path, opts = {}) => {
       const token = getToken();
+
+      const headers = {
+        "Content-Type": "application/json",
+        ...(opts.headers || {}),
+      };
       if (token) headers.Authorization = `Bearer ${token}`;
 
       const url = String(path || "").startsWith("http") ? path : `${API_BASE_URL}${path}`;
-      const res = await fetch(url, { headers });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data?.message || `Request failed (${res.status})`);
+      const res = await fetch(url, { ...opts, headers });
+
+      const text = await res.text();
+      let data = null;
+      try {
+        data = text ? JSON.parse(text) : null;
+      } catch {
+        data = { message: text };
+      }
+
+      if (!res.ok) {
+        throw new Error(data?.message || `Request failed (${res.status})`);
+      }
       return data;
     },
     [getToken]
   );
-
-  const fetchCounselors = useCallback(async () => {
+const fetchCounselors = useCallback(async () => {
     try {
       const data = await apiFetch("/api/counseling/counselors");
       const items = Array.isArray(data?.items) ? data.items : [];
