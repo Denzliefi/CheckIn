@@ -5,6 +5,9 @@ import { useNavigate } from "react-router-dom";
 import MessagesDrawer from "../../../components/Message/MessagesDrawer";
 import FloatingMessagesPill from "../../../components/Message/FloatingMessagesPill";
 
+// ✅ IMPORTANT: Production builds must call the backend domain (Vercel frontend != Render backend)
+const API_BASE_URL = process.env.REACT_APP_API_URL || "";
+
 
 
 /* ===================== THEME ===================== */
@@ -393,18 +396,11 @@ export default function Request({ onClose }) {
   });
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
 
-  // ✅ Single pending meet lock state (derived from shared storage)
-  const [pendingLocked, setPendingLocked] = useState(() => {
-    try {
-      if (typeof window === "undefined") return false;
-      return hasAnyPendingMeetRequest();
-    } catch {
-      return false;
-    }
-  });
-
+  // ✅ Pending lock will be enforced by the backend (DB source of truth).
+  // Frontend keeps a lightweight flag only to prevent accidental double-submits.
+  const [pendingLocked, setPendingLocked] = useState(false);
   const refreshPendingLock = useCallback(() => {
-    setPendingLocked(hasAnyPendingMeetRequest());
+    // no-op (backend will enforce)
   }, []);
 
   // Persist legacy currentRequest
@@ -513,12 +509,17 @@ export default function Request({ onClose }) {
   }, []);
 
   const apiFetch = useCallback(
-    async (path) => {
+    async (path, options = {}) => {
       const headers = { "Content-Type": "application/json" };
       const token = getToken();
       if (token) headers.Authorization = `Bearer ${token}`;
 
-      const res = await fetch(path, { headers });
+      const url = path.startsWith("http") ? path : `${API_BASE_URL}${path}`;
+      const res = await fetch(url, {
+        method: options.method || "GET",
+        headers: { ...headers, ...(options.headers || {}) },
+        body: options.body,
+      });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data?.message || `Request failed (${res.status})`);
       return data;
@@ -535,7 +536,6 @@ export default function Request({ onClose }) {
           items.map((c) => ({
             id: c.id,
             name: c.name || c.fullName || "Counselor",
-            specialty: Array.isArray(c.specialty) ? c.specialty : [],
           }))
         );
       }
@@ -581,14 +581,9 @@ export default function Request({ onClose }) {
     return () => clearInterval(id);
   }, []);
 
-  // ✅ Keep pending lock fresh (in case ViewRequest updates status)
+  // ✅ Keep pending lock fresh (source of truth = DB)
   useEffect(() => {
     refreshPendingLock();
-    const onStorage = (e) => {
-      if (e.key === REQUESTS_STORAGE_KEY) refreshPendingLock();
-    };
-    window.addEventListener("storage", onStorage);
-    return () => window.removeEventListener("storage", onStorage);
   }, [refreshPendingLock]);
 
   // ✅ Backward compatibility: if legacy currentRequest exists, ensure it is stored in shared list
@@ -797,7 +792,7 @@ const autoAssignCounselor = useCallback(
     setStep((s) => Math.max(0, s - 1));
   };
 
-  const submitMeet = () => {
+  const submitMeet = async () => {
     clearMeetFeedback();
 
     if (pendingLocked) {
@@ -816,42 +811,30 @@ const autoAssignCounselor = useCallback(
     const slot = slotAvailability[meet.time];
     if (!slot || !slot.enabled) return setMeetError(`Time not available${slot?.reason ? ` (${slot.reason})` : ""}.`);
 
-    const assigned = meet.counselorId ? selectedCounselor : autoAssignCounselor(normalizeTo24h(meet.time));
-    if (!assigned) return setMeetError("No counselor available for that slot.");
+    if (!meet.counselorId) return setMeetError("Choose a counselor.");
 
-    const payload = {
-      sessionType: meet.sessionType,
-      reason: meet.reason,
-      date: meet.date,
-      time: meet.time,
-      notes: meet.notes,
-      counselorId: assigned.id,
-      counselorName: assigned.name,
-      status: "Pending",
-      updatedAt: Date.now(),
-    };
+    try {
+      const body = JSON.stringify({
+        sessionType: meet.sessionType,
+        reason: meet.reason,
+        date: meet.date,
+        time: normalizeTo24h(meet.time),
+        counselorId: meet.counselorId,
+        notes: meet.notes,
+      });
 
-    const newReq = { id: makeId("REQ-MEET"), createdAt: Date.now(), ...payload };
-    setCurrentRequest(newReq);
-    setMeetSuccess("Request sent. You’ll receive a confirmation once approved.");
-    setStep(6);
+      const created = await apiFetch("/api/counseling/requests/meet", {
+        method: "POST",
+        body,
+      });
 
-    // ✅ Write to shared list so ViewRequest.js can see it
-    upsertRequest({
-      id: newReq.id,
-      type: "MEET",
-      status: "Pending",
-      sessionType: newReq.sessionType,
-      reason: newReq.reason,
-      date: newReq.date,
-      time: formatTime12(newReq.time),
-      counselorName: newReq.counselorName || "Any counselor",
-      notes: newReq.notes || "",
-      createdAt: new Date(newReq.createdAt).toISOString(),
-      completedAt: "",
-    });
-
-    refreshPendingLock();
+      setCurrentRequest(created);
+      setPendingLocked(true);
+      setMeetSuccess("Request sent. You’ll receive a confirmation once approved.");
+      setStep(6);
+    } catch (e) {
+      setMeetError(e?.message || "Failed to submit request.");
+    }
   };
 
   const tapClass = "active:scale-[0.98] transition-transform";
