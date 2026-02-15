@@ -4,7 +4,6 @@ import { useNavigate } from "react-router-dom";
 
 import MessagesDrawer from "../../../components/Message/MessagesDrawer";
 import FloatingMessagesPill from "../../../components/Message/FloatingMessagesPill";
-import { cancelCurrentRequest } from "./Request"; // adjust path if needed
 
 
 
@@ -128,6 +127,29 @@ function formatTime12(hhmm) {
   const hour12 = h % 12 === 0 ? 12 : h % 12;
   return `${hour12}:${pad2(m)} ${suffix}`;
 }
+
+function normalizeTo24h(input) {
+  const v = String(input || "").trim();
+  if (!v) return "";
+  const m = v.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+  if (m) {
+    let h = Number(m[1]);
+    const mm = m[2];
+    const ampm = m[3].toUpperCase();
+    if (ampm === "AM") h = h === 12 ? 0 : h;
+    else h = h === 12 ? 12 : h + 12;
+    return `${pad2(h)}:${mm}`;
+  }
+  const m24 = v.match(/^(\d{1,2}):(\d{2})$/);
+  if (m24) return `${pad2(Number(m24[1]))}:${m24[2]}`;
+  return v;
+}
+
+function to24h(timeLabel) {
+  return normalizeTo24h(timeLabel);
+}
+
+
 function isWithinWorkHours(hhmm) {
   const t = hhmmToMin(hhmm);
   return t >= hhmmToMin("08:00") && t <= hhmmToMin("17:00");

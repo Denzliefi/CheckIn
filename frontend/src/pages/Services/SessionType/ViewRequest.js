@@ -779,7 +779,7 @@ export default function ViewRequest() {
         {selected && isMobile && (
           <BottomSheetModal title="Request details" onClose={closeDetails}>
             <div key={`${selected.id}-${detailsAnimKey}`} className="cc-fade-up">
-              <DetailsCard item={selected} />
+              <DetailsCard item={selected} counselorMap={counselorMap} />
             </div>
           </BottomSheetModal>
         )}
@@ -787,7 +787,7 @@ export default function ViewRequest() {
         {selected && !isMobile && (
           <CenterModal title="Request details" onClose={closeDetails}>
             <div key={`${selected.id}-${detailsAnimKey}`} className="cc-fade-up">
-              <DetailsCard item={selected} />
+              <DetailsCard item={selected} counselorMap={counselorMap} />
             </div>
           </CenterModal>
         )}
@@ -1087,7 +1087,7 @@ function Pagination({ page, totalPages, onChange, animDir }) {
 }
 
 /* ===================== DETAILS ===================== */
-function DetailsCard({ item }) {
+function DetailsCard({ item, counselorMap }) {
   const isMeet = item.type === "MEET";
   const badge = statusBadge(item.status || "Pending");
   const [toast, setToast] = useState("");
