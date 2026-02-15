@@ -4,7 +4,6 @@ import { useNavigate } from "react-router-dom";
 
 import MessagesDrawer from "../../../components/Message/MessagesDrawer";
 import FloatingMessagesPill from "../../../components/Message/FloatingMessagesPill";
-import { cancelCurrentRequest } from "./Request"; // adjust path if needed
 
 
 
@@ -883,20 +882,39 @@ const isOverlayOpen = showTerms || showCancelConfirm;
             <ConfirmCancelModal
               accent={LOGIN_PRIMARY}
               onClose={() => setShowCancelConfirm(false)}
-              onConfirm={() => {
+              onConfirm={async () => {
                 setShowCancelConfirm(false);
 
-                if (displayReq?.id) {
-                  // ✅ cancel legacy currentRequest + shared list entry
-                  patchRequest(displayReq.id, { status: "Canceled", canceledAt: new Date().toISOString() });
-                }
+                try {
+                  if (displayReq?.id) {
+                    const canceled = await apiRequest(`/api/counseling/requests/${displayReq.id}/cancel`, {
+                      method: "PATCH",
+                    });
 
-                setCurrentRequest((prev) =>
-                  prev ? { ...prev, status: "Canceled", canceledAt: Date.now(), updatedAt: Date.now() } : prev
-                );
-                setMeetSuccess("Request canceled.");
-                setStep(6);
-                refreshPendingLock();
+                    // Keep UI consistent with DB response
+                    const canceledAt = canceled.canceledAt || canceled.cancelledAt || new Date().toISOString();
+                    const status = "Canceled";
+
+                    patchRequest(displayReq.id, { status, canceledAt, updatedAt: new Date().toISOString() });
+
+                    setCurrentRequest((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            status,
+                            canceledAt,
+                            updatedAt: Date.now(),
+                          }
+                        : prev
+                    );
+                  }
+
+                  setMeetSuccess("Request canceled.");
+                  setStep(6);
+                  refreshPendingLock();
+                } catch (err) {
+                  setMeetError(err?.message || "Failed to cancel request.");
+                }
               }}
             />
           ) : null}
