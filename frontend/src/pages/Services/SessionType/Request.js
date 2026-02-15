@@ -2,6 +2,8 @@
 import React, { useMemo, useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 
+
+const API_BASE_URL = process.env.REACT_APP_API_URL || "";
 import MessagesDrawer from "../../../components/Message/MessagesDrawer";
 import FloatingMessagesPill from "../../../components/Message/FloatingMessagesPill";
 
@@ -443,7 +445,7 @@ export default function Request({ onClose }) {
   });
 
 
-  const [counselorsList, setCounselorsList] = useState(counselorsList);
+  const [counselorsList, setCounselorsList] = useState([]);
   const [availability, setAvailability] = useState(null);
   const [availabilityErr, setAvailabilityErr] = useState("");
 
@@ -461,7 +463,8 @@ export default function Request({ onClose }) {
       const token = getToken();
       if (token) headers.Authorization = `Bearer ${token}`;
 
-      const res = await fetch(path, { headers });
+      const url = String(path || "").startsWith("http") ? path : `${API_BASE_URL}${path}`;
+      const res = await fetch(url, { headers });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data?.message || `Request failed (${res.status})`);
       return data;
