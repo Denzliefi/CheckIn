@@ -455,8 +455,7 @@ export default function Request({ onClose }) {
       return "";
     }
   }, []);
-
-    const apiFetch = useCallback(
+  const apiFetch = useCallback(
     async (path, opts = {}) => {
       const token = getToken();
 
@@ -484,7 +483,8 @@ export default function Request({ onClose }) {
     },
     [getToken]
   );
-const fetchCounselors = useCallback(async () => {
+
+  const fetchCounselors = useCallback(async () => {
     try {
       const data = await apiFetch("/api/counseling/counselors");
       const items = Array.isArray(data?.items) ? data.items : [];
@@ -755,7 +755,7 @@ const autoAssignCounselor = useCallback(
     setStep((s) => Math.max(0, s - 1));
   };
 
-  const submitMeet = () => {
+  const submitMeet = async () => {
     clearMeetFeedback();
 
     if (pendingLocked) {
@@ -774,42 +774,38 @@ const autoAssignCounselor = useCallback(
     const slot = slotAvailability[meet.time];
     if (!slot || !slot.enabled) return setMeetError(`Time not available${slot?.reason ? ` (${slot.reason})` : ""}.`);
 
-    const assigned = meet.counselorId ? selectedCounselor : autoAssignCounselor(normalizeTo24h(meet.time));
+    // determine counselor (either selected or auto-assign from backend availability list)
+    const time24 = normalizeTo24h(meet.time);
+    const assigned = meet.counselorId ? selectedCounselor : autoAssignCounselor(time24);
     if (!assigned) return setMeetError("No counselor available for that slot.");
 
-    const payload = {
-      sessionType: meet.sessionType,
-      reason: meet.reason,
-      date: meet.date,
-      time: meet.time,
-      notes: meet.notes,
-      counselorId: assigned.id,
-      counselorName: assigned.name,
-      status: "Pending",
-      updatedAt: Date.now(),
-    };
+    try {
+      const payload = {
+        sessionType: meet.sessionType,
+        reason: meet.reason,
+        date: meet.date,
+        time: time24,
+        counselorId: assigned.id,
+        notes: meet.notes || "",
+      };
 
-    const newReq = { id: makeId("REQ-MEET"), createdAt: Date.now(), ...payload };
-    setCurrentRequest(newReq);
-    setMeetSuccess("Request sent. You’ll receive a confirmation once approved.");
-    setStep(6);
+      const data = await apiFetch("/api/counseling/requests/meet", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
 
-    // ✅ Write to shared list so ViewRequest.js can see it
-    upsertRequest({
-      id: newReq.id,
-      type: "MEET",
-      status: "Pending",
-      sessionType: newReq.sessionType,
-      reason: newReq.reason,
-      date: newReq.date,
-      time: formatTime12(newReq.time),
-      counselorName: newReq.counselorName || "Any counselor",
-      notes: newReq.notes || "",
-      createdAt: new Date(newReq.createdAt).toISOString(),
-      completedAt: "",
-    });
+      // backend returns { item } or { request } depending on version; normalize
+      const item = data?.item || data?.request || data;
 
-    refreshPendingLock();
+      setCurrentRequest(item || null);
+      setMeetSuccess("Request sent. You’ll receive a confirmation once approved.");
+      setStep(6);
+
+      // refresh lock/availability by refetching
+      refreshPendingLock();
+    } catch (e) {
+      setMeetError(e?.message || "Failed to submit request.");
+    }
   };
 
   const tapClass = "active:scale-[0.98] transition-transform";
