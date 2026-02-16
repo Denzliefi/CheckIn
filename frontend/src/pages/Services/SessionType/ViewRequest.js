@@ -2,7 +2,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
-const API_BASE_URL = process.env.REACT_APP_API_URL || "";
+import { apiFetch } from "../../../api/apiFetch";
+
 
 /* ===================== THEME ===================== */
 const PRIMARY = "#B9FF66";
@@ -199,13 +200,6 @@ async function copyText(value) {
 export default function ViewRequest() {
   const navigate = useNavigate();
 
-  const getToken = useCallback(() => {
-    try {
-      return window.localStorage.getItem("token") || "";
-    } catch {
-      return "";
-    }
-  }, []);
 
   const [counselorMap, setCounselorMap] = useState({});
   const [items, setItems] = useState([]);
@@ -231,44 +225,28 @@ export default function ViewRequest() {
 
   const fetchCounselors = useCallback(async () => {
     try {
-      const token = getToken();
-      const res = await fetch(`${API_BASE_URL}/api/counseling/counselors`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) return;
-
+      const data = await apiFetch("/api/counseling/counselors");
       const list = Array.isArray(data?.items) ? data.items : [];
       const map = {};
       for (const c of list) map[String(c.id)] = c.name || c.fullName || "";
       setCounselorMap(map);
     } catch {}
-  }, [getToken]);
+  }, [apiFetch]);
 
   const fetchRequests = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
-      const token = getToken();
-      const res = await fetch(`${API_BASE_URL}/api/counseling/requests`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setError(data?.message || "Failed to load your requests.");
-        setItems([]);
-        setLoading(false);
-        return;
-      }
+      const data = await apiFetch("/api/counseling/requests");
       const list = Array.isArray(data?.items) ? data.items : [];
       setItems(list.map(normalizeRequest).filter(Boolean));
       setLoading(false);
-    } catch {
-      setError("Network error while loading your requests.");
+    } catch (e) {
+      setError(e?.message || "Failed to load your requests.");
       setItems([]);
       setLoading(false);
     }
-  }, [getToken]);
+  }, [apiFetch]);
 
   useEffect(() => {
     if (!isBrowser()) return;
@@ -348,30 +326,18 @@ export default function ViewRequest() {
       setBusyId(id);
       setError("");
       try {
-        const token = getToken();
-        const res = await fetch(`${API_BASE_URL}/api/counseling/requests/${id}/cancel`, {
-          method: "PATCH",
-          headers: {
-            "Content-Type": "application/json",
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          },
-        });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          setError(data?.message || "Failed to cancel request.");
-          setBusyId("");
-          return;
-        }
-        showToast("Cancelled");
+        await apiFetch(`/api/counseling/requests/${id}/cancel`, { method: "PATCH" });
+        showToast("Canceled");
         await fetchRequests();
-      } catch {
-        setError("Network error while cancelling.");
+      } catch (e) {
+        setError(e?.message || "Failed to cancel request.");
       } finally {
         setBusyId("");
       }
     },
-    [fetchRequests, getToken, showToast]
+    [apiFetch, fetchRequests, showToast]
   );
+
 
   const newRequest = useCallback(() => navigate("/services/counseling/request"), [navigate]);
 

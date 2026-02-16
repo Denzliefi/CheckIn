@@ -5,17 +5,7 @@ import { useNavigate } from "react-router-dom";
 import MessagesDrawer from "../../../components/Message/MessagesDrawer";
 import FloatingMessagesPill from "../../../components/Message/FloatingMessagesPill";
 
-const DEFAULT_API_BASE_URL = "https://checkin-backend-4xic.onrender.com";
-const API_BASE_URL = (() => {
-  const env = process.env.REACT_APP_API_URL;
-  if (env && String(env).trim()) return String(env).replace(/\/+$/, "");
-  if (typeof window !== "undefined") {
-    const h = window.location.hostname;
-    if (h === "localhost" || h === "127.0.0.1") return "";
-  }
-  return DEFAULT_API_BASE_URL;
-})();
-
+import { apiFetch } from "../../../api/apiFetch";
 
 
 /* ===================== THEME ===================== */
@@ -408,8 +398,34 @@ export default function Request({ onClose }) {
   // Frontend keeps a lightweight flag only to prevent accidental double-submits.
   const [pendingLocked, setPendingLocked] = useState(false);
   const [pendingLockReason, setPendingLockReason] = useState("");
-  const refreshPendingLock = useCallback(() => {
-    // no-op (backend will enforce)
+  const refreshPendingLock = useCallback(async () => {
+    try {
+      const data = await apiFetch("/api/counseling/requests?type=MEET");
+      const items = Array.isArray(data?.items) ? data.items : [];
+
+      const active = items.find((r) => {
+        if (!r) return false;
+        const type = String(r.type || "");
+        if (type !== "MEET") return false;
+        const status = String(r.status || "");
+        const isActive = status === "Pending" || status === "Approved";
+        const notCompleted = !r.completedAt;
+        return isActive && notCompleted;
+      });
+
+      if (active) {
+        setPendingLocked(true);
+        setPendingLockReason("You have an active request. Please wait for it to be processed.");
+        setCurrentRequest((prev) => (prev && String(prev.id) === String(active.id) ? prev : active));
+      } else {
+        setPendingLocked(false);
+        setPendingLockReason("");
+      }
+    } catch (e) {
+      // If user is logged out or the network fails, don't hard-lock the UI.
+      setPendingLocked(false);
+      setPendingLockReason("");
+    }
   }, []);
 
   // Persist legacy currentRequest
@@ -506,43 +522,9 @@ export default function Request({ onClose }) {
 
 
   const [counselorsList, setCounselorsList] = useState([]);
-  const [availability, setAvailability] = useState(null);
+  const [availabilityAny, setAvailabilityAny] = useState(null);
+  const [availabilitySel, setAvailabilitySel] = useState(null);
   const [availabilityErr, setAvailabilityErr] = useState("");
-
-  const getToken = useCallback(() => {
-    try {
-      return window.localStorage.getItem("token") || "";
-    } catch {
-      return "";
-    }
-  }, []);
-
-  const apiFetch = useCallback(
-    async (path, options = {}) => {
-      const token = getToken();
-
-      const isAbsolute = /^https?:\/\//i.test(path);
-      const base = API_BASE_URL || "";
-      const url = isAbsolute
-        ? path
-        : base
-        ? `${base}${path.startsWith("/") ? "" : "/"}${path}`
-        : path;
-
-      const headers = {
-        "Content-Type": "application/json",
-        ...(options.headers || {}),
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      };
-
-      const res = await fetch(url, { ...options, headers });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data?.message || `Request failed (${res.status})`);
-      return data;
-    },
-    [getToken]
-  );
-
 
   const fetchCounselors = useCallback(async () => {
     try {
@@ -563,15 +545,31 @@ export default function Request({ onClose }) {
 
   const fetchAvailability = useCallback(async () => {
     if (!meet.date) return;
+
+    setAvailabilityErr("");
+
+    // Always fetch "any counselor" availability (used for slots when no counselor is selected + counselor list status)
     try {
-      setAvailabilityErr("");
-      const params = new URLSearchParams({ date: meet.date });
-      if (meet.counselorId) params.set("counselorId", meet.counselorId);
-      const data = await apiFetch(`/api/counseling/availability?${params.toString()}`);
-      setAvailability(data);
+      const paramsAny = new URLSearchParams({ date: meet.date });
+      const any = await apiFetch(`/api/counseling/availability?${paramsAny.toString()}`);
+      setAvailabilityAny(any);
     } catch (e) {
-      setAvailability(null);
+      setAvailabilityAny(null);
       setAvailabilityErr(e?.message || "Availability error");
+    }
+
+    // If a counselor is selected, fetch that counselor's availability too
+    if (meet.counselorId) {
+      try {
+        const paramsSel = new URLSearchParams({ date: meet.date, counselorId: meet.counselorId });
+        const sel = await apiFetch(`/api/counseling/availability?${paramsSel.toString()}`);
+        setAvailabilitySel(sel);
+      } catch (e) {
+        setAvailabilitySel(null);
+        setAvailabilityErr((prev) => prev || e?.message || "Availability error");
+      }
+    } else {
+      setAvailabilitySel(null);
     }
   }, [apiFetch, meet.date, meet.counselorId]);
 
@@ -586,6 +584,8 @@ export default function Request({ onClose }) {
 
   const [meetError, setMeetError] = useState("");
   const [meetSuccess, setMeetSuccess] = useState("");
+  const [meetSubmitting, setMeetSubmitting] = useState(false);
+  const [cancelSubmitting, setCancelSubmitting] = useState(false);
 
   const clearMeetFeedback = useCallback(() => {
     setMeetError("");
@@ -628,44 +628,55 @@ export default function Request({ onClose }) {
 
   const dayState = useMemo(() => getDayState(meet.date), [meet.date]);
 
-  const availabilityByCounselor = useMemo(() => {
-    const out = {};
-    if (!meet.date) return out;
-    for (const c of counselorsList) out[c.id] = getCounselorAvailability(c.id, meet.date);
-    return out;
-  }, [meet.date]);
+  const openCountByCounselor = useMemo(() => {
+    const map = {};
+    for (const c of counselorsList) map[String(c.id)] = 0;
+
+    const slots = Array.isArray(availabilityAny?.slots) ? availabilityAny.slots : null;
+    if (!meet.date || !slots) return map;
+
+    for (const s of slots) {
+      const time = String(s?.time || "");
+      if (time === LUNCH_SLOT) continue;
+      if (s?.enabled === false) continue;
+
+      const avail = Array.isArray(s?.availableCounselors) ? s.availableCounselors : [];
+      for (const a of avail) {
+        const id = String(a?.id || a?._id || "");
+        if (id && Object.prototype.hasOwnProperty.call(map, id)) map[id] += 1;
+      }
+    }
+
+    return map;
+  }, [meet.date, counselorsList, availabilityAny]);
 
   const counselorsComputed = useMemo(() => {
-    return counselorsList.map((c) => {
-      if (!meet.date) return { ...c, _status: "Select date", _openCount: 0, _onLeave: false, _booked: new Set() };
+    return counselorsList
+      .map((c) => {
+        if (!meet.date) return { ...c, _status: "Select date", _openCount: 0 };
 
-      const info = availabilityByCounselor[c.id];
+        if (!Array.isArray(availabilityAny?.slots) || !availabilityAny.slots.length) {
+          return { ...c, _status: "Unavailable", _openCount: 0 };
+        }
 
-      // open slots as user-selectable slots; exclude lunch from the count
-      const bookedCountExcludingLunch = info.booked.has(LUNCH_SLOT) ? info.booked.size - 1 : info.booked.size;
-      const openCount = Math.max(0, (SCHOOL_SLOTS.length - 1) - bookedCountExcludingLunch);
-
-      return {
-        ...c,
-        _onLeave: info.onLeave,
-        _booked: info.booked,
-        _openCount: openCount,
-        _status: counselorStatus(info.onLeave, openCount),
-      };
-    }).sort((a, b) => {
-      const rank = { Available: 0, Limited: 1, "Fully Booked": 2, "On Leave": 3, "Select date": 4 };
-      return (rank[a._status] ?? 9) - (rank[b._status] ?? 9);
-    });
-  }, [meet.date, availabilityByCounselor]);
+        const openCount = Number(openCountByCounselor[String(c.id)] || 0);
+        return { ...c, _openCount: openCount, _status: counselorStatus(false, openCount) };
+      })
+      .sort((a, b) => {
+        const rank = { Available: 0, Limited: 1, "Fully Booked": 2, Unavailable: 3, "Select date": 4 };
+        return (rank[a._status] ?? 9) - (rank[b._status] ?? 9);
+      });
+  }, [meet.date, counselorsList, availabilityAny, openCountByCounselor]);
 
   const slotAvailability = useMemo(() => {
     const out = {};
+    const source = meet.counselorId ? availabilitySel : availabilityAny;
 
-    // ✅ Prefer backend availability (single source of truth)
-    if (availability?.slots?.length) {
+    // ✅ Backend availability (source of truth)
+    if (source?.slots?.length) {
       SCHOOL_SLOTS.forEach((t) => {
         const time24 = to24h(t);
-        const s = availability.slots.find((x) => String(x.time) === String(time24));
+        const s = source.slots.find((x) => String(x.time) === String(time24));
         const enabled = Boolean(s?.enabled);
         out[t] = { enabled, reason: enabled ? "" : s?.reason || "Unavailable" };
       });
@@ -673,38 +684,20 @@ export default function Request({ onClose }) {
       return out;
     }
 
-
     if (!meet.date || !dayState.ok) {
       SCHOOL_SLOTS.forEach((t) => (out[t] = { enabled: false, reason: dayState.label }));
-      return out;
-    }
-
-    if (meet.counselorId) {
-      const info = availabilityByCounselor[meet.counselorId];
-      SCHOOL_SLOTS.forEach((t) => {
-        const enabled = !info.onLeave && !info.booked.has(t);
-        out[t] = { enabled, reason: enabled ? "" : info.onLeave ? "On leave" : "Booked" };
-      });
-
       out[LUNCH_SLOT] = { enabled: false, reason: LUNCH_REASON };
       return out;
     }
 
-    SCHOOL_SLOTS.forEach((t) => {
-      let any = false;
-      for (const c of counselorsList) {
-        const info = availabilityByCounselor[c.id];
-        if (!info.onLeave && !info.booked.has(t)) {
-          any = true;
-          break;
-        }
-      }
-      out[t] = { enabled: any, reason: any ? "" : "No counselors available" };
-    });
+    const reason = availabilityErr
+      ? `Availability unavailable (${availabilityErr}).`
+      : "Availability unavailable—please refresh.";
 
+    SCHOOL_SLOTS.forEach((t) => (out[t] = { enabled: false, reason }));
     out[LUNCH_SLOT] = { enabled: false, reason: LUNCH_REASON };
     return out;
-  }, [meet.date, meet.counselorId, dayState.ok, dayState.label, availabilityByCounselor, availability]);
+  }, [meet.date, meet.counselorId, dayState.ok, dayState.label, availabilityAny, availabilitySel, availabilityErr]);
 
   const selectedCounselor = useMemo(
   () => counselorsList.find((c) => c.id === meet.counselorId) || null,
@@ -713,13 +706,13 @@ export default function Request({ onClose }) {
 
 const autoAssignCounselor = useCallback(
   (time24) => {
-    if (!availability?.slots?.length) return null;
-    const slot = availability.slots.find((s) => String(s.time) === String(time24));
+    if (!availabilityAny?.slots?.length) return null;
+    const slot = availabilityAny.slots.find((s) => String(s.time) === String(time24));
     const list = Array.isArray(slot?.availableCounselors) ? slot.availableCounselors : [];
     if (!list.length) return null;
     return list[0];
   },
-  [availability]
+  [availabilityAny]
 );
 
   const onDateChange = (val) => {
@@ -812,6 +805,8 @@ const autoAssignCounselor = useCallback(
   const submitMeet = async () => {
     clearMeetFeedback();
 
+    if (meetSubmitting) return;
+
     if (pendingLocked) {
       setMeetError(pendingLockReason || "You already have an active request. Please wait for it to be processed.");
       return;
@@ -820,77 +815,89 @@ const autoAssignCounselor = useCallback(
     const selectedSlot = String(meet.time || "").trim();
     const selectedCounselorId = String(meet.counselorId || "").trim();
 
-    if (!meet.date) {
-      setMeetError("Please select a date.");
-      return;
-    }
+    if (!meet.date) return setMeetError("Please select a date.");
+    if (!selectedSlot) return setMeetError("Please select a time slot.");
+    if (selectedSlot === LUNCH_SLOT) return setMeetError(LUNCH_REASON);
+    if (!meet.sessionType) return setMeetError("Please select session type.");
+    if (!meet.reason.trim()) return setMeetError("Please enter a reason for the session.");
 
-    if (!selectedSlot) {
-      setMeetError("Please select a time slot.");
-      return;
-    }
+    const assigned = selectedCounselorId
+      ? counselorsList.find((c) => String(c.id) === selectedCounselorId)
+      : null;
 
-    if (!selectedCounselorId) {
-      setMeetError("Please select a counselor.");
-      return;
-    }
-
-    const assigned = counselorsList.find((c) => String(c.id) === selectedCounselorId);
-    if (!assigned) {
+    if (selectedCounselorId && !assigned) {
       setMeetError("Selected counselor not found. Please refresh and try again.");
       return;
     }
 
-    if (!meet.sessionType) {
-      setMeetError("Please select session type.");
-      return;
-    }
+    setMeetSubmitting(true);
 
-    if (!meet.reason.trim()) {
-      setMeetError("Please enter a reason for the session.");
-      return;
-    }
-
-    // Re-check slot before submit (server is source of truth)
     try {
-      const availability = await apiFetch(
-        `/api/counseling/availability?date=${encodeURIComponent(meet.date)}&counselorId=${encodeURIComponent(
-          assigned.id
-        )}`
-      );
+      // Re-check slot before submit (server is source of truth)
+      const params = new URLSearchParams({ date: meet.date });
+      if (assigned?.id) params.set("counselorId", assigned.id);
+      const availabilityCheck = await apiFetch(`/api/counseling/availability?${params.toString()}`);
 
-      const slots = Array.isArray(availability?.slots) ? availability.slots : [];
+      const slots = Array.isArray(availabilityCheck?.slots) ? availabilityCheck.slots : [];
       const hit = slots.find((s) => String(s?.time || "") === selectedSlot);
+
       if (!hit || hit.enabled === false) {
-        setMeetError(hit?.reason ? `Time not available (${hit.reason}). Please choose another.` : "That slot was just taken. Please choose another time.");
+        setMeetError(
+          hit?.reason
+            ? `Time not available (${hit.reason}). Please choose another.`
+            : "That slot was just taken. Please choose another time."
+        );
         await fetchAvailability();
         return;
       }
-    } catch {}
 
-    try {
+      if (!assigned?.id) {
+        const list = Array.isArray(hit?.availableCounselors) ? hit.availableCounselors : [];
+        if (!list.length) {
+          setMeetError("No counselors are available at that time. Please choose another slot.");
+          await fetchAvailability();
+          return;
+        }
+      }
+
       const payload = {
         sessionType: meet.sessionType,
         reason: meet.reason.trim(),
         date: meet.date,
         time: selectedSlot,
-        counselorId: assigned.id,
         notes: meet.notes || "",
       };
+
+      if (assigned?.id) payload.counselorId = assigned.id;
 
       const created = await apiFetch("/api/counseling/requests/meet", {
         method: "POST",
         body: JSON.stringify(payload),
       });
 
+      const createdCounselorId = created?.counselorId?._id
+        ? String(created.counselorId._id)
+        : String(created?.counselorId || "");
+
+      const createdCounselorName =
+        created?.counselorName ||
+        (createdCounselorId ? counselorsList.find((c) => String(c.id) === createdCounselorId)?.name : "") ||
+        (assigned?.name || "");
+
+      const createdForUI =
+        createdCounselorName && !created?.counselorName
+          ? { ...created, counselorName: createdCounselorName, counselorId: createdCounselorId || created?.counselorId }
+          : created;
+
       setMeetSuccess("Request submitted!");
-      setCurrentRequest(created);
+      setCurrentRequest(createdForUI);
       setStep(6);
 
-      setPendingLocked(true);
-      setPendingLockReason("You have an active request. Please wait for it to be processed.");
+      await refreshPendingLock();
     } catch (e) {
       setMeetError(e?.message || "Failed to submit request.");
+    } finally {
+      setMeetSubmitting(false);
     }
   };
 
@@ -949,21 +956,41 @@ const isOverlayOpen = showTerms || showCancelConfirm;
           {showCancelConfirm ? (
             <ConfirmCancelModal
               accent={LOGIN_PRIMARY}
+              busy={cancelSubmitting}
               onClose={() => setShowCancelConfirm(false)}
-              onConfirm={() => {
-                setShowCancelConfirm(false);
+              onConfirm={async () => {
+                if (cancelSubmitting) return;
 
-                if (displayReq?.id) {
-                  // ✅ cancel legacy currentRequest + shared list entry
+                setCancelSubmitting(true);
+
+                try {
+                  if (!displayReq?.id) {
+                    setMeetError("No request found to cancel.");
+                    return;
+                  }
+
+                  await apiFetch(`/api/counseling/requests/${displayReq.id}/cancel`, {
+                    method: "PATCH",
+                  });
+
+                  // keep local cache in sync (optional)
                   patchRequest(displayReq.id, { status: "Canceled", canceledAt: new Date().toISOString() });
-                }
 
-                setCurrentRequest((prev) =>
-                  prev ? { ...prev, status: "Canceled", canceledAt: Date.now(), updatedAt: Date.now() } : prev
-                );
-                setMeetSuccess("Request canceled.");
-                setStep(6);
-                refreshPendingLock();
+                  setCurrentRequest((prev) =>
+                    prev ? { ...prev, status: "Canceled", canceledAt: Date.now(), updatedAt: Date.now() } : prev
+                  );
+
+                  setMeetSuccess("Request canceled.");
+                  setStep(6);
+
+                  await refreshPendingLock();
+                  await fetchAvailability();
+                } catch (e) {
+                  setMeetError(e?.message || "Failed to cancel request.");
+                } finally {
+                  setCancelSubmitting(false);
+                  setShowCancelConfirm(false);
+                }
               }}
             />
           ) : null}
@@ -1264,7 +1291,7 @@ const isOverlayOpen = showTerms || showCancelConfirm;
                   <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
                     {counselorsComputed.map((c) => {
                       const disabled =
-                        !meet.date || !dayState.ok || c._status === "On Leave" || c._status === "Fully Booked";
+                        !meet.date || !dayState.ok || c._status === "Unavailable" || c._status === "Fully Booked";
                       const active = meet.counselorId === c.id;
 
                       return (
@@ -1321,6 +1348,26 @@ const isOverlayOpen = showTerms || showCancelConfirm;
                       {meet.date ? isoToNice(meet.date) : "Select date first"}
                     </div>
                   </div>
+
+                  {availabilityErr ? (
+                    <div className="mt-3 rounded-2xl bg-white border border-black/5 p-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="text-[13.5px] font-[Lora]" style={{ color: TEXT_MUTED }}>
+                          Availability couldn’t be loaded: <span style={{ color: TEXT_MAIN, fontWeight: 700 }}>{availabilityErr}</span>
+                        </div>
+                        <button
+                          type="button"
+                          className={[pillBtn, tapClass].join(" ")}
+                          onClick={() => {
+                            clearMeetFeedback();
+                            fetchAvailability();
+                          }}
+                        >
+                          Retry
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
 
                   <div className="mt-3 grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2">
                     {SCHOOL_SLOTS.map((t) => {
@@ -1420,11 +1467,15 @@ const isOverlayOpen = showTerms || showCancelConfirm;
                   <button
                     type="button"
                     onClick={submitMeet}
-                    disabled={pendingLocked}
-                    className={[primaryBtn, tapClass, pendingLocked ? "opacity-60 cursor-not-allowed" : ""].join(" ")}
+                    disabled={pendingLocked || meetSubmitting}
+                    className={[
+                      primaryBtn,
+                      tapClass,
+                      pendingLocked || meetSubmitting ? "opacity-60 cursor-not-allowed" : "",
+                    ].join(" ")}
                     style={{ backgroundColor: LOGIN_PRIMARY }}
                   >
-                    Send request
+                    {meetSubmitting ? "Sending…" : "Send request"}
                   </button>
                 </div>
 
@@ -1899,7 +1950,7 @@ function TermsModal({ accent, onAccept, onClose }) {
 }
 
 /* ===================== CANCEL CONFIRM MODAL ===================== */
-function ConfirmCancelModal({ accent, onClose, onConfirm }) {
+function ConfirmCancelModal({ accent, busy = false, onClose, onConfirm }) {
   useEffect(() => {
     const onKey = (e) => e.key === "Escape" && onClose();
     window.addEventListener("keydown", onKey);
@@ -1923,7 +1974,8 @@ function ConfirmCancelModal({ accent, onClose, onConfirm }) {
           <button
             type="button"
             onClick={onClose}
-            className="h-10 px-4 rounded-xl bg-black/5 hover:bg-black/10 transition font-[Nunito] font-extrabold text-[#141414]"
+            disabled={busy}
+            className={"h-10 px-4 rounded-xl bg-black/5 hover:bg-black/10 transition font-[Nunito] font-extrabold text-[#141414] " + (busy ? "opacity-60 cursor-not-allowed" : "")}
           >
             Keep
           </button>
@@ -1931,7 +1983,8 @@ function ConfirmCancelModal({ accent, onClose, onConfirm }) {
           <button
             type="button"
             onClick={onConfirm}
-            className="h-10 px-4 rounded-xl hover:brightness-95 transition font-[Nunito] font-extrabold text-[#141414]"
+            disabled={busy}
+            className={"h-10 px-4 rounded-xl hover:brightness-95 transition font-[Nunito] font-extrabold text-[#141414] " + (busy ? "opacity-60 cursor-not-allowed" : "")}
             style={{ backgroundColor: accent }}
           >
             Yes, cancel
