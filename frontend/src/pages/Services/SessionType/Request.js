@@ -1,11 +1,10 @@
+// src/pages/Services/SessionType/Request.js
 import React, { useMemo, useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
+
 import MessagesDrawer from "../../../components/Message/MessagesDrawer";
 import FloatingMessagesPill from "../../../components/Message/FloatingMessagesPill";
 
-const API_BASE_URL = process.env.REACT_APP_API_URL || "";
-
-// src/pages/Services/SessionType/Request.js
 
 
 /* ===================== THEME ===================== */
@@ -16,21 +15,51 @@ const TEXT_SOFT = "rgba(20,20,20,0.66)";
 const ERROR_TEXT = "#C62828";
 const PH_TZ = "Asia/Manila";
 
-/* ===================== STORAGE (DB only - no localStorage) ===================== */
-/**
- * IMPORTANT:
- * Counseling requests are stored in MongoDB.
- * We DO NOT cache requests in localStorage (cross-browser / privacy).
- * The only thing kept in localStorage is the auth token handled elsewhere.
- */
-const REQUESTS_STORAGE_KEY = "checkin:counseling_requests"; // kept for backward compatibility (unused)
+/* ===================== STORAGE (shared with ViewRequest.js) ===================== */
+const REQUESTS_STORAGE_KEY = "checkin:counseling_requests"; // ✅ same key used by ViewRequest.js
+
+function safeJSONParse(v, fallback) {
+  try {
+    const x = JSON.parse(v);
+    return x ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
 
 function loadAllRequests() {
-  return [];
+  try {
+    const raw = window.localStorage.getItem(REQUESTS_STORAGE_KEY);
+    const list = safeJSONParse(raw || "[]", []);
+    return Array.isArray(list) ? list : [];
+  } catch {
+    return [];
+  }
 }
-function saveAllRequests() {}
-function upsertRequest() {}
-function patchRequest() {}
+
+function saveAllRequests(list) {
+  try {
+    window.localStorage.setItem(REQUESTS_STORAGE_KEY, JSON.stringify(list));
+  } catch {}
+}
+
+function upsertRequest(item) {
+  const list = loadAllRequests();
+  const idx = list.findIndex((r) => r.id === item.id);
+  if (idx >= 0) {
+    const next = list.slice();
+    next[idx] = { ...next[idx], ...item };
+    saveAllRequests(next);
+    return;
+  }
+  saveAllRequests([item, ...list]);
+}
+
+function patchRequest(id, patch) {
+  const list = loadAllRequests();
+  const next = list.map((r) => (r.id === id ? { ...r, ...patch } : r));
+  saveAllRequests(next);
+}
 
 /* ===================== DATA ===================== */
 const REASONS = [
@@ -303,7 +332,10 @@ function counselorStatus(onLeave, openCount) {
 }
 
 /* ===================== PENDING LOCK ===================== */
-function hasAnyPendingMeetRequest() { return false; }
+function hasAnyPendingMeetRequest() {
+  const list = loadAllRequests();
+  return list.some((r) => r && r.type === "MEET" && (r.status || "Pending") === "Pending");
+}
 
 /* ===================== COMPONENT ===================== */
 export default function Request({ onClose }) {
@@ -349,84 +381,40 @@ export default function Request({ onClose }) {
   const [termsAccepted, setTermsAccepted] = useState(false);
   const [showTerms, setShowTerms] = useState(false);
 
-  // Request state (cancel only) - kept in memory (DB is source of truth)
-  const [currentRequest, setCurrentRequest] = useState(null);
+  // Request state (cancel only) - legacy key for this page
+  const [currentRequest, setCurrentRequest] = useState(() => {
+    try {
+      if (typeof window === "undefined") return null;
+      const raw = window.localStorage.getItem("currentRequest");
+      return raw ? JSON.parse(raw) : null;
+    } catch {
+      return null;
+    }
+  });
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
 
-  // ✅ Booking lock (A + B)
-  // A) One active/pending request at a time
-  // B) One MEET request per week (Mon–Sun, Asia/Manila)
-  // Backend enforces the real lock; this is just UI.
-  const [bookingLock, setBookingLock] = useState({ locked: false, code: "", message: "", meta: null });
-
-  const getPHWeekRange = useCallback((yyyyMmDd) => {
+  // ✅ Single pending meet lock state (derived from shared storage)
+  const [pendingLocked, setPendingLocked] = useState(() => {
     try {
-      const d = new Date(`${yyyyMmDd}T00:00:00+08:00`);
-      if (Number.isNaN(d.getTime())) return { weekStart: yyyyMmDd, weekEnd: yyyyMmDd };
-      const dow = d.getUTCDay(); // PH day because we pinned +08:00 above
-      const diffToMon = (dow + 6) % 7;
-      const monday = new Date(d);
-      monday.setUTCDate(monday.getUTCDate() - diffToMon);
-      const sunday = new Date(monday);
-      sunday.setUTCDate(sunday.getUTCDate() + 6);
-      const toPH = (dt) => dt.toLocaleDateString("en-CA", { timeZone: "Asia/Manila" });
-      return { weekStart: toPH(monday), weekEnd: toPH(sunday) };
+      if (typeof window === "undefined") return false;
+      return hasAnyPendingMeetRequest();
     } catch {
-      return { weekStart: yyyyMmDd, weekEnd: yyyyMmDd };
+      return false;
     }
+  });
+
+  const refreshPendingLock = useCallback(() => {
+    setPendingLocked(hasAnyPendingMeetRequest());
   }, []);
 
-  const checkBookingLock = useCallback(
-    async (sessionDate) => {
-      if (!sessionDate) {
-        setBookingLock({ locked: false, code: "", message: "", meta: null });
-        return;
-      }
-
-      try {
-        const data = await apiFetch(`/api/counseling/requests?mine=true&type=MEET`);
-        const items = Array.isArray(data?.items) ? data.items : Array.isArray(data) ? data : [];
-
-        const active = items.find((r) => {
-          const s = String(r.status || "");
-          if (s !== "Pending" && s !== "Approved") return false;
-          // If backend doesn't send completedAt for old records, treat Approved as active unless it is clearly Completed.
-          return true;
-        });
-
-        if (active) {
-          setBookingLock({
-            locked: true,
-            code: "HAS_ACTIVE_REQUEST",
-            message: "You already have an active request. Please wait until it is approved/disapproved (or completed) before booking again.",
-            meta: { activeId: active.id, status: active.status, date: active.date, time: active.time },
-          });
-          return;
-        }
-
-        const { weekStart, weekEnd } = getPHWeekRange(sessionDate);
-        const hasThisWeek = items.some((r) => String(r.date || "") >= weekStart && String(r.date || "") <= weekEnd);
-
-        if (hasThisWeek) {
-          setBookingLock({
-            locked: true,
-            code: "WEEKLY_LIMIT",
-            message: "Weekly limit reached. You can only book one counseling session per week.",
-            meta: { weekStart, weekEnd },
-          });
-          return;
-        }
-
-        setBookingLock({ locked: false, code: "", message: "", meta: null });
-      } catch (e) {
-        // If the check fails, don't block booking—backend will still enforce.
-        setBookingLock({ locked: false, code: "", message: "", meta: null });
-      }
-    },
-    [apiFetch, getPHWeekRange]
-  );
-
-  const pendingLocked = bookingLock.locked;
+  // Persist legacy currentRequest
+  useEffect(() => {
+    try {
+      if (typeof window === "undefined") return;
+      if (!currentRequest) window.localStorage.removeItem("currentRequest");
+      else window.localStorage.setItem("currentRequest", JSON.stringify(currentRequest));
+    } catch {}
+  }, [currentRequest]);
 
   // Persist pillUnlocked
   useEffect(() => {
@@ -516,40 +504,26 @@ export default function Request({ onClose }) {
   const [availability, setAvailability] = useState(null);
   const [availabilityErr, setAvailabilityErr] = useState("");
 
-  const getToken = useCallback(() => {
+  function getToken() {
     try {
       return window.localStorage.getItem("token") || "";
     } catch {
       return "";
     }
-  }, []);
-  const apiFetch = useCallback(
-    async (path, opts = {}) => {
-      const token = getToken();
+  }
 
-      const headers = {
-        "Content-Type": "application/json",
-        ...(opts.headers || {}),
-      };
+  const apiFetch = useCallback(
+    async (path) => {
+      const headers = { "Content-Type": "application/json" };
+      const token = getToken();
       if (token) headers.Authorization = `Bearer ${token}`;
 
-      const url = String(path || "").startsWith("http") ? path : `${API_BASE_URL}${path}`;
-      const res = await fetch(url, { ...opts, headers });
-
-      const text = await res.text();
-      let data = null;
-      try {
-        data = text ? JSON.parse(text) : null;
-      } catch {
-        data = { message: text };
-      }
-
-      if (!res.ok) {
-        throw new Error(data?.message || `Request failed (${res.status})`);
-      }
+      const res = await fetch(path, { headers });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.message || `Request failed (${res.status})`);
       return data;
     },
-    [getToken]
+    []
   );
 
   const fetchCounselors = useCallback(async () => {
@@ -568,7 +542,7 @@ export default function Request({ onClose }) {
     } catch (e) {
       console.warn("fetchCounselors failed:", e?.message || e);
     }
-  }, [apiFetch]);
+  }, []);
 
   const fetchAvailability = useCallback(async () => {
     if (!meet.date) return;
@@ -582,7 +556,7 @@ export default function Request({ onClose }) {
       setAvailability(null);
       setAvailabilityErr(e?.message || "Availability error");
     }
-  }, [apiFetch, meet.date, meet.counselorId]);
+  }, [ meet.date, meet.counselorId]);
 
   useEffect(() => {
     fetchCounselors();
@@ -591,10 +565,6 @@ export default function Request({ onClose }) {
   useEffect(() => {
     fetchAvailability();
   }, [fetchAvailability]);
-
-  useEffect(() => {
-    checkBookingLock(meet.date);
-  }, [checkBookingLock, meet.date]);
 
 
   const [meetError, setMeetError] = useState("");
@@ -611,6 +581,38 @@ export default function Request({ onClose }) {
     return () => clearInterval(id);
   }, []);
 
+  // ✅ Keep pending lock fresh (in case ViewRequest updates status)
+  useEffect(() => {
+    refreshPendingLock();
+    const onStorage = (e) => {
+      if (e.key === REQUESTS_STORAGE_KEY) refreshPendingLock();
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, [refreshPendingLock]);
+
+  // ✅ Backward compatibility: if legacy currentRequest exists, ensure it is stored in shared list
+  useEffect(() => {
+    if (!currentRequest) return;
+    if (currentRequest?.status && currentRequest.status !== "Pending") return;
+    if (!currentRequest?.date || !currentRequest?.time) return; // only MEET-like
+    const maybe = {
+      id: currentRequest.id || makeId("REQ-MEET"),
+      type: "MEET",
+      status: currentRequest.status || "Pending",
+      sessionType: currentRequest.sessionType,
+      reason: currentRequest.reason,
+      date: currentRequest.date,
+      time: formatTime12(currentRequest.time),
+      counselorName: currentRequest.counselorName || "Any counselor",
+      notes: currentRequest.notes || "",
+      createdAt: new Date(currentRequest.createdAt || Date.now()).toISOString(),
+      completedAt: "",
+    };
+    upsertRequest(maybe);
+    refreshPendingLock();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const dayState = useMemo(() => getDayState(meet.date), [meet.date]);
 
@@ -777,7 +779,7 @@ const autoAssignCounselor = useCallback(
     clearMeetFeedback();
 
     if (pendingLocked) {
-      setMeetSuccess(bookingLock.message || "You can\'t book a new session right now.");
+      setMeetSuccess("You already have a pending request. Cancel it first before booking a new one.");
       return setStep(6);
     }
 
@@ -795,11 +797,11 @@ const autoAssignCounselor = useCallback(
     setStep((s) => Math.max(0, s - 1));
   };
 
-  const submitMeet = async () => {
+  const submitMeet = () => {
     clearMeetFeedback();
 
     if (pendingLocked) {
-      setMeetSuccess(bookingLock.message || "You can\'t book a new session right now.");
+      setMeetSuccess("You already have a pending request. Cancel it first before booking a new one.");
       return setStep(6);
     }
 
@@ -814,38 +816,42 @@ const autoAssignCounselor = useCallback(
     const slot = slotAvailability[meet.time];
     if (!slot || !slot.enabled) return setMeetError(`Time not available${slot?.reason ? ` (${slot.reason})` : ""}.`);
 
-    // determine counselor (either selected or auto-assign from backend availability list)
-    const time24 = normalizeTo24h(meet.time);
-    const assigned = meet.counselorId ? selectedCounselor : autoAssignCounselor(time24);
+    const assigned = meet.counselorId ? selectedCounselor : autoAssignCounselor(normalizeTo24h(meet.time));
     if (!assigned) return setMeetError("No counselor available for that slot.");
 
-    try {
-      const payload = {
-        sessionType: meet.sessionType,
-        reason: meet.reason,
-        date: meet.date,
-        time: time24,
-        counselorId: assigned.id,
-        notes: meet.notes || "",
-      };
+    const payload = {
+      sessionType: meet.sessionType,
+      reason: meet.reason,
+      date: meet.date,
+      time: meet.time,
+      notes: meet.notes,
+      counselorId: assigned.id,
+      counselorName: assigned.name,
+      status: "Pending",
+      updatedAt: Date.now(),
+    };
 
-      const data = await apiFetch("/api/counseling/requests/meet", {
-        method: "POST",
-        body: JSON.stringify(payload),
-      });
+    const newReq = { id: makeId("REQ-MEET"), createdAt: Date.now(), ...payload };
+    setCurrentRequest(newReq);
+    setMeetSuccess("Request sent. You’ll receive a confirmation once approved.");
+    setStep(6);
 
-      // backend returns { item } or { request } depending on version; normalize
-      const item = data?.item || data?.request || data;
+    // ✅ Write to shared list so ViewRequest.js can see it
+    upsertRequest({
+      id: newReq.id,
+      type: "MEET",
+      status: "Pending",
+      sessionType: newReq.sessionType,
+      reason: newReq.reason,
+      date: newReq.date,
+      time: formatTime12(newReq.time),
+      counselorName: newReq.counselorName || "Any counselor",
+      notes: newReq.notes || "",
+      createdAt: new Date(newReq.createdAt).toISOString(),
+      completedAt: "",
+    });
 
-      setCurrentRequest(item || null);
-      setMeetSuccess("Request sent. You’ll receive a confirmation once approved.");
-      setStep(6);
-
-      // refresh lock for UI
-      checkBookingLock(meet.date);
-    } catch (e) {
-      setMeetError(e?.message || "Failed to submit request.");
-    }
+    refreshPendingLock();
   };
 
   const tapClass = "active:scale-[0.98] transition-transform";
@@ -855,7 +861,7 @@ const autoAssignCounselor = useCallback(
 const isOverlayOpen = showTerms || showCancelConfirm;
 
   return (
-
+    
     <div className={rootClass}>
      {pillUnlocked && termsAccepted && !isOverlayOpen ? (
   <FloatingMessagesPill
@@ -916,7 +922,7 @@ const isOverlayOpen = showTerms || showCancelConfirm;
                 );
                 setMeetSuccess("Request canceled.");
                 setStep(6);
-
+                refreshPendingLock();
               }}
             />
           ) : null}
