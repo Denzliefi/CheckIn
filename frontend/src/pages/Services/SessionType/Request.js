@@ -5,6 +5,17 @@ import { useNavigate } from "react-router-dom";
 import MessagesDrawer from "../../../components/Message/MessagesDrawer";
 import FloatingMessagesPill from "../../../components/Message/FloatingMessagesPill";
 
+const DEFAULT_API_BASE_URL = "https://checkin-backend-4xic.onrender.com";
+const API_BASE_URL = (() => {
+  const env = process.env.REACT_APP_API_URL;
+  if (env && String(env).trim()) return String(env).replace(/\/+$/, "");
+  if (typeof window !== "undefined") {
+    const h = window.location.hostname;
+    if (h === "localhost" || h === "127.0.0.1") return "";
+  }
+  return DEFAULT_API_BASE_URL;
+})();
+
 
 
 /* ===================== THEME ===================== */
@@ -393,18 +404,11 @@ export default function Request({ onClose }) {
   });
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
 
-  // ✅ Single pending meet lock state (derived from shared storage)
-  const [pendingLocked, setPendingLocked] = useState(() => {
-    try {
-      if (typeof window === "undefined") return false;
-      return hasAnyPendingMeetRequest();
-    } catch {
-      return false;
-    }
-  });
-
+  // ✅ Pending lock will be enforced by the backend (DB source of truth).
+  // Frontend keeps a lightweight flag only to prevent accidental double-submits.
+  const [pendingLocked, setPendingLocked] = useState(false);
   const refreshPendingLock = useCallback(() => {
-    setPendingLocked(hasAnyPendingMeetRequest());
+    // no-op (backend will enforce)
   }, []);
 
   // Persist legacy currentRequest
@@ -504,27 +508,40 @@ export default function Request({ onClose }) {
   const [availability, setAvailability] = useState(null);
   const [availabilityErr, setAvailabilityErr] = useState("");
 
-  function getToken() {
+  const getToken = useCallback(() => {
     try {
       return window.localStorage.getItem("token") || "";
     } catch {
       return "";
     }
-  }
+  }, []);
 
   const apiFetch = useCallback(
-    async (path) => {
-      const headers = { "Content-Type": "application/json" };
+    async (path, options = {}) => {
       const token = getToken();
-      if (token) headers.Authorization = `Bearer ${token}`;
 
-      const res = await fetch(path, { headers });
+      const isAbsolute = /^https?:\/\//i.test(path);
+      const base = API_BASE_URL || "";
+      const url = isAbsolute
+        ? path
+        : base
+        ? `${base}${path.startsWith("/") ? "" : "/"}${path}`
+        : path;
+
+      const headers = {
+        "Content-Type": "application/json",
+        ...(options.headers || {}),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      };
+
+      const res = await fetch(url, { ...options, headers });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data?.message || `Request failed (${res.status})`);
       return data;
     },
-    []
+    [getToken]
   );
+
 
   const fetchCounselors = useCallback(async () => {
     try {
@@ -535,14 +552,13 @@ export default function Request({ onClose }) {
           items.map((c) => ({
             id: c.id,
             name: c.name || c.fullName || "Counselor",
-            specialty: Array.isArray(c.specialty) ? c.specialty : [],
           }))
         );
       }
     } catch (e) {
       console.warn("fetchCounselors failed:", e?.message || e);
     }
-  }, []);
+  }, [apiFetch]);
 
   const fetchAvailability = useCallback(async () => {
     if (!meet.date) return;
@@ -556,7 +572,7 @@ export default function Request({ onClose }) {
       setAvailability(null);
       setAvailabilityErr(e?.message || "Availability error");
     }
-  }, [ meet.date, meet.counselorId]);
+  }, [apiFetch, meet.date, meet.counselorId]);
 
   useEffect(() => {
     fetchCounselors();
@@ -581,14 +597,9 @@ export default function Request({ onClose }) {
     return () => clearInterval(id);
   }, []);
 
-  // ✅ Keep pending lock fresh (in case ViewRequest updates status)
+  // ✅ Keep pending lock fresh (source of truth = DB)
   useEffect(() => {
     refreshPendingLock();
-    const onStorage = (e) => {
-      if (e.key === REQUESTS_STORAGE_KEY) refreshPendingLock();
-    };
-    window.addEventListener("storage", onStorage);
-    return () => window.removeEventListener("storage", onStorage);
   }, [refreshPendingLock]);
 
   // ✅ Backward compatibility: if legacy currentRequest exists, ensure it is stored in shared list
@@ -797,62 +808,87 @@ const autoAssignCounselor = useCallback(
     setStep((s) => Math.max(0, s - 1));
   };
 
-  const submitMeet = () => {
+  const submitMeet = async () => {
     clearMeetFeedback();
 
     if (pendingLocked) {
-      setMeetSuccess("You already have a pending request. Cancel it first before booking a new one.");
-      return setStep(6);
+      setMeetError(pendingLockReason || "You already have an active request. Please wait for it to be processed.");
+      return;
     }
 
-    if (!termsAccepted) return setShowTerms(true);
-    if (!meet.sessionType) return setMeetError("Choose a session type.");
-    if (!meet.reason) return setMeetError("Choose a reason.");
-    if (!meet.date) return setMeetError("Select a date.");
-    if (!dayState.ok) return setMeetError(dayState.label);
-    if (!meet.time) return setMeetError("Select a time.");
-    if (meet.time === LUNCH_SLOT) return setMeetError(LUNCH_REASON);
+    if (!meet.date) {
+      setMeetError("Please select a date.");
+      return;
+    }
 
-    const slot = slotAvailability[meet.time];
-    if (!slot || !slot.enabled) return setMeetError(`Time not available${slot?.reason ? ` (${slot.reason})` : ""}.`);
+    if (!selectedSlot) {
+      setMeetError("Please select a time slot.");
+      return;
+    }
 
-    const assigned = meet.counselorId ? selectedCounselor : autoAssignCounselor(normalizeTo24h(meet.time));
-    if (!assigned) return setMeetError("No counselor available for that slot.");
+    if (!selectedCounselorId) {
+      setMeetError("Please select a counselor.");
+      return;
+    }
 
-    const payload = {
-      sessionType: meet.sessionType,
-      reason: meet.reason,
-      date: meet.date,
-      time: meet.time,
-      notes: meet.notes,
-      counselorId: assigned.id,
-      counselorName: assigned.name,
-      status: "Pending",
-      updatedAt: Date.now(),
-    };
+    const assigned = counselorsList.find((c) => c.id === selectedCounselorId);
+    if (!assigned) {
+      setMeetError("Selected counselor not found. Please refresh and try again.");
+      return;
+    }
 
-    const newReq = { id: makeId("REQ-MEET"), createdAt: Date.now(), ...payload };
-    setCurrentRequest(newReq);
-    setMeetSuccess("Request sent. You’ll receive a confirmation once approved.");
-    setStep(6);
+    if (!meet.sessionType) {
+      setMeetError("Please select session type.");
+      return;
+    }
 
-    // ✅ Write to shared list so ViewRequest.js can see it
-    upsertRequest({
-      id: newReq.id,
-      type: "MEET",
-      status: "Pending",
-      sessionType: newReq.sessionType,
-      reason: newReq.reason,
-      date: newReq.date,
-      time: formatTime12(newReq.time),
-      counselorName: newReq.counselorName || "Any counselor",
-      notes: newReq.notes || "",
-      createdAt: new Date(newReq.createdAt).toISOString(),
-      completedAt: "",
-    });
+    if (!meet.reason.trim()) {
+      setMeetError("Please enter a reason for the session.");
+      return;
+    }
 
-    refreshPendingLock();
+    // Re-check slot before submit (server is source of truth)
+    try {
+      const availability = await apiFetch(
+        `/api/counseling/availability?date=${encodeURIComponent(meet.date)}&counselorId=${encodeURIComponent(
+          assigned.id
+        )}`
+      );
+
+      const availableSlots = Array.isArray(availability?.slots) ? availability.slots : [];
+      if (!availableSlots.includes(selectedSlot)) {
+        setMeetError("That slot was just taken. Please choose another time.");
+        await fetchAvailability();
+        return;
+      }
+    } catch {}
+
+    try {
+      const payload = {
+        sessionType: meet.sessionType,
+        reason: meet.reason.trim(),
+        date: meet.date,
+        time: selectedSlot,
+        counselorId: assigned.id,
+        notes: meet.notes || "",
+      };
+
+      const created = await apiFetch("/api/counseling/requests/meet", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+
+      setMeetSuccess("Request submitted!");
+      setCurrentRequest(created);
+      setStep(6);
+
+      setPendingLocked(true);
+      setPendingLockReason("You have an active request. Please wait for it to be processed.");
+    } catch (e) {
+      setMeetError(e?.message || "Failed to submit request.");
+    }
   };
+
 
   const tapClass = "active:scale-[0.98] transition-transform";
   const rootClass =
