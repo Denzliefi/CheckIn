@@ -611,38 +611,6 @@ export default function Request({ onClose }) {
     return () => clearInterval(id);
   }, []);
 
-  // ✅ Keep pending lock fresh (in case ViewRequest updates status)
-  useEffect(() => {
-    refreshPendingLock();
-    const onStorage = (e) => {
-      if (e.key === REQUESTS_STORAGE_KEY) refreshPendingLock();
-    };
-    window.addEventListener("storage", onStorage);
-    return () => window.removeEventListener("storage", onStorage);
-  }, [refreshPendingLock]);
-
-  // ✅ Backward compatibility: if legacy currentRequest exists, ensure it is stored in shared list
-  useEffect(() => {
-    if (!currentRequest) return;
-    if (currentRequest?.status && currentRequest.status !== "Pending") return;
-    if (!currentRequest?.date || !currentRequest?.time) return; // only MEET-like
-    const maybe = {
-      id: currentRequest.id || makeId("REQ-MEET"),
-      type: "MEET",
-      status: currentRequest.status || "Pending",
-      sessionType: currentRequest.sessionType,
-      reason: currentRequest.reason,
-      date: currentRequest.date,
-      time: formatTime12(currentRequest.time),
-      counselorName: currentRequest.counselorName || "Any counselor",
-      notes: currentRequest.notes || "",
-      createdAt: new Date(currentRequest.createdAt || Date.now()).toISOString(),
-      completedAt: "",
-    };
-    upsertRequest(maybe);
-    refreshPendingLock();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   const dayState = useMemo(() => getDayState(meet.date), [meet.date]);
 
@@ -948,7 +916,7 @@ const isOverlayOpen = showTerms || showCancelConfirm;
                 );
                 setMeetSuccess("Request canceled.");
                 setStep(6);
-                refreshPendingLock();
+
               }}
             />
           ) : null}
