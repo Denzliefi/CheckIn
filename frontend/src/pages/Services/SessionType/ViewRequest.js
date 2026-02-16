@@ -263,7 +263,7 @@ export default function ViewRequest() {
       const list = Array.isArray(data?.items) ? data.items : [];
       setItems(list.map(normalizeRequest).filter(Boolean));
       setLoading(false);
-    } catch (e) {
+    } catch {
       setError("Network error while loading your requests.");
       setItems([]);
       setLoading(false);
@@ -363,7 +363,6 @@ export default function ViewRequest() {
           return;
         }
         showToast("Cancelled");
-        // refresh from DB (source of truth)
         await fetchRequests();
       } catch {
         setError("Network error while cancelling.");
@@ -397,7 +396,7 @@ export default function ViewRequest() {
 
             <div className="mt-3">
               <h1 className="cc-title">My Counseling Request</h1>
-              <p className="cc-subtitle">These come from MongoDB (not local storage).</p>
+              <p className="cc-subtitle">Track and manage your counseling requests.</p>
             </div>
 
             <div className="mt-5 flex flex-wrap items-center gap-2">
@@ -479,26 +478,28 @@ export default function ViewRequest() {
 function Tabs({ items, active, counts, onChange }) {
   return (
     <div className="w-full max-w-3xl">
-      <div className="inline-flex items-center gap-1 rounded-2xl bg-white/80 border border-gray-200 p-1 relative mx-auto shadow-sm backdrop-blur">
-        {items.map((t) => (
-          <button
-            key={t}
-            type="button"
-            onClick={() => onChange(t)}
-            className={`cc-focus cc-clickable relative rounded-xl font-extrabold ${
-              active === t ? "text-gray-900 cc-tab-active" : "text-gray-600 hover:text-gray-900"
-            }`}
-            style={{
-              padding: "9px 12px",
-              fontSize: "0.92rem",
-              background: active === t ? `linear-gradient(135deg, ${PRIMARY_SOFT}, ${PRIMARY_SOFT_2})` : "transparent",
-              border: "1px solid rgba(148,163,184,.25)",
-            }}
-            aria-pressed={active === t}
-          >
-            {t} <span className="text-sm opacity-60">({counts[t]})</span>
-          </button>
-        ))}
+      <div className="cc-tabs-scroll rounded-2xl bg-white/80 border border-gray-200 p-1 shadow-sm backdrop-blur">
+        <div className="cc-tabs-inner inline-flex items-center gap-1">
+          {items.map((t) => (
+            <button
+              key={t}
+              type="button"
+              onClick={() => onChange(t)}
+              className={`cc-focus cc-clickable relative rounded-xl font-extrabold ${
+                active === t ? "text-gray-900 cc-tab-active" : "text-gray-600 hover:text-gray-900"
+              }`}
+              style={{
+                padding: "9px 12px",
+                fontSize: "0.92rem",
+                background: active === t ? `linear-gradient(135deg, ${PRIMARY_SOFT}, ${PRIMARY_SOFT_2})` : "transparent",
+                border: "1px solid rgba(148,163,184,.25)",
+              }}
+              aria-pressed={active === t}
+            >
+              {t} <span className="text-sm opacity-60">({counts[t]})</span>
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -727,7 +728,10 @@ function DetailsCard({ item, counselorName, onCancel, cancelDisabled }) {
       <div className="p-3.5 border-b border-gray-200 flex items-center justify-between gap-3">
         <div className="flex items-center gap-2 min-w-0">
           <div className="text-sm font-extrabold text-gray-900">Request details</div>
-          <span className="text-xs font-extrabold px-2 py-0.5 rounded-full" style={{ backgroundColor: badge.bg, color: badge.text }}>
+          <span
+            className="text-xs font-extrabold px-2 py-0.5 rounded-full"
+            style={{ backgroundColor: badge.bg, color: badge.text }}
+          >
             {badge.label}
           </span>
         </div>
@@ -770,7 +774,10 @@ function DetailsCard({ item, counselorName, onCancel, cancelDisabled }) {
                       target="_blank"
                       rel="noreferrer"
                       className="cc-focus cc-clickable inline-flex items-center justify-center px-4 py-2 rounded-xl text-sm font-extrabold"
-                      style={{ background: `linear-gradient(135deg, ${PRIMARY_SOFT}, ${PRIMARY_SOFT_2})`, border: "1px solid rgba(185,255,102,.45)" }}
+                      style={{
+                        background: `linear-gradient(135deg, ${PRIMARY_SOFT}, ${PRIMARY_SOFT_2})`,
+                        border: "1px solid rgba(185,255,102,.45)",
+                      }}
                     >
                       Open link
                     </a>
@@ -790,13 +797,18 @@ function DetailsCard({ item, counselorName, onCancel, cancelDisabled }) {
           ) : (
             <>
               <KeyValue label="Topic" value={item.topic || "—"} />
-              <KeyValue label="Counselor" value={item.counselorReply ? counselorName || "Assigned" : "Assigned when replied"} />
+              <KeyValue
+                label="Counselor"
+                value={item.counselorReply ? counselorName || "Assigned" : "Assigned when replied"}
+              />
             </>
           )}
 
           <KeyValue
             label="Submitted"
-            value={`${formatDate(item.createdAt)}${formatTime(item.createdAt) ? ` • ${formatTime(item.createdAt)}` : ""}`}
+            value={`${formatDate(item.createdAt)}${
+              formatTime(item.createdAt) ? ` • ${formatTime(item.createdAt)}` : ""
+            }`}
           />
           <KeyValue label="Last updated" value={formatDate(item.updatedAt)} />
         </Section>
@@ -1089,6 +1101,19 @@ const STYLE = `
 
   .cc-clickable:active { transform: scale(0.98); }
   .cc-clickable { transition: transform 140ms ease, background-color 140ms ease, box-shadow 140ms ease; }
+
+  .cc-tabs-scroll{
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .cc-tabs-inner{ padding-bottom: 1px; }
+  .cc-tabs-scroll::-webkit-scrollbar{ height: 8px; }
+  .cc-tabs-scroll::-webkit-scrollbar-thumb{
+    background: rgba(15, 23, 42, 0.18);
+    border-radius: 999px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
 
   .cc-scroll{ scrollbar-width: thin; }
   .cc-scroll::-webkit-scrollbar{ width: 8px; height: 8px; }

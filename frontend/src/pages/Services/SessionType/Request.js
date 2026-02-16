@@ -353,13 +353,81 @@ export default function Request({ onClose }) {
   const [currentRequest, setCurrentRequest] = useState(null);
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
 
-  // ✅ Single pending meet lock state
-  // Backend enforces this (one active meet per week). No localStorage-based lock.
-  const [pendingLocked, setPendingLocked] = useState(false);
+  // ✅ Booking lock (A + B)
+  // A) One active/pending request at a time
+  // B) One MEET request per week (Mon–Sun, Asia/Manila)
+  // Backend enforces the real lock; this is just UI.
+  const [bookingLock, setBookingLock] = useState({ locked: false, code: "", message: "", meta: null });
 
-  const refreshPendingLock = useCallback(() => {
-    setPendingLocked(false);
+  const getPHWeekRange = useCallback((yyyyMmDd) => {
+    try {
+      const d = new Date(`${yyyyMmDd}T00:00:00+08:00`);
+      if (Number.isNaN(d.getTime())) return { weekStart: yyyyMmDd, weekEnd: yyyyMmDd };
+      const dow = d.getUTCDay(); // PH day because we pinned +08:00 above
+      const diffToMon = (dow + 6) % 7;
+      const monday = new Date(d);
+      monday.setUTCDate(monday.getUTCDate() - diffToMon);
+      const sunday = new Date(monday);
+      sunday.setUTCDate(sunday.getUTCDate() + 6);
+      const toPH = (dt) => dt.toLocaleDateString("en-CA", { timeZone: "Asia/Manila" });
+      return { weekStart: toPH(monday), weekEnd: toPH(sunday) };
+    } catch {
+      return { weekStart: yyyyMmDd, weekEnd: yyyyMmDd };
+    }
   }, []);
+
+  const checkBookingLock = useCallback(
+    async (sessionDate) => {
+      if (!sessionDate) {
+        setBookingLock({ locked: false, code: "", message: "", meta: null });
+        return;
+      }
+
+      try {
+        const data = await apiFetch(`/api/counseling/requests?mine=true&type=MEET`);
+        const items = Array.isArray(data?.items) ? data.items : Array.isArray(data) ? data : [];
+
+        const active = items.find((r) => {
+          const s = String(r.status || "");
+          if (s !== "Pending" && s !== "Approved") return false;
+          // If backend doesn't send completedAt for old records, treat Approved as active unless it is clearly Completed.
+          return true;
+        });
+
+        if (active) {
+          setBookingLock({
+            locked: true,
+            code: "HAS_ACTIVE_REQUEST",
+            message: "You already have an active request. Please wait until it is approved/disapproved (or completed) before booking again.",
+            meta: { activeId: active.id, status: active.status, date: active.date, time: active.time },
+          });
+          return;
+        }
+
+        const { weekStart, weekEnd } = getPHWeekRange(sessionDate);
+        const hasThisWeek = items.some((r) => String(r.date || "") >= weekStart && String(r.date || "") <= weekEnd);
+
+        if (hasThisWeek) {
+          setBookingLock({
+            locked: true,
+            code: "WEEKLY_LIMIT",
+            message: "Weekly limit reached. You can only book one counseling session per week.",
+            meta: { weekStart, weekEnd },
+          });
+          return;
+        }
+
+        setBookingLock({ locked: false, code: "", message: "", meta: null });
+      } catch (e) {
+        // If the check fails, don't block booking—backend will still enforce.
+        setBookingLock({ locked: false, code: "", message: "", meta: null });
+      }
+    },
+    [apiFetch, getPHWeekRange]
+  );
+
+  const pendingLocked = bookingLock.locked;
+
   // Persist pillUnlocked
   useEffect(() => {
     try {
@@ -523,6 +591,10 @@ export default function Request({ onClose }) {
   useEffect(() => {
     fetchAvailability();
   }, [fetchAvailability]);
+
+  useEffect(() => {
+    checkBookingLock(meet.date);
+  }, [checkBookingLock, meet.date]);
 
 
   const [meetError, setMeetError] = useState("");
@@ -737,7 +809,7 @@ const autoAssignCounselor = useCallback(
     clearMeetFeedback();
 
     if (pendingLocked) {
-      setMeetSuccess("You already have a pending request. Cancel it first before booking a new one.");
+      setMeetSuccess(bookingLock.message || "You can\'t book a new session right now.");
       return setStep(6);
     }
 
@@ -759,7 +831,7 @@ const autoAssignCounselor = useCallback(
     clearMeetFeedback();
 
     if (pendingLocked) {
-      setMeetSuccess("You already have a pending request. Cancel it first before booking a new one.");
+      setMeetSuccess(bookingLock.message || "You can\'t book a new session right now.");
       return setStep(6);
     }
 
@@ -801,8 +873,8 @@ const autoAssignCounselor = useCallback(
       setMeetSuccess("Request sent. You’ll receive a confirmation once approved.");
       setStep(6);
 
-      // refresh lock/availability by refetching
-      refreshPendingLock();
+      // refresh lock for UI
+      checkBookingLock(meet.date);
     } catch (e) {
       setMeetError(e?.message || "Failed to submit request.");
     }
