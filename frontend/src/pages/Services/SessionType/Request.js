@@ -407,6 +407,7 @@ export default function Request({ onClose }) {
   // ✅ Pending lock will be enforced by the backend (DB source of truth).
   // Frontend keeps a lightweight flag only to prevent accidental double-submits.
   const [pendingLocked, setPendingLocked] = useState(false);
+  const [pendingLockReason, setPendingLockReason] = useState("");
   const refreshPendingLock = useCallback(() => {
     // no-op (backend will enforce)
   }, []);
@@ -816,6 +817,9 @@ const autoAssignCounselor = useCallback(
       return;
     }
 
+    const selectedSlot = String(meet.time || "").trim();
+    const selectedCounselorId = String(meet.counselorId || "").trim();
+
     if (!meet.date) {
       setMeetError("Please select a date.");
       return;
@@ -831,7 +835,7 @@ const autoAssignCounselor = useCallback(
       return;
     }
 
-    const assigned = counselorsList.find((c) => c.id === selectedCounselorId);
+    const assigned = counselorsList.find((c) => String(c.id) === selectedCounselorId);
     if (!assigned) {
       setMeetError("Selected counselor not found. Please refresh and try again.");
       return;
@@ -855,9 +859,10 @@ const autoAssignCounselor = useCallback(
         )}`
       );
 
-      const availableSlots = Array.isArray(availability?.slots) ? availability.slots : [];
-      if (!availableSlots.includes(selectedSlot)) {
-        setMeetError("That slot was just taken. Please choose another time.");
+      const slots = Array.isArray(availability?.slots) ? availability.slots : [];
+      const hit = slots.find((s) => String(s?.time || "") === selectedSlot);
+      if (!hit || hit.enabled === false) {
+        setMeetError(hit?.reason ? `Time not available (${hit.reason}). Please choose another.` : "That slot was just taken. Please choose another time.");
         await fetchAvailability();
         return;
       }
