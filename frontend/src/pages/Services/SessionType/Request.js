@@ -525,6 +525,9 @@ export default function Request({ onClose }) {
   const [availabilityAny, setAvailabilityAny] = useState(null);
   const [availabilitySel, setAvailabilitySel] = useState(null);
   const [availabilityErr, setAvailabilityErr] = useState("");
+  const [availabilityLoading, setAvailabilityLoading] = useState(false);
+  const [nextDateFinding, setNextDateFinding] = useState(false);
+
 
   const fetchCounselors = useCallback(async () => {
     try {
@@ -546,30 +549,35 @@ export default function Request({ onClose }) {
   const fetchAvailability = useCallback(async () => {
     if (!meet.date) return;
 
+    setAvailabilityLoading(true);
     setAvailabilityErr("");
 
-    // Always fetch "any counselor" availability (used for slots when no counselor is selected + counselor list status)
     try {
-      const paramsAny = new URLSearchParams({ date: meet.date });
-      const any = await apiFetch(`/api/counseling/availability?${paramsAny.toString()}`);
-      setAvailabilityAny(any);
-    } catch (e) {
-      setAvailabilityAny(null);
-      setAvailabilityErr(e?.message || "Availability error");
-    }
-
-    // If a counselor is selected, fetch that counselor's availability too
-    if (meet.counselorId) {
+      // Always fetch "any counselor" availability (used for slots when no counselor is selected + counselor list status)
       try {
-        const paramsSel = new URLSearchParams({ date: meet.date, counselorId: meet.counselorId });
-        const sel = await apiFetch(`/api/counseling/availability?${paramsSel.toString()}`);
-        setAvailabilitySel(sel);
+        const paramsAny = new URLSearchParams({ date: meet.date });
+        const any = await apiFetch(`/api/counseling/availability?${paramsAny.toString()}`);
+        setAvailabilityAny(any);
       } catch (e) {
-        setAvailabilitySel(null);
-        setAvailabilityErr((prev) => prev || e?.message || "Availability error");
+        setAvailabilityAny(null);
+        setAvailabilityErr(e?.message || "Availability error");
       }
-    } else {
-      setAvailabilitySel(null);
+
+      // If a counselor is selected, fetch that counselor's availability too
+      if (meet.counselorId) {
+        try {
+          const paramsSel = new URLSearchParams({ date: meet.date, counselorId: meet.counselorId });
+          const sel = await apiFetch(`/api/counseling/availability?${paramsSel.toString()}`);
+          setAvailabilitySel(sel);
+        } catch (e) {
+          setAvailabilitySel(null);
+          setAvailabilityErr((prev) => prev || e?.message || "Availability error");
+        }
+      } else {
+        setAvailabilitySel(null);
+      }
+    } finally {
+      setAvailabilityLoading(false);
     }
   }, [apiFetch, meet.date, meet.counselorId]);
 
@@ -627,6 +635,17 @@ export default function Request({ onClose }) {
   }, []);
 
   const dayState = useMemo(() => getDayState(meet.date), [meet.date]);
+
+  // ✅ Used for Step 3 UX: if a date has zero enabled slots, push users to the next working day.
+  const anyEnabledSlotsCount = useMemo(() => {
+    if (!meet.date) return null;
+    const slots = Array.isArray(availabilityAny?.slots) ? availabilityAny.slots : null;
+    if (!slots) return null;
+    return slots.filter((s) => s && s.enabled).length;
+  }, [meet.date, availabilityAny]);
+
+  const hasBookableSlotsSelectedDate = anyEnabledSlotsCount === null ? null : anyEnabledSlotsCount > 0;
+
 
   const openCountByCounselor = useMemo(() => {
     const map = {};
@@ -715,7 +734,7 @@ const autoAssignCounselor = useCallback(
   [availabilityAny]
 );
 
-  const onDateChange = (val) => {
+  const onDateChange = useCallback((val) => {
     const ds = getDayState(val);
     clearMeetFeedback();
 
@@ -725,7 +744,49 @@ const autoAssignCounselor = useCallback(
       time: "",
       counselorId: ds.ok ? p.counselorId : "",
     }));
-  };
+  }, [clearMeetFeedback]);
+
+  // ✅ Step 3 helper: find the next date that has at least one enabled slot (backend source of truth).
+  const pickNextBookableDate = useCallback(async () => {
+    clearMeetFeedback();
+    setMeetError("");
+
+    if (nextDateFinding) return;
+
+    setNextDateFinding(true);
+    try {
+      let cur = meet.date && compareISO(meet.date, safeMinDateISO()) >= 0 ? meet.date : safeMinDateISO();
+      cur = findNextWorkingDay(cur);
+
+      for (let i = 0; i < 90; i++) {
+        const state = getDayState(cur);
+        if (!state.ok) {
+          cur = addDaysISO(cur, 1);
+          continue;
+        }
+
+        const params = new URLSearchParams({ date: cur });
+        const data = await apiFetch(`/api/counseling/availability?${params.toString()}`);
+        const slots = Array.isArray(data?.slots) ? data.slots : [];
+        const hasEnabled = slots.some((s) => s && s.enabled);
+
+        if (hasEnabled) {
+          onDateChange(cur);
+          return;
+        }
+
+        cur = addDaysISO(cur, 1);
+      }
+
+      setMeetError("No available dates found in the next 90 days. Please try again later.");
+    } catch (e) {
+      setMeetError(e?.message || "Failed to find the next available date.");
+    } finally {
+      setNextDateFinding(false);
+    }
+  }, [apiFetch, clearMeetFeedback, meet.date, nextDateFinding, onDateChange]);
+
+
 
   const requireTermsOr = (fn) => {
     if (!termsAccepted) return setShowTerms(true);
@@ -746,11 +807,28 @@ const autoAssignCounselor = useCallback(
   const canContinue = useMemo(() => {
     if (step === 1) return !!meet.sessionType;
     if (step === 2) return !!meet.reason;
-    if (step === 3) return !!meet.date && dayState.ok;
+    if (step === 3) {
+      if (!meet.date || !dayState.ok) return false;
+      if (availabilityLoading) return false;
+      if (availabilityErr) return false;
+      if (hasBookableSlotsSelectedDate === false) return false;
+      return true;
+    }
     if (step === 4) return !!meet.time && !!slotAvailability[meet.time]?.enabled;
     if (step === 5) return true;
     return false;
-  }, [step, meet.sessionType, meet.reason, meet.date, meet.time, dayState.ok, slotAvailability]);
+  }, [
+    step,
+    meet.sessionType,
+    meet.reason,
+    meet.date,
+    meet.time,
+    dayState.ok,
+    slotAvailability,
+    availabilityLoading,
+    availabilityErr,
+    hasBookableSlotsSelectedDate,
+  ]);
 
   const validateStep = useCallback(() => {
     if (!termsAccepted) return { ok: false, msg: null, showTerms: true };
@@ -760,6 +838,11 @@ const autoAssignCounselor = useCallback(
     if (step === 3) {
       if (!meet.date) return { ok: false, msg: "Select a date." };
       if (!dayState.ok) return { ok: false, msg: dayState.label };
+      if (availabilityLoading) return { ok: false, msg: "Checking available times… please wait." };
+      if (availabilityErr) return { ok: false, msg: availabilityErr };
+      if (hasBookableSlotsSelectedDate === false) {
+        return { ok: false, msg: "No remaining time slots for this date. Please choose the next available date." };
+      }
     }
     if (step === 4) {
       if (!meet.time) return { ok: false, msg: "Select a time." };
@@ -768,7 +851,7 @@ const autoAssignCounselor = useCallback(
       if (!slot?.enabled) return { ok: false, msg: `Time not available${slot?.reason ? ` (${slot.reason})` : ""}.` };
     }
     return { ok: true };
-  }, [termsAccepted, step, meet.sessionType, meet.reason, meet.date, meet.time, dayState.ok, dayState.label, slotAvailability]);
+  }, [termsAccepted, step, meet.sessionType, meet.reason, meet.date, meet.time, dayState.ok, dayState.label, slotAvailability, availabilityLoading, availabilityErr, hasBookableSlotsSelectedDate]);
 
   // ✅ Hard lock: if pendingLocked and user is in booking steps, push to success view
   useEffect(() => {
@@ -1230,17 +1313,35 @@ const isOverlayOpen = showTerms || showCancelConfirm;
                     </div>
                   </div>
 
+                  {meet.date && dayState.ok ? (
+                    <div className="mt-3">
+                      {availabilityLoading ? (
+                        <div className="rounded-xl border border-black/10 bg-white/60 p-3 text-[13.5px] font-[Lora]" style={{ color: TEXT_MUTED }}>
+                          Checking available times…
+                        </div>
+                      ) : availabilityErr ? (
+                        <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-[13.5px] font-[Lora] flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2" style={{ color: "#7f1d1d" }}>
+                          <div>Availability is unavailable. {availabilityErr}</div>
+                          <button type="button" className={[pillBtn, tapClass, "disabled:opacity-50 disabled:cursor-not-allowed"].join(" ")} onClick={fetchAvailability}>
+                            Retry
+                          </button>
+                        </div>
+                      ) : hasBookableSlotsSelectedDate === false ? (
+                        <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-[13.5px] font-[Lora]" style={{ color: "#78350f" }}>
+                          No remaining time slots for <span style={{ fontWeight: 800 }}>{isoToNice(meet.date)}</span>. Tap <span style={{ fontWeight: 800 }}>Next available date</span> to jump to the next working day with available times.
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
+
                   <div className="mt-3 flex flex-wrap gap-2">
                     <button
                       type="button"
                       className={[pillBtn, tapClass].join(" ")}
-                      onClick={() => {
-                        clearMeetFeedback();
-                        const next = findNextWorkingDay(safeMinDateISO());
-                        onDateChange(next);
-                      }}
+                      onClick={pickNextBookableDate}
+                      disabled={nextDateFinding}
                     >
-                      Next available date
+                      {nextDateFinding ? "Finding next available date…" : "Next available date"}
                     </button>
 
                     {meet.date ? (
