@@ -470,7 +470,19 @@ export default function Request({ onClose }) {
 
         const updated = {
           ...t,
-          messages: [...(t.messages || []), uiMsg],
+          messages: (() => {
+            const prevMsgs = (t.messages || []);
+            const exists = prevMsgs.some((m) => String(m.id) === String(uiMsg.id));
+            if (exists) return prevMsgs;
+            // If there is an optimistic temp message with same text from me, replace it
+            const optIdx = prevMsgs.findIndex((m) => m?._optimistic && m.from === uiMsg.from && String(m.text||"") === String(uiMsg.text||""));
+            if (optIdx !== -1) {
+              const nextMsgs = [...prevMsgs];
+              nextMsgs[optIdx] = { ...uiMsg, _optimistic: false };
+              return nextMsgs;
+            }
+            return [...prevMsgs, uiMsg];
+          })(),
           lastMessage: msg.text,
           lastTime: "now",
           unread: openMessages ? 0 : unreadNext,
@@ -521,6 +533,7 @@ export default function Request({ onClose }) {
     }).format(new Date());
 
     const tempId = `tmp-${Date.now()}`;
+    const clientId = `c_${Date.now()}_${Math.random().toString(16).slice(2)}`;
 
     // Optimistic UI (instant)
     setThreads((prev) =>
@@ -547,7 +560,43 @@ export default function Request({ onClose }) {
     );
 
     try {
-      await sendDrawerMessage({ threadId: tid, text: clean });
+      const sent = await sendDrawerMessage({ threadId: tid, text: clean, clientId });
+      const real = sent?.item || sent?.message || sent;
+      if (real?._id) {
+        setThreads((prev) =>
+          prev.map((t) => {
+            if (String(t.id) !== tid) return t;
+            const msgs = t.messages || [];
+            const exists = msgs.some((m) => String(m.id) === String(real._id));
+            if (exists) {
+              // remove any optimistic temp bubble
+              return { ...t, messages: msgs.filter((m) => m.id !== tempId) };
+            }
+            const localTime2 = new Intl.DateTimeFormat("en-US", {
+              timeZone: PH_TZ,
+              hour: "2-digit",
+              minute: "2-digit",
+              hour12: true,
+            }).format(new Date(real.createdAt));
+            const uiMsg2 = {
+              id: String(real._id),
+              from: "me",
+              text: real.text,
+              time: localTime2,
+              createdAt: new Date(real.createdAt).getTime(),
+              _raw: real,
+            };
+            // replace temp optimistic message if present
+            const idx = msgs.findIndex((m) => m.id === tempId);
+            if (idx !== -1) {
+              const nextMsgs = [...msgs];
+              nextMsgs[idx] = uiMsg2;
+              return { ...t, messages: nextMsgs, lastMessage: real.text, lastTime: "now", unread: 0 };
+            }
+            return { ...t, messages: [...msgs, uiMsg2], lastMessage: real.text, lastTime: "now", unread: 0 };
+          })
+        );
+      }
       markThreadRead(tid).catch(() => {});
       setChatError("");
     } catch (err) {

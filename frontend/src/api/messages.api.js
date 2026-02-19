@@ -96,10 +96,10 @@ export async function getThreadRaw(threadId, { limit = 60 } = {}) {
   return apiFetch(`/api/messages/threads/${threadId}?${qs.toString()}`);
 }
 
-export async function sendMessageRaw({ threadId, text }) {
+export async function sendMessageRaw({ threadId, text, clientId = null }) {
   return apiFetch(`/api/messages/threads/${threadId}/messages`, {
     method: "POST",
-    body: JSON.stringify({ text }),
+    body: JSON.stringify({ text, clientId }),
   });
 }
 
@@ -119,64 +119,18 @@ export function toDrawerThreads(rawThreads = []) {
   return (rawThreads || []).map((t) => {
     const threadId = String(t._id);
     const student = t.studentId;
-    const counselor = t.counselorId;
 
-    const isStudentMe = String(student?._id) === myId;
+// If thread is unclaimed, always mask identity (privacy-first)
+const isUnclaimed = !t.counselorId;
+const suffix = `T-${threadId.slice(-5)}`;
 
-    const other = isStudentMe ? counselor : student;
+const displayName = isUnclaimed
+  ? `New Student • Unclaimed (${suffix})`
+  : t.anonymous
+  ? `Anonymous Student (${suffix})`
+  : student?.fullName || `Student (${suffix})`;
 
-    const name = isStudentMe
-      ? counselor?.fullName || "Guidance Counselor"
-      : t.anonymous
-      ? "Anonymous Student"
-      : other?.fullName || "Student";
-
-    const subtitle = isStudentMe ? "Counselor" : "Student";
-
-    const unread = Number(t?.unreadCounts?.[myId] || 0);
-
-    const messages = (t.messages || []).map((m) => {
-      const from = String(m.senderId) === myId ? "me" : "them";
-      return {
-        id: String(m._id),
-        from,
-        text: m.text,
-        time: formatClock(m.createdAt),
-        createdAt: new Date(m.createdAt).getTime(),
-        _raw: m,
-      };
-    });
-
-    const lastAt = t.lastMessageAt || t.updatedAt || null;
-
-    return {
-      id: threadId,
-      name,
-      subtitle,
-      avatarUrl: "", // optional
-      lastMessage: t.lastMessage || (messages[messages.length - 1]?.text || ""),
-      lastTime: lastAt ? formatRelative(lastAt) : "",
-      unread,
-      status: t.status,
-      anonymous: !!t.anonymous,
-      messages,
-      _raw: t,
-    };
-  });
-}
-
-export function toInboxItems(rawThreads = []) {
-  const myId = getMyUserId();
-
-  return (rawThreads || []).map((t) => {
-    const threadId = String(t._id);
-
-    const student = t.studentId;
-    const displayName = t.anonymous
-      ? `Anonymous (T-${threadId.slice(-5)})`
-      : student?.fullName || `Student (T-${threadId.slice(-5)})`;
-
-    const studentId = t.anonymous ? null : student?.studentNumber || null;
+const studentId = isUnclaimed ? null : (t.anonymous ? null : (student?.studentNumber || null));
 
     const unread = Number(t?.unreadCounts?.[myId] || 0);
     const read = unread === 0;
@@ -227,8 +181,8 @@ export async function listThreadsForInbox() {
   return { items: toInboxItems(data.items || []) };
 }
 
-export async function sendDrawerMessage({ threadId, text }) {
-  const res = await sendMessageRaw({ threadId, text });
+export async function sendDrawerMessage({ threadId, text, clientId = null }) {
+  const res = await sendMessageRaw({ threadId, text, clientId });
   return res;
 }
 
