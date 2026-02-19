@@ -1,57 +1,150 @@
 // frontend/src/api/messages.api.js
 import { apiFetch } from "./apiFetch";
 
-/**
- * Ensure a thread exists.
- * mode: "student" | "anonymous"
- * If anonymous: pass sessionKey (stored in sessionStorage by MessagesDrawer)
- */
-export async function ensureThread({ mode = "student", email = "", sessionKey = "" } = {}) {
-  const headers = {};
-  if (sessionKey) headers["X-Chat-Session"] = sessionKey;
+/* ===========================
+   Helpers
+=========================== */
+const PH_TZ = "Asia/Manila";
 
-  const data = await apiFetch("/api/messages/threads/ensure", {
+function timeLabel(isoOrDate) {
+  if (!isoOrDate) return "";
+  const d = typeof isoOrDate === "string" ? new Date(isoOrDate) : new Date(isoOrDate);
+  if (Number.isNaN(d.getTime())) return "";
+  try {
+    return new Intl.DateTimeFormat("en-US", {
+      timeZone: PH_TZ,
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true,
+    }).format(d);
+  } catch {
+    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  }
+}
+
+function mapStudentMessage(msg) {
+  return {
+    id: msg.id,
+    from: msg.senderRole === "student" ? "me" : "them",
+    text: msg.text,
+    time: timeLabel(msg.createdAt),
+    createdAt: new Date(msg.createdAt).getTime(),
+  };
+}
+
+function mapCounselorMessage(msg) {
+  return {
+    id: msg.id,
+    by: msg.senderRole === "counselor" ? "Counselor" : "Participant",
+    at: timeLabel(msg.createdAt),
+    text: msg.text,
+    createdAt: new Date(msg.createdAt).getTime(),
+  };
+}
+
+function studentThreadBase(thread) {
+  return {
+    id: thread.id,
+    name: "Guidance Counselor",
+    subtitle: thread.visibility === "identified" ? "Counselor (identified)" : "Counselor (anonymous)",
+    avatarUrl: "",
+    lastMessage: thread.lastMessage || "",
+    lastTime: thread.lastMessageAt ? timeLabel(thread.lastMessageAt) : "",
+    unread: Number(thread.unread || 0),
+    status: thread.status || "open",
+    visibility: thread.visibility || "masked",
+    messages: Array.isArray(thread.messages) ? thread.messages.map(mapStudentMessage) : [],
+  };
+}
+
+/* ===========================
+   Student API
+=========================== */
+export async function ensureThread({ visibility = "masked" } = {}) {
+  const data = await apiFetch("/api/messages/threads", {
     method: "POST",
-    headers,
-    body: { mode, email },
+    body: JSON.stringify({ visibility }),
   });
-
-  return data; // { thread }
+  return data?.item ? studentThreadBase(data.item) : null;
 }
 
-export async function fetchThreads({ mode = "student", email = "", sessionKey = "" } = {}) {
-  // Student/anonymous UX expects a single active thread
-  const { thread } = await ensureThread({ mode, email, sessionKey });
-  return { items: [thread] };
+export async function listThreads() {
+  const data = await apiFetch("/api/messages/threads/my");
+  const items = Array.isArray(data?.items) ? data.items : [];
+  return items.map(studentThreadBase);
 }
 
-export async function fetchThread(threadId, { sessionKey = "", limit = 200 } = {}) {
-  const headers = {};
-  if (sessionKey) headers["X-Chat-Session"] = sessionKey;
-
-  return apiFetch(`/api/messages/threads/${threadId}/messages?limit=${encodeURIComponent(limit)}`, {
-    method: "GET",
-    headers,
-  });
+export async function getThread(threadId, { limit = 50 } = {}) {
+  const data = await apiFetch(`/api/messages/threads/${threadId}?limit=${encodeURIComponent(limit)}`);
+  return data?.item ? studentThreadBase(data.item) : null;
 }
 
-export async function sendMessage({ threadId, text, sessionKey = "" }) {
-  const clean = String(text || "").trim();
-  if (!clean) throw new Error("Message is empty");
-
-  const headers = {};
-  if (sessionKey) headers["X-Chat-Session"] = sessionKey;
-
-  return apiFetch(`/api/messages/threads/${threadId}/messages`, {
+export async function sendMessage({ threadId, text }) {
+  const data = await apiFetch(`/api/messages/threads/${threadId}/messages`, {
     method: "POST",
-    headers,
-    body: { text: clean },
+    body: JSON.stringify({ text }),
   });
+  return {
+    message: data?.item ? mapStudentMessage(data.item) : null,
+    thread: data?.thread ? studentThreadBase(data.thread) : null,
+  };
 }
 
-export async function markThreadRead(threadId, { sessionKey = "" } = {}) {
-  const headers = {};
-  if (sessionKey) headers["X-Chat-Session"] = sessionKey;
+export async function markThreadRead(threadId) {
+  return apiFetch(`/api/messages/threads/${threadId}/seen`, { method: "POST" });
+}
 
-  return apiFetch(`/api/messages/threads/${threadId}/read`, { method: "POST", headers });
+/* ===========================
+   Counselor API
+=========================== */
+export async function counselorListInbox() {
+  const data = await apiFetch("/api/messages/inbox");
+  return Array.isArray(data?.items) ? data.items : [];
+}
+
+export async function counselorGetThread(threadId, { limit = 100 } = {}) {
+  const data = await apiFetch(`/api/messages/threads/${threadId}?limit=${encodeURIComponent(limit)}`);
+  // Backend returns item with counselor-friendly fields in this endpoint for counselors
+  const item = data?.item || null;
+  if (!item) return null;
+
+  return {
+    ...item,
+    messages: Array.isArray(item.messages) ? item.messages.map(mapCounselorMessage) : [],
+  };
+}
+
+export async function counselorSendMessage({ threadId, text }) {
+  const data = await apiFetch(`/api/messages/threads/${threadId}/messages`, {
+    method: "POST",
+    body: JSON.stringify({ text }),
+  });
+
+  return {
+    message: data?.item ? mapCounselorMessage(data.item) : null,
+    thread: data?.thread || null,
+  };
+}
+
+export async function counselorMarkRead(threadId) {
+  return apiFetch(`/api/messages/threads/${threadId}/seen`, { method: "POST" });
+}
+
+export async function counselorCloseThread(threadId) {
+  return apiFetch(`/api/messages/threads/${threadId}/close`, { method: "POST" });
+}
+
+/* ===========================
+   Realtime payload mappers
+=========================== */
+export function mapRealtimeStudentMessage(evt) {
+  const msg = evt?.message;
+  if (!msg) return null;
+  return mapStudentMessage(msg);
+}
+
+export function mapRealtimeCounselorMessage(evt) {
+  const msg = evt?.message;
+  if (!msg) return null;
+  return mapCounselorMessage(msg);
 }

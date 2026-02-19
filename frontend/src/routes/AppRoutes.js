@@ -9,6 +9,7 @@ import AboutUs from "../pages/AboutUs";
 import PrivacyPolicy from "../pages/PrivacyPolicy";
 
 import RequireLoginModal from "./RequireLoginModal";
+import RequireRole from "./RequireRole";
 
 import GuidanceCounseling from "../pages/Services/GuidanceCounseling";
 import Request from "../pages/Services/SessionType/Request";
@@ -31,7 +32,6 @@ export default function AppRoutes() {
 
       <Routes>
         {/* PUBLIC */}
-        <Route path="/counselor/dashboard" element={<CounselorDashboard />} />
 
         <Route element={<MainLayout />}>
           <Route path="/login" element={<Login />} />
@@ -40,7 +40,14 @@ export default function AppRoutes() {
           <Route path="/unauthorized" element={<Unauthorized />} />
         </Route>
 
-        {/* APP */}
+                {/* 🔒 Counselor Dashboard (Login + Role required) */}
+        <Route element={<RequireLoginModal featureName="Counselor Dashboard" />}>
+          <Route element={<RequireRole allowedRoles={["Counselor", "Admin"]} />}>
+            <Route path="/counselor/dashboard" element={<CounselorDashboard />} />
+          </Route>
+        </Route>
+
+{/* APP */}
         <Route element={<MainLayout />}>
           <Route path="/" element={<LandingPage />} />
           <Route path="/about-us" element={<AboutUs />} />

@@ -2,9 +2,7 @@
 import { io } from "socket.io-client";
 import { getApiBaseUrl } from "./apiFetch";
 
-let _socket = null;
-
-function getToken() {
+function readToken() {
   try {
     return (
       localStorage.getItem("token") ||
@@ -16,43 +14,55 @@ function getToken() {
   }
 }
 
-/**
- * Connect a singleton socket.
- * - Uses JWT token if present
- * - Also accepts optional sessionKey (for anonymous chat)
- */
-export function connectSocket({ sessionKey = "" } = {}) {
-  if (_socket) return _socket;
+function getSocketUrl() {
+  const base = getApiBaseUrl();
+  // In local dev, apiFetch may use relative proxy (""). Socket needs an absolute URL.
+  if (!base) return "http://localhost:5000";
+  return base;
+}
 
-  let base = getApiBaseUrl();
+let _socket = null;
+let _lastToken = null;
 
-  // apiFetch returns "" on localhost to allow proxy;
-  // but websockets usually need a real backend URL.
-  if (!base && typeof window !== "undefined") {
-    base = "http://localhost:5000";
+export function getSocket() {
+  const token = readToken();
+  const url = getSocketUrl();
+
+  if (_socket) {
+    // If token changed, refresh auth
+    if (token !== _lastToken) {
+      _lastToken = token;
+      _socket.auth = { token };
+      // reconnect with new auth
+      try {
+        if (_socket.connected) _socket.disconnect();
+        _socket.connect();
+      } catch {}
+    }
+    return _socket;
   }
 
-  _socket = io(base, {
+  _lastToken = token;
+
+  _socket = io(url, {
+    path: "/socket.io",
+    autoConnect: false,
     transports: ["websocket", "polling"],
-    reconnection: true,
-    reconnectionAttempts: 8,
-    reconnectionDelayMax: 4000,
-    auth: {
-      token: getToken(),
-      sessionKey: String(sessionKey || "").trim(),
-    },
+    auth: { token },
   });
 
   return _socket;
 }
 
-export function getSocket() {
-  return _socket;
+export function connectSocket() {
+  const s = getSocket();
+  if (!s.connected) s.connect();
+  return s;
 }
 
 export function disconnectSocket() {
+  if (!_socket) return;
   try {
-    _socket?.disconnect();
+    _socket.disconnect();
   } catch {}
-  _socket = null;
 }

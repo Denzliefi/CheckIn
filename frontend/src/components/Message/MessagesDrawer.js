@@ -1,855 +1,394 @@
-// src/components/MessagesDrawer.jsx
+// frontend/src/components/Message/MessagesDrawer.js
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
-const CHECKIN_GREEN = "#B9FF66";
-const TEXT_MAIN = "#141414";
+const PH_TZ = "Asia/Manila";
 
-// 24h expiry from chat creation
-const EXPIRE_MS = 24 * 60 * 60 * 1000;
-
-// session storage key (per session as requested)
-const SS_KEY = "counselor_chat_session_v1";
-
-/** ✅ SSR-safe media hook */
-function useMedia(query) {
-  const [matches, setMatches] = useState(false);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const m = window.matchMedia(query);
-    const onChange = () => setMatches(m.matches);
-    onChange();
-
-    if (m.addEventListener) m.addEventListener("change", onChange);
-    else m.addListener(onChange);
-
-    return () => {
-      if (m.removeEventListener) m.removeEventListener("change", onChange);
-      else m.removeListener(onChange);
-    };
-  }, [query]);
-
-  return matches;
-}
-
-function safeParse(v, fallback) {
+function timeLabel(ts) {
+  if (!ts) return "";
+  const d = typeof ts === "number" ? new Date(ts) : new Date(ts);
+  if (Number.isNaN(d.getTime())) return "";
   try {
-    if (!v) return fallback;
-    return JSON.parse(v);
+    return new Intl.DateTimeFormat("en-US", {
+      timeZone: PH_TZ,
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true,
+    }).format(d);
   } catch {
-    return fallback;
+    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   }
 }
 
-function isValidEmail(email) {
-  const e = String(email || "").trim();
-  if (!e) return false;
-  return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/i.test(e);
-}
-
-function sameDay(a, b) {
-  if (!a || !b) return false;
-  const da = new Date(a);
-  const db = new Date(b);
-  return (
-    da.getFullYear() === db.getFullYear() &&
-    da.getMonth() === db.getMonth() &&
-    da.getDate() === db.getDate()
-  );
-}
-
-function dayLabel(dateLike) {
-  if (!dateLike) return "";
-  const d = new Date(dateLike);
-  const now = new Date();
-  const yesterday = new Date();
-  yesterday.setDate(now.getDate() - 1);
-
-  const isToday = sameDay(d, now);
-  const isYday = sameDay(d, yesterday);
-
-  if (isToday) return "Today";
-  if (isYday) return "Yesterday";
-
-  return d.toLocaleDateString(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  });
+function cls(...x) {
+  return x.filter(Boolean).join(" ");
 }
 
 export default function MessagesDrawer({
   open,
   onClose,
   threads = [],
-  initialThreadId = "",
-  onSendMessage, // async ({ threadId, text }) => messageObject
-  onStartSession, // async ({ mode, email, sessionKey }) => { threadId }
-  title = "Messages",
+  onStartChat, // ({ visibility }) => Promise<void>
+  onOpenThread, // (threadId) => Promise<void>
+  onActiveThreadChange, // (threadId) => void
+  onSendMessage, // ({ threadId, text }) => Promise<void>
+  accent = "#B9FF66",
 }) {
-  const PAGE_SIZE = 10;
-
-  // views:
-  // "mode" -> choose Student/Anonymous
-  // "email" -> student email required
-  // "chat" -> counselor chat
-  const [view, setView] = useState("mode");
-
-  const [mode, setMode] = useState(null); // "student" | "anonymous" | null
-  const [studentEmail, setStudentEmail] = useState("");
-  const [emailTouched, setEmailTouched] = useState(false);
-
-  const [activeId, setActiveId] = useState(initialThreadId || threads?.[0]?.id || "");
+  const [activeId, setActiveId] = useState("");
   const [draft, setDraft] = useState("");
-  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  const [starting, setStarting] = useState(false);
+  const [visibility, setVisibility] = useState("masked"); // masked | identified
+  const [error, setError] = useState("");
 
-  // expiry session
-  const [createdAtMs, setCreatedAtMs] = useState(null);
-  const [expiresAtMs, setExpiresAtMs] = useState(null);
-  const [sessionKey, setSessionKey] = useState("");
+  const list = useMemo(() => (Array.isArray(threads) ? threads : []), [threads]);
+  const activeThread = useMemo(() => list.find((t) => t.id === activeId) || null, [list, activeId]);
 
-  // responsive flags
-  const isMobile = useMedia("(max-width: 520px)");
-  const isSmallHeight = useMedia("(max-height: 640px)");
+  const scrollRef = useRef(null);
 
-  const activeThread = useMemo(
-    () => threads.find((t) => t.id === activeId) || null,
-    [threads, activeId]
-  );
-
-  const counselorClosed = useMemo(() => {
-    const t = activeThread;
-    if (!t) return false;
-    return (
-      t.status === "closed" ||
-      t.closed === true ||
-      t.endedBy === "counselor" ||
-      t.closedByCounselor === true
-    );
-  }, [activeThread]);
-
-  // normalize messages
-  const normalizedMessages = useMemo(() => {
-    const all = activeThread?.messages || [];
-    return all.map((m, idx) => ({
-      ...m,
-      _idx: idx,
-      createdAt: m.createdAt || m.time || Date.now(),
-    }));
-  }, [activeThread]);
-
-  const visibleMessages = useMemo(() => {
-    const all = normalizedMessages;
-    const start = Math.max(0, all.length - visibleCount);
-    return all.slice(start);
-  }, [normalizedMessages, visibleCount]);
-
-  // date separators + bubble grouping
-  const chatRows = useMemo(() => {
-    const rows = [];
-    for (let i = 0; i < visibleMessages.length; i++) {
-      const m = visibleMessages[i];
-      const prev = visibleMessages[i - 1];
-      const next = visibleMessages[i + 1];
-
-      const showDay = !prev || dayLabel(prev.createdAt) !== dayLabel(m.createdAt);
-      const sameAsPrevSender = !!prev && prev.from === m.from;
-      const sameAsNextSender = !!next && next.from === m.from;
-
-      const isStart = !sameAsPrevSender || showDay;
-      const isEnd = !sameAsNextSender;
-
-      if (showDay) rows.push({ type: "day", key: `day-${m._idx}`, label: dayLabel(m.createdAt) });
-
-      rows.push({ type: "msg", key: m.id || `m-${m._idx}`, msg: m, isStart, isEnd });
-    }
-    return rows;
-  }, [visibleMessages]);
-
-  // ---------- Session persistence (per session) ----------
-  function loadSession() {
-    if (typeof window === "undefined") return null;
-    return safeParse(window.sessionStorage.getItem(SS_KEY), null);
-  }
-  function saveSession(next) {
-    if (typeof window === "undefined") return;
-    window.sessionStorage.setItem(SS_KEY, JSON.stringify(next));
-  }
-  function clearSession() {
-    if (typeof window === "undefined") return;
-    window.sessionStorage.removeItem(SS_KEY);
-  }
-
-  function resetToStart() {
-    setView("mode");
-    setMode(null);
-    setStudentEmail("");
-    setEmailTouched(false);
-    setDraft("");
-    setVisibleCount(PAGE_SIZE);
-    setCreatedAtMs(null);
-    setExpiresAtMs(null);
-    setSessionKey("");
-    setActiveId(initialThreadId || threads?.[0]?.id || "");
-    clearSession();
-  }
-
-  // ✅ On open: restore from sessionStorage (resume until expiry)
+  // Pick default active thread
   useEffect(() => {
     if (!open) return;
-
-    const saved = loadSession();
-    const defaultThreadId = initialThreadId || threads?.[0]?.id || "";
-    setActiveId((prev) => prev || defaultThreadId);
-
-    if (!saved) {
-      setView("mode");
-      setMode(null);
-      setStudentEmail("");
-      setEmailTouched(false);
-      setDraft("");
-      setVisibleCount(PAGE_SIZE);
-      setCreatedAtMs(null);
-      setExpiresAtMs(null);
+    if (!list.length) {
+      setActiveId("");
       return;
     }
-
-    const now = Date.now();
-    if (saved?.expiresAtMs && now >= saved.expiresAtMs) {
-      resetToStart();
-      return;
-    }
-
-    setView(saved.view || "mode");
-    setMode(saved.mode || null);
-    setStudentEmail(saved.studentEmail || "");
-    setCreatedAtMs(saved.createdAtMs || null);
-    setExpiresAtMs(saved.expiresAtMs || null);
-    setSessionKey(saved.sessionKey || "");
-    setActiveId(saved.activeId || defaultThreadId);
-    setVisibleCount(saved.visibleCount || PAGE_SIZE);
-    setDraft("");
-    setEmailTouched(false);
+    if (activeId && list.some((t) => t.id === activeId)) return;
+    setActiveId(list[0].id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
-
-  // persist whenever key state changes
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    saveSession({
-      view,
-      mode,
-      studentEmail,
-      createdAtMs,
-      expiresAtMs,
-      sessionKey,
-      activeId,
-      visibleCount,
-    });
-  }, [view, mode, studentEmail, createdAtMs, expiresAtMs, activeId, visibleCount]);
-
-  // ✅ Expiry timer: if expired -> reset
-  useEffect(() => {
-    if (!open) return;
-    if (!expiresAtMs) return;
-
-    const id = window.setInterval(() => {
-      if (Date.now() >= expiresAtMs) resetToStart();
-    }, 15_000);
-
-    return () => window.clearInterval(id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, expiresAtMs]);
-
-  // refs for scroll control
-  const chatEndRef = useRef(null);
-  const chatBodyRef = useRef(null);
-
-  // ✅ stable "load older messages" scroll restore
-  const pendingScrollRestoreRef = useRef(null);
-
-  function onChatScroll(e) {
-    const el = e.currentTarget;
-    if (el.scrollTop > 16) return;
-
-    const total = normalizedMessages.length || 0;
-    if (visibleCount >= total) return;
-
-    pendingScrollRestoreRef.current = el.scrollHeight;
-    setVisibleCount((c) => Math.min(total, c + PAGE_SIZE));
-  }
+  }, [open, list.length]);
 
   useEffect(() => {
     if (!open) return;
-    if (view !== "chat") return;
-    const el = chatBodyRef.current;
-    if (!el) return;
-
-    // restore after older messages render
-    if (pendingScrollRestoreRef.current != null) {
-      const prevHeight = pendingScrollRestoreRef.current;
-      pendingScrollRestoreRef.current = null;
-      el.scrollTop = el.scrollHeight - prevHeight;
-    }
-  }, [open, view, visibleMessages.length]);
-
-  // ✅ always start at bottom when entering chat / switching thread
-  useEffect(() => {
-    if (!open) return;
-    if (view !== "chat") return;
-
+    if (!activeId) return;
+    onActiveThreadChange?.(activeId);
+    // scroll
     requestAnimationFrame(() => {
-      const el = chatBodyRef.current;
+      const el = scrollRef.current;
       if (!el) return;
       el.scrollTop = el.scrollHeight;
     });
-  }, [open, view, activeId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeId, open]);
 
-  // responsive drawer style
-  const drawerStyle = useMemo(() => {
-    if (isMobile) {
-      return {
-        ...styles.drawer,
-        right: 0,
-        bottom: 0,
-        width: "100vw",
-        height: "100vh",
-        borderRadius: 0,
-        border: "none",
-      };
+  // Close on ESC
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e) => e.key === "Escape" && onClose?.();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
+
+  async function startChat() {
+    if (!onStartChat) return;
+    setStarting(true);
+    setError("");
+    try {
+      await onStartChat({ visibility });
+    } catch (e) {
+      setError(String(e?.message || "Failed to start chat."));
+    } finally {
+      setStarting(false);
     }
-
-    return {
-      ...styles.drawer,
-      width: 420,
-      height: isSmallHeight ? 560 : 640,
-      right: 18,
-      bottom: 18,
-      borderRadius: 22,
-      border: "1px solid rgba(20,20,20,0.10)",
-    };
-  }, [isMobile, isSmallHeight]);
-
-  const overlayStyle = useMemo(() => {
-    return {
-      ...styles.overlay,
-      background: isMobile ? "rgba(0,0,0,0.45)" : styles.overlay.background,
-    };
-  }, [isMobile]);
-
-  const headerStyle = useMemo(() => {
-    if (!isMobile) return styles.header;
-    return { ...styles.header, padding: "12px 14px", gridTemplateColumns: "44px 1fr 44px" };
-  }, [isMobile]);
-
-  const headerBtnStyle = useMemo(() => {
-    if (!isMobile) return styles.headerBtn;
-    return { ...styles.headerBtn, width: 44, height: 44, borderRadius: 14 };
-  }, [isMobile]);
-
-  const isOpen = !!open;
-
-  // ✅ expiry start (write immediately to sessionStorage)
-  function ensureChatSessionStarted() {
-    const saved = loadSession() || {};
-
-    if (saved?.createdAtMs && saved?.expiresAtMs) {
-      setCreatedAtMs(saved.createdAtMs);
-      setExpiresAtMs(saved.expiresAtMs);
-      setSessionKey(saved.sessionKey || "");
-      return;
-    }
-
-    const now = Date.now();
-    const next = { ...saved, createdAtMs: now, expiresAtMs: now + EXPIRE_MS };
-    // Ensure an anonymous session key exists (used for realtime chat)
-    if (!next.sessionKey) {
-      try {
-        const bytes =
-          typeof crypto !== "undefined" && crypto.getRandomValues
-            ? crypto.getRandomValues(new Uint8Array(16))
-            : Array.from({ length: 16 }, () => Math.floor(Math.random() * 256));
-        next.sessionKey = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
-      } catch {
-        next.sessionKey = `sess_${Date.now()}_${Math.random().toString(16).slice(2)}`;
-      }
-    }
-
-    saveSession(next);
-    setCreatedAtMs(next.createdAtMs);
-    setExpiresAtMs(next.expiresAtMs);
-    setSessionKey(next.sessionKey || "");
   }
 
-  async function handleSend() {
+  async function openThread(threadId) {
+    setActiveId(threadId);
+    setError("");
+    const t = list.find((x) => x.id === threadId);
+    if (t && Array.isArray(t.messages) && t.messages.length) return;
+    if (!onOpenThread) return;
+    try {
+      await onOpenThread(threadId);
+    } catch (e) {
+      setError(String(e?.message || "Failed to load conversation."));
+    }
+  }
+
+  async function send() {
     const text = draft.trim();
-    if (!text || !activeThread) return;
-    if (counselorClosed) return;
-    if (expiresAtMs && Date.now() >= expiresAtMs) return;
+    if (!text) return;
+    if (!activeThread) return;
 
     setDraft("");
+    setError("");
     try {
       await onSendMessage?.({ threadId: activeThread.id, text });
-
       requestAnimationFrame(() => {
-        const el = chatBodyRef.current;
+        const el = scrollRef.current;
         if (!el) return;
         el.scrollTop = el.scrollHeight;
-        chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
       });
     } catch (e) {
-      console.error(e);
-      setDraft(text);
+      setError(String(e?.message || "Failed to send message."));
+      setDraft(text); // restore
     }
   }
 
-  async function goToChat(threadId, meta = null) {
-    setVisibleCount(PAGE_SIZE);
-    ensureChatSessionStarted();
+  if (!open) return null;
 
-    const saved = loadSession() || {};
-    const sk = saved.sessionKey || sessionKey || "";
-
-    let nextThreadId = threadId;
-
-    // Allow parent container to create/ensure thread in backend
-    if (meta && typeof onStartSession === "function") {
-      try {
-        const out = await onStartSession({ ...meta, sessionKey: sk });
-        if (out?.threadId) nextThreadId = out.threadId;
-      } catch (e) {
-        console.error(e);
-      }
-    }
-
-    setActiveId(nextThreadId);
-    setView("chat");
-  }
-
-  function chooseMode(nextMode) {
-    setMode(nextMode);
-    setDraft("");
-    setVisibleCount(PAGE_SIZE);
-
-    const threadId = initialThreadId || threads?.[0]?.id || "";
-
-    if (nextMode === "anonymous") {
-      setStudentEmail("");
-      setEmailTouched(false);
-      void goToChat(threadId, { mode: "anonymous", email: "" });
-      return;
-    }
-
-    setView("email");
-  }
-
-  function continueStudent() {
-    setEmailTouched(true);
-    if (!isValidEmail(studentEmail)) return;
-
-    const threadId = initialThreadId || threads?.[0]?.id || "";
-    void goToChat(threadId, { mode: "student", email: studentEmail });
-  }
-
-  function endConversationByUser() {
-    resetToStart();
-  }
-
-  // ---------- UI ----------
-  return !isOpen ? null : (
-    <>
-      <div style={overlayStyle} onClick={onClose} />
-
-      <div style={drawerStyle} role="dialog" aria-label="Messages">
-        <div style={headerStyle}>
-          {view === "chat" ? (
-            <button
-              style={headerBtnStyle}
-              onClick={endConversationByUser}
-              aria-label="End conversation"
-              title="End conversation"
+  return (
+    <div
+      className="fixed inset-0 z-[10001] flex items-stretch justify-end"
+      role="dialog"
+      aria-modal="true"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose?.();
+      }}
+      style={{ background: "rgba(15, 23, 42, 0.35)", backdropFilter: "blur(6px)" }}
+    >
+      <div
+        className={cls(
+          "h-full w-full max-w-[980px] bg-white shadow-2xl border-l border-black/10",
+          "flex flex-col"
+        )}
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-4 sm:px-5 py-4 border-b border-slate-200">
+          <div className="flex items-center gap-3 min-w-0">
+            <div
+              className="h-10 w-10 rounded-full grid place-items-center shrink-0"
+              style={{ backgroundColor: `${accent}55` }}
             >
-              End
-            </button>
-          ) : (
-            <span style={{ width: isMobile ? 44 : 34 }} />
-          )}
-
-          <div style={styles.headerTitleWrap}>
-            <div style={styles.headerTitleRow}>
-              <span style={styles.headerTitle}>{view === "chat" ? "Counselor Chat" : title}</span>
-              {mode ? (
-                <span style={styles.modeBadge}>{mode === "student" ? "Student" : "Anonymous"}</span>
-              ) : null}
+              💬
+            </div>
+            <div className="min-w-0">
+              <div className="font-[Nunito] font-extrabold text-[15px] text-slate-900 truncate">
+                Counselor Chat
+              </div>
+              <div className="font-[Lora] text-[12.5px] text-slate-500 truncate">
+                {list.length ? "Your conversations" : "Start a conversation"}
+              </div>
             </div>
           </div>
 
-          <button style={headerBtnStyle} onClick={onClose} aria-label="Close" title="Close">
-            ✕
+          <button
+            type="button"
+            onClick={() => onClose?.()}
+            className="px-3 py-2 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-700 font-[Nunito] font-extrabold text-[13px]"
+          >
+            Close
           </button>
         </div>
 
-        {view === "mode" ? (
-          <div style={styles.centerWrap}>
-            <div style={styles.panel}>
-              <div style={styles.panelTitle}>Continue to counselor chat</div>
-              <div style={styles.panelText}>
-                Choose how you want to start. You can end the conversation anytime. Conversations expire after{" "}
-                <b>24 hours</b> and will reset.
+        {/* Body */}
+        <div className="flex-1 min-h-0 flex flex-col lg:flex-row">
+          {/* Left list */}
+          <div className="lg:w-[340px] border-b lg:border-b-0 lg:border-r border-slate-200 bg-white">
+            <div className="px-4 py-3 flex items-center justify-between gap-2">
+              <div className="text-[12px] font-extrabold text-slate-700 font-[Nunito]">
+                Conversations
               </div>
-
-              <div style={{ height: 12 }} />
-
-              <button type="button" style={styles.bigChoiceBtn} onClick={() => chooseMode("student")}>
-                <div style={styles.choiceTitle}>Continue as Student</div>
-                <div style={styles.choiceSub}>Email required for follow-up if counselor doesn’t respond.</div>
-              </button>
-
-              <button type="button" style={styles.bigChoiceBtnAlt} onClick={() => chooseMode("anonymous")}>
-                <div style={styles.choiceTitle}>Continue as Anonymous</div>
-                <div style={styles.choiceSub}>No email required. Chat still expires after 24 hours.</div>
-              </button>
-            </div>
-          </div>
-        ) : view === "email" ? (
-          <div style={styles.centerWrap}>
-            <div style={styles.panel}>
-              <div style={styles.panelTitle}>Student email</div>
-              <div style={styles.panelText}>
-                Your email is required so we can follow up if the counselor doesn’t respond in chat. Stored{" "}
-                <b>only for this session</b>.
-              </div>
-
-              <div style={{ height: 14 }} />
-
-              <label style={styles.label}>Email address</label>
-              <input
-                value={studentEmail}
-                onChange={(e) => setStudentEmail(e.target.value)}
-                onBlur={() => setEmailTouched(true)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    continueStudent();
-                  }
-                }}
-                placeholder="name@school.edu"
-                style={{
-                  ...styles.input,
-                  ...(emailTouched && !isValidEmail(studentEmail) ? styles.inputError : null),
-                }}
-              />
-
-              {emailTouched && !isValidEmail(studentEmail) ? (
-                <div style={styles.errorText}>Please enter a valid email.</div>
-              ) : (
-                <div style={styles.hintText}>Example: name@school.edu</div>
-              )}
-
-              <div style={{ height: 14 }} />
-
-              <div style={{ display: "flex", gap: 10 }}>
-                <button type="button" style={styles.secondaryBtn} onClick={resetToStart}>
-                  Back
-                </button>
-
-                <button
-                  type="button"
-                  style={{
-                    ...styles.primaryBtn,
-                    ...(isValidEmail(studentEmail) ? null : styles.primaryBtnDisabled),
-                  }}
-                  onClick={continueStudent}
-                  disabled={!isValidEmail(studentEmail)}
-                >
-                  Continue to Chat
-                </button>
-              </div>
-            </div>
-          </div>
-        ) : (
-          // CHAT VIEW
-          <div style={styles.chatWrap}>
-            <div style={styles.systemWrap}>
-              <div style={styles.systemBubble}>
-                <div style={styles.systemTitle}>Your privacy is valued.</div>
-                <div style={styles.systemText}>
-                  Counselors will reply as soon as possible. If this is an emergency, contact your local hotline.
-                </div>
-              </div>
-
-              {!activeThread ? (
-                <div style={styles.closedBanner}>
-                  No counselor conversation is available yet.
-                  <button type="button" style={styles.closedBannerBtn} onClick={resetToStart}>
-                    Restart
-                  </button>
-                </div>
-              ) : counselorClosed ? (
-                <div style={styles.closedBanner}>
-                  This conversation has been closed by the counselor.
-                  <button type="button" style={styles.closedBannerBtn} onClick={resetToStart}>
-                    Start new conversation
-                  </button>
-                </div>
-              ) : null}
-
-              {expiresAtMs ? (
-                <div style={styles.expireHint}>
-                  Expires:{" "}
-                  <b>
-                    {new Date(expiresAtMs).toLocaleString(undefined, {
-                      month: "short",
-                      day: "2-digit",
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })}
-                  </b>
-                </div>
-              ) : null}
+              <span className="text-[11px] font-bold text-slate-400">{list.length}</span>
             </div>
 
-            <div ref={chatBodyRef} style={styles.chatBody} onScroll={onChatScroll}>
-              <div style={styles.topFade} aria-hidden="true" />
-
-              {normalizedMessages.length > visibleCount ? (
-                <div style={styles.loadMoreHint}>Loading earlier messages…</div>
-              ) : (
-                <div style={styles.loadMoreHintDim}>Start of conversation</div>
-              )}
-
-              {chatRows.map((row) => {
-                if (row.type === "day") {
+            {list.length ? (
+              <div className="max-h-[220px] lg:max-h-none overflow-y-auto">
+                {list.map((t) => {
+                  const isActive = t.id === activeId;
                   return (
-                    <div key={row.key} style={styles.dayRow}>
-                      <span style={styles.dayChip}>{row.label}</span>
-                    </div>
+                    <button
+                      key={t.id}
+                      type="button"
+                      onClick={() => openThread(t.id)}
+                      className={cls(
+                        "w-full text-left px-4 py-3 border-t border-slate-100",
+                        "hover:bg-slate-50 transition",
+                        isActive && "bg-slate-50"
+                      )}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <div className="font-[Nunito] font-extrabold text-[13px] text-slate-900 truncate">
+                              {t.name || "Guidance Counselor"}
+                            </div>
+                            {t.visibility === "masked" ? (
+                              <span className="text-[10px] px-2 py-[2px] rounded-full bg-slate-100 text-slate-600 font-bold">
+                                Anonymous
+                              </span>
+                            ) : (
+                              <span className="text-[10px] px-2 py-[2px] rounded-full bg-emerald-50 text-emerald-700 font-bold">
+                                Identified
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-[12px] text-slate-500 truncate">
+                            {t.lastMessage || "No messages yet"}
+                          </div>
+                        </div>
+
+                        <div className="shrink-0 text-right">
+                          <div className="text-[11px] font-bold text-slate-400">{t.lastTime || ""}</div>
+                          {t.unread > 0 ? (
+                            <div
+                              className="mt-1 inline-flex items-center justify-center min-w-[20px] h-[20px] px-2 rounded-full text-[11px] font-extrabold text-slate-900"
+                              style={{ backgroundColor: accent }}
+                            >
+                              {t.unread}
+                            </div>
+                          ) : null}
+                        </div>
+                      </div>
+                    </button>
                   );
-                }
+                })}
+              </div>
+            ) : (
+              <div className="px-4 pb-4">
+                <div className="mt-2 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="font-[Nunito] font-extrabold text-slate-900 text-[13.5px]">
+                    Start a new chat
+                  </div>
+                  <p className="mt-1 text-[12.5px] text-slate-600 font-[Lora]">
+                    You can choose to hide your identity from counselors. (You are still logged in.)
+                  </p>
 
-                const m = row.msg;
-                const isMe = m.from === "me";
+                  <div className="mt-4 flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="text-[12px] font-extrabold text-slate-800 font-[Nunito]">
+                        Hide my identity
+                      </div>
+                      <div className="text-[11px] text-slate-500">Counselor will see an alias only.</div>
+                    </div>
 
-                const bubbleStyle = {
-                  ...styles.bubble,
-                  ...(isMe ? styles.bubbleMe : styles.bubbleThem),
-                  ...(row.isStart ? null : isMe ? styles.bubbleMeMid : styles.bubbleThemMid),
-                  ...(row.isEnd ? null : isMe ? styles.bubbleMeMid2 : styles.bubbleThemMid2),
-                };
+                    <button
+                      type="button"
+                      onClick={() => setVisibility((v) => (v === "masked" ? "identified" : "masked"))}
+                      className={cls(
+                        "relative inline-flex h-7 w-12 items-center rounded-full transition",
+                        visibility === "masked" ? "bg-slate-900" : "bg-slate-300"
+                      )}
+                      aria-label="Toggle anonymity"
+                    >
+                      <span
+                        className={cls(
+                          "inline-block h-5 w-5 transform rounded-full bg-white transition",
+                          visibility === "masked" ? "translate-x-6" : "translate-x-1"
+                        )}
+                      />
+                    </button>
+                  </div>
 
-                return (
-                  <div
-                    key={row.key}
-                    style={{
-                      display: "flex",
-                      justifyContent: isMe ? "flex-end" : "flex-start",
-                      marginBottom: row.isEnd ? 12 : 6,
-                    }}
+                  {error ? (
+                    <div className="mt-3 text-[12px] font-bold text-rose-600">{error}</div>
+                  ) : null}
+
+                  <button
+                    type="button"
+                    onClick={startChat}
+                    disabled={starting || !onStartChat}
+                    className={cls(
+                      "mt-4 w-full rounded-xl px-4 py-3 font-[Nunito] font-extrabold text-[13px] transition",
+                      starting ? "opacity-70 cursor-not-allowed" : "hover:brightness-95"
+                    )}
+                    style={{ backgroundColor: accent, color: "#141414" }}
                   >
-                    <div style={bubbleStyle}>
-                      <div style={styles.bubbleText}>{m.text}</div>
-                      {row.isEnd && m.time ? <div style={styles.bubbleTime}>{m.time}</div> : null}
+                    {starting ? "Starting…" : "Start chat"}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Right chat */}
+          <div className="flex-1 min-h-0 flex flex-col">
+            {!activeThread ? (
+              <div className="flex-1 grid place-items-center text-center px-6">
+                <div className="max-w-md">
+                  <div className="text-[14px] font-extrabold text-slate-900 font-[Nunito]">
+                    {list.length ? "Select a conversation" : "Start a chat to begin"}
+                  </div>
+                  <div className="mt-1 text-[12.5px] text-slate-600 font-[Lora]">
+                    Messages will appear here.
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="px-4 sm:px-5 py-3 border-b border-slate-200 flex items-center justify-between">
+                  <div className="min-w-0">
+                    <div className="font-[Nunito] font-extrabold text-[13.5px] text-slate-900 truncate">
+                      {activeThread.name || "Guidance Counselor"}
+                    </div>
+                    <div className="text-[12px] text-slate-500 truncate">
+                      {activeThread.visibility === "masked" ? "Anonymous to counselor" : "Identified to counselor"}
                     </div>
                   </div>
-                );
-              })}
+                  <div className="text-[11px] font-bold text-slate-400">{activeThread.status || "open"}</div>
+                </div>
 
-              <div ref={chatEndRef} />
-            </div>
+                {error ? (
+                  <div className="px-4 sm:px-5 pt-3 text-[12px] font-bold text-rose-600">{error}</div>
+                ) : null}
 
-            <div style={styles.inputBar}>
-              <button style={styles.iconBtn} type="button" aria-label="Emoji" title="Emoji">
-                🙂
-              </button>
+                <div
+                  ref={scrollRef}
+                  className="flex-1 min-h-0 overflow-y-auto bg-slate-50 px-4 sm:px-5 py-4 space-y-3"
+                  style={{ WebkitOverflowScrolling: "touch", overscrollBehavior: "contain" }}
+                >
+                  {(activeThread.messages || []).map((m) => {
+                    const mine = m.from === "me";
+                    return (
+                      <div key={m.id} className={cls("flex", mine ? "justify-end" : "justify-start")}>
+                        <div
+                          className={cls(
+                            "max-w-[80%] rounded-2xl px-4 py-2.5 shadow-[0_1px_0_rgba(0,0,0,0.04)] border",
+                            mine ? "bg-white border-slate-200" : "bg-slate-900 border-slate-900"
+                          )}
+                          style={{ color: mine ? "#0f172a" : "#fff" }}
+                        >
+                          <div className="text-[13px] leading-relaxed whitespace-pre-wrap">{m.text}</div>
+                          <div
+                            className={cls(
+                              "mt-1 text-[10px] font-bold",
+                              mine ? "text-slate-400" : "text-slate-300"
+                            )}
+                          >
+                            {m.time || timeLabel(m.createdAt)}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
 
-              <textarea
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    handleSend();
-                  }
-                }}
-                placeholder={counselorClosed ? "Conversation closed." : "Type a message…"}
-                style={{
-                  ...styles.textarea,
-                  ...(counselorClosed || !activeThread ? styles.textareaDisabled : null),
-                }}
-                rows={1}
-                disabled={counselorClosed || !activeThread}
-              />
-
-              <button style={styles.iconBtn} type="button" aria-label="Attach" title="Attach">
-                📎
-              </button>
-
-              <button
-                style={{
-                  ...styles.sendIcon,
-                  ...(draft.trim() && !counselorClosed && activeThread ? null : styles.sendIconDisabled),
-                }}
-                type="button"
-                onClick={handleSend}
-                disabled={!draft.trim() || counselorClosed || !activeThread}
-                aria-label="Send"
-                title="Send"
-              >
-                ➤
-              </button>
-            </div>
+                <div className="border-t border-slate-200 bg-white px-4 sm:px-5 py-3">
+                  <div className="flex items-end gap-2">
+                    <textarea
+                      value={draft}
+                      onChange={(e) => setDraft(e.target.value)}
+                      rows={1}
+                      placeholder="Type a message…"
+                      className="flex-1 min-h-[44px] max-h-[140px] resize-none rounded-2xl border border-slate-200 bg-white px-4 py-3 text-[13px] outline-none focus:ring-2 focus:ring-slate-200"
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && !e.shiftKey) {
+                          e.preventDefault();
+                          send();
+                        }
+                      }}
+                    />
+                    <button
+                      type="button"
+                      onClick={send}
+                      disabled={!draft.trim()}
+                      className={cls(
+                        "shrink-0 rounded-2xl px-4 py-3 font-[Nunito] font-extrabold text-[13px] transition",
+                        !draft.trim() ? "opacity-60 cursor-not-allowed" : "hover:brightness-95"
+                      )}
+                      style={{ backgroundColor: accent, color: "#141414" }}
+                    >
+                      Send
+                    </button>
+                  </div>
+                  <div className="mt-2 text-[11px] text-slate-400 font-bold">
+                    Tip: Press Enter to send, Shift+Enter for new line.
+                  </div>
+                </div>
+              </>
+            )}
           </div>
-        )}
+        </div>
       </div>
-    </>
+    </div>
   );
 }
-
-/**
- * ✅ Your styles are kept the same.
- * (No changes below)
- */
-const styles = {
-  overlay: {
-    position: "fixed",
-    inset: 0,
-    background: "rgba(0,0,0,0.25)",
-    zIndex: 9998,
-  },
-
-  drawer: {
-    position: "fixed",
-    zIndex: 9999,
-    background: "rgba(255,255,255,0.94)",
-    backdropFilter: "blur(12px)",
-    WebkitBackdropFilter: "blur(12px)",
-    boxShadow: "0 18px 48px rgba(0,0,0,0.22)",
-    overflow: "hidden",
-    display: "flex",
-    flexDirection: "column",
-    color: TEXT_MAIN,
-  },
-
-  header: {
-    padding: "12px 12px",
-    display: "grid",
-    gridTemplateColumns: "34px 1fr 34px",
-    alignItems: "center",
-    borderBottom: "1px solid rgba(20,20,20,0.08)",
-    background: "linear-gradient(180deg, rgba(255,255,255,0.98), rgba(255,255,255,0.86))",
-  },
-  headerBtn: {
-    width: 34,
-    height: 34,
-    borderRadius: 12,
-    border: "1px solid rgba(20,20,20,0.10)",
-    background: "rgba(20,20,20,0.04)",
-    color: TEXT_MAIN,
-    cursor: "pointer",
-    fontFamily: "Nunito, sans-serif",
-    fontWeight: 900,
-    fontSize: 14,
-  },
-
-  headerTitleWrap: { minWidth: 0, paddingLeft: 10, paddingRight: 10 },
-  headerTitleRow: { display: "flex", alignItems: "center", justifyContent: "center", gap: 8 },
-  headerTitle: { color: TEXT_MAIN, fontFamily: "Lora, serif", fontWeight: 900, fontSize: 19, letterSpacing: "0.2px" },
-  modeBadge: {
-    borderRadius: 999,
-    padding: "4px 10px",
-    border: "1px solid rgba(0,0,0,0.10)",
-    background: "rgba(185,255,102,0.35)",
-    fontFamily: "Nunito, sans-serif",
-    fontWeight: 900,
-    fontSize: 12,
-    color: TEXT_MAIN,
-  },
-
-  centerWrap: { flex: 1, minHeight: 0, display: "flex", alignItems: "center", justifyContent: "center", padding: 14 },
-  panel: {
-    width: "100%",
-    maxWidth: 520,
-    borderRadius: 18,
-    border: "1px solid rgba(20,20,20,0.10)",
-    background: "rgba(255,255,255,0.80)",
-    boxShadow: "0 16px 40px rgba(0,0,0,0.10)",
-    padding: 16,
-  },
-  panelTitle: { fontFamily: "Lora, serif", fontWeight: 900, fontSize: 18, color: TEXT_MAIN },
-  panelText: { marginTop: 6, fontFamily: "Nunito, sans-serif", fontWeight: 750, fontSize: 14, color: "rgba(20,20,20,0.72)", lineHeight: 1.55 },
-
-  bigChoiceBtn: {
-    width: "100%",
-    textAlign: "left",
-    padding: 14,
-    borderRadius: 16,
-    border: "1px solid rgba(0,0,0,0.12)",
-    background: "rgba(185,255,102,0.55)",
-    cursor: "pointer",
-    boxShadow: "0 12px 24px rgba(0,0,0,0.08)",
-    marginBottom: 10,
-  },
-  bigChoiceBtnAlt: {
-    width: "100%",
-    textAlign: "left",
-    padding: 14,
-    borderRadius: 16,
-    border: "1px solid rgba(0,0,0,0.12)",
-    background: "rgba(255,255,255,0.86)",
-    cursor: "pointer",
-    boxShadow: "0 12px 24px rgba(0,0,0,0.06)",
-  },
-  choiceTitle: { fontFamily: "Nunito, sans-serif", fontWeight: 900, fontSize: 16, color: TEXT_MAIN },
-  choiceSub: { marginTop: 4, fontFamily: "Nunito, sans-serif", fontWeight: 750, fontSize: 13, color: "rgba(20,20,20,0.70)", lineHeight: 1.45 },
-
-  label: { display: "block", fontFamily: "Nunito, sans-serif", fontWeight: 900, fontSize: 13, color: "rgba(20,20,20,0.78)", marginBottom: 6 },
-  input: { width: "100%", borderRadius: 14, border: "1px solid rgba(20,20,20,0.12)", background: "rgba(255,255,255,0.92)", padding: "12px 12px", outline: "none", fontFamily: "Nunito, sans-serif", fontWeight: 800, fontSize: 14, color: TEXT_MAIN },
-  inputError: { borderColor: "rgba(255,59,48,0.65)", boxShadow: "0 0 0 4px rgba(255,59,48,0.10)" },
-  hintText: { marginTop: 6, fontFamily: "Nunito, sans-serif", fontWeight: 700, fontSize: 12, color: "rgba(20,20,20,0.55)" },
-  errorText: { marginTop: 6, fontFamily: "Nunito, sans-serif", fontWeight: 900, fontSize: 12, color: "#FF3B30" },
-
-  primaryBtn: { flex: 1, borderRadius: 14, border: "1px solid rgba(0,0,0,0.12)", background: CHECKIN_GREEN, color: TEXT_MAIN, cursor: "pointer", padding: "12px 12px", fontFamily: "Nunito, sans-serif", fontWeight: 900, fontSize: 14 },
-  primaryBtnDisabled: { opacity: 0.55, cursor: "not-allowed" },
-  secondaryBtn: { width: 110, borderRadius: 14, border: "1px solid rgba(0,0,0,0.12)", background: "rgba(20,20,20,0.04)", color: TEXT_MAIN, cursor: "pointer", padding: "12px 12px", fontFamily: "Nunito, sans-serif", fontWeight: 900, fontSize: 14 },
-
-  chatWrap: { display: "flex", flexDirection: "column", minHeight: 0, flex: 1 },
-
-  systemWrap: { padding: "10px 12px 0" },
-  systemBubble: { borderRadius: 16, border: "1px dashed rgba(20,20,20,0.18)", background: "rgba(255,255,255,0.80)", padding: "12px 12px" },
-  systemTitle: { fontFamily: "Nunito, sans-serif", fontWeight: 900, fontSize: 13, color: TEXT_MAIN, letterSpacing: "0.2px" },
-  systemText: { marginTop: 6, fontFamily: "Nunito, sans-serif", fontWeight: 750, fontSize: 13, color: "rgba(20,20,20,0.72)", lineHeight: 1.5 },
-
-  closedBanner: { marginTop: 10, borderRadius: 16, border: "1px solid rgba(255,59,48,0.25)", background: "rgba(255,59,48,0.08)", padding: "10px 12px", fontFamily: "Nunito, sans-serif", fontWeight: 900, fontSize: 13, color: "rgba(20,20,20,0.85)", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 },
-  closedBannerBtn: { borderRadius: 999, border: "1px solid rgba(0,0,0,0.10)", background: "rgba(255,255,255,0.85)", padding: "8px 10px", cursor: "pointer", fontFamily: "Nunito, sans-serif", fontWeight: 900, fontSize: 12, color: TEXT_MAIN, whiteSpace: "nowrap" },
-
-  expireHint: { marginTop: 10, fontFamily: "Nunito, sans-serif", fontWeight: 800, fontSize: 12, color: "rgba(20,20,20,0.55)" },
-
-  chatBody: { padding: 12, overflow: "auto", flex: 1, background: "radial-gradient(circle at 18% 30%, rgba(185,255,102,0.16) 0 2px, transparent 3px), radial-gradient(circle at 68% 70%, rgba(185,255,102,0.12) 0 2px, transparent 3px), linear-gradient(180deg, rgba(255,255,255,0.55), rgba(255,255,255,0.92))" },
-  topFade: { position: "sticky", top: 0, height: 14, marginTop: -12, background: "linear-gradient(180deg, rgba(255,255,255,0.96), rgba(255,255,255,0))", zIndex: 2 },
-
-  loadMoreHint: { textAlign: "center", padding: "10px 0 12px", fontFamily: "Nunito, sans-serif", fontWeight: 900, fontSize: 12, color: "rgba(20,20,20,0.58)" },
-  loadMoreHintDim: { textAlign: "center", padding: "10px 0 12px", fontFamily: "Nunito, sans-serif", fontWeight: 900, fontSize: 12, color: "rgba(20,20,20,0.38)" },
-
-  dayRow: { display: "flex", justifyContent: "center", margin: "8px 0 12px" },
-  dayChip: { padding: "6px 10px", borderRadius: 999, background: "rgba(20,20,20,0.06)", border: "1px solid rgba(20,20,20,0.08)", fontFamily: "Nunito, sans-serif", fontWeight: 900, fontSize: 12, color: "rgba(20,20,20,0.65)" },
-
-  bubble: { maxWidth: "82%", padding: "12px 13px", borderRadius: 18, border: "1px solid rgba(20,20,20,0.08)", boxShadow: "0 8px 18px rgba(0,0,0,0.06)" },
-  bubbleMe: { background: CHECKIN_GREEN, color: TEXT_MAIN, borderColor: "rgba(0,0,0,0.10)", borderTopRightRadius: 10 },
-  bubbleThem: { background: "rgba(255,255,255,0.95)", color: TEXT_MAIN, borderTopLeftRadius: 10 },
-  bubbleMeMid: { borderTopRightRadius: 8 },
-  bubbleMeMid2: { borderBottomRightRadius: 8 },
-  bubbleThemMid: { borderTopLeftRadius: 8 },
-  bubbleThemMid2: { borderBottomLeftRadius: 8 },
-
-  bubbleText: { fontFamily: "Nunito, sans-serif", fontWeight: 800, fontSize: 15, lineHeight: 1.55, whiteSpace: "pre-wrap", wordBreak: "break-word" },
-  bubbleTime: { marginTop: 8, fontFamily: "Nunito, sans-serif", fontWeight: 900, fontSize: 11, opacity: 0.65, textAlign: "right" },
-
-  inputBar: { padding: 10, paddingBottom: "calc(10px + env(safe-area-inset-bottom))", borderTop: "1px solid rgba(20,20,20,0.08)", display: "flex", gap: 8, alignItems: "center", background: "rgba(255,255,255,0.92)" },
-  iconBtn: { width: 40, height: 40, borderRadius: 14, border: "1px solid rgba(20,20,20,0.10)", background: "rgba(20,20,20,0.04)", color: TEXT_MAIN, cursor: "pointer", fontFamily: "Nunito, sans-serif", fontWeight: 900, fontSize: 16 },
-
-  textarea: { flex: 1, minHeight: 40, maxHeight: 120, resize: "none", borderRadius: 16, border: "1px solid rgba(20,20,20,0.10)", background: "rgba(255,255,255,0.86)", color: TEXT_MAIN, padding: "11px 12px", outline: "none", fontFamily: "Nunito, sans-serif", fontWeight: 800, fontSize: 14, lineHeight: 1.45 },
-  textareaDisabled: { opacity: 0.7, cursor: "not-allowed" },
-
-  sendIcon: { width: 40, height: 40, borderRadius: 14, border: "1px solid rgba(0,0,0,0.10)", background: CHECKIN_GREEN, color: TEXT_MAIN, cursor: "pointer", fontFamily: "Nunito, sans-serif", fontWeight: 900, fontSize: 18, display: "grid", placeItems: "center" },
-  sendIconDisabled: { opacity: 0.55, cursor: "not-allowed" },
-};
