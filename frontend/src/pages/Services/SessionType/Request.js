@@ -6,9 +6,19 @@ import MessagesDrawer from "../../../components/Message/MessagesDrawer";
 import FloatingMessagesPill from "../../../components/Message/FloatingMessagesPill";
 
 import { apiFetch } from "../../../api/apiFetch";
-import { ensureMyThread, listMessages, sendMessage, markRead } from "../../../api/messages.api";
-import { joinThread, onNewMessage, onThreadActivity } from "../../../api/messagesRealtime";
 
+import {
+  listThreadsForDrawer,
+  ensureThread,
+  sendDrawerMessage,
+  markThreadRead,
+  getMyUserId,
+} from "../../../api/messages.api";
+import {
+  connectMessagesSocket,
+  onMessageNew,
+  onThreadCreated,
+} from "../../../api/messagesRealtime";
 
 /* ===================== THEME ===================== */
 const LOGIN_PRIMARY = "#B9FF66";
@@ -48,7 +58,7 @@ function saveAllRequests(list) {
 
 function upsertRequest(item) {
   const list = loadAllRequests();
-  const idx = list.findIndex((r) => r.id === item.id);
+  const idx = list.findIndex((r) => String(r.id) === String(item.id));
   if (idx >= 0) {
     const next = list.slice();
     next[idx] = { ...next[idx], ...item };
@@ -60,7 +70,7 @@ function upsertRequest(item) {
 
 function patchRequest(id, patch) {
   const list = loadAllRequests();
-  const next = list.map((r) => (r.id === id ? { ...r, ...patch } : r));
+  const next = list.map((r) => (String(r.id) === String(id) ? { ...r, ...patch } : r));
   saveAllRequests(next);
 }
 
@@ -74,8 +84,6 @@ const REASONS = [
   "Grief / Loss",
   "Other",
 ];
-
-const COUNSELORS = []; // deprecated (loaded from API)
 
 const HOLIDAYS = [
   "2026-01-01",
@@ -124,11 +132,29 @@ function minToTime(min) {
   const m = min % 60;
   return `${pad2(h)}:${pad2(m)}`;
 }
-function formatTime12(hhmm) {
-  const [h, m] = String(hhmm || "00:00").split(":").map(Number);
-  const suffix = h >= 12 ? "PM" : "AM";
-  const hour12 = h % 12 === 0 ? 12 : h % 12;
-  return `${hour12}:${pad2(m)} ${suffix}`;
+
+/** ✅ FIX: accepts "HH:MM" or "H:MM AM/PM" safely */
+function formatTime12(input) {
+  const v = String(input || "").trim();
+  if (!v) return "";
+
+  const m12 = v.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+  if (m12) {
+    const hh = Number(m12[1]);
+    const mm = m12[2];
+    const ap = m12[3].toUpperCase();
+    const h = hh === 0 ? 12 : hh;
+    return `${h}:${mm} ${ap}`;
+  }
+
+  const m24 = v.match(/^(\d{1,2}):(\d{2})$/);
+  if (!m24) return v;
+
+  const h24 = Number(m24[1]);
+  const mm = m24[2];
+  const suffix = h24 >= 12 ? "PM" : "AM";
+  const hour12 = h24 % 12 === 0 ? 12 : h24 % 12;
+  return `${hour12}:${mm} ${suffix}`;
 }
 
 function normalizeTo24h(input) {
@@ -147,11 +173,9 @@ function normalizeTo24h(input) {
   if (m24) return `${pad2(Number(m24[1]))}:${m24[2]}`;
   return v;
 }
-
 function to24h(timeLabel) {
   return normalizeTo24h(timeLabel);
 }
-
 
 function isWithinWorkHours(hhmm) {
   const t = hhmmToMin(hhmm);
@@ -182,7 +206,7 @@ function getPHParts(date = new Date()) {
     hour: "2-digit",
     minute: "2-digit",
     hour12: false,
-    hourCycle: "h23", // ✅ prevents "24:xx" edge case
+    hourCycle: "h23",
   });
   const parts = dtf.formatToParts(date);
   const get = (type) => parts.find((p) => p.type === type)?.value;
@@ -281,65 +305,6 @@ function getReviewInfoPH() {
   };
 }
 
-/* ===================== AVAILABILITY (DEMO) ===================== */
-function hashStr(str) {
-  let h = 2166136261;
-  for (let i = 0; i < str.length; i++) {
-    h ^= str.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  return h >>> 0;
-}
-function mulberry32(seed) {
-  return function () {
-    let t = (seed += 0x6d2b79f5);
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-function getCounselorAvailability(counselorId, dateStr) {
-  const ds = getDayState(dateStr);
-  if (!ds.ok) return { onLeave: true, booked: new Set(SCHOOL_SLOTS) };
-
-  const seed = hashStr(`${counselorId}|${dateStr}`);
-  const rnd = mulberry32(seed);
-
-  const onLeave = rnd() < 0.08;
-  if (onLeave) return { onLeave: true, booked: new Set(SCHOOL_SLOTS) };
-
-  const bookedRatio = 0.25 + rnd() * 0.4;
-  const bookCount = Math.max(2, Math.floor(SCHOOL_SLOTS.length * bookedRatio));
-
-  const booked = new Set();
-  while (booked.size < bookCount) {
-    const idx = Math.floor(rnd() * SCHOOL_SLOTS.length);
-    const slot = SCHOOL_SLOTS[idx];
-    if (slot === LUNCH_SLOT) continue;
-    if (slot === ALWAYS_OPEN_SLOT) continue;
-    booked.add(slot);
-  }
-
-  booked.add(LUNCH_SLOT);
-  booked.delete(ALWAYS_OPEN_SLOT);
-
-  return { onLeave: false, booked };
-}
-
-function counselorStatus(onLeave, openCount) {
-  if (onLeave) return "On Leave";
-  if (openCount <= 0) return "Fully Booked";
-  if (openCount <= 2) return "Limited";
-  return "Available";
-}
-
-/* ===================== PENDING LOCK ===================== */
-function hasAnyPendingMeetRequest() {
-  const list = loadAllRequests();
-  return list.some((r) => r && r.type === "MEET" && (r.status || "Pending") === "Pending");
-}
-
 /* ===================== COMPONENT ===================== */
 export default function Request({ onClose }) {
   const navigate = useNavigate();
@@ -357,13 +322,16 @@ export default function Request({ onClose }) {
 
   const [pillPop, setPillPop] = useState(false);
   const prevOpenRef = useRef(false);
+  const markedReadOnOpenRef = useRef(false);
 
   const [threads, setThreads] = useState([]);
-  const [activeThreadId, setActiveThreadId] = useState("");
-  const [chatLoading, setChatLoading] = useState(false);
+  const [chatBooted, setChatBooted] = useState(false);
   const [chatError, setChatError] = useState("");
 
-  const totalUnread = useMemo(() => threads.reduce((sum, t) => sum + (t.unread || 0), 0), [threads]);
+  const totalUnread = useMemo(
+    () => threads.reduce((sum, t) => sum + (Number(t.unread) || 0), 0),
+    [threads]
+  );
 
   const [termsAccepted, setTermsAccepted] = useState(false);
   const [showTerms, setShowTerms] = useState(false);
@@ -380,10 +348,10 @@ export default function Request({ onClose }) {
   });
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
 
-  // ✅ Pending lock will be enforced by the backend (DB source of truth).
-  // Frontend keeps a lightweight flag only to prevent accidental double-submits.
+  // ✅ Pending lock enforced by backend
   const [pendingLocked, setPendingLocked] = useState(false);
   const [pendingLockReason, setPendingLockReason] = useState("");
+
   const refreshPendingLock = useCallback(async () => {
     try {
       const data = await apiFetch("/api/counseling/requests?type=MEET");
@@ -407,8 +375,7 @@ export default function Request({ onClose }) {
         setPendingLocked(false);
         setPendingLockReason("");
       }
-    } catch (e) {
-      // If user is logged out or the network fails, don't hard-lock the UI.
+    } catch {
       setPendingLocked(false);
       setPendingLockReason("");
     }
@@ -439,58 +406,161 @@ export default function Request({ onClose }) {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [openMessages]);
 
+  /* =====================
+     REAL-TIME MESSAGING (API + Socket.IO)
+  ===================== */
+  const bootChat = useCallback(async () => {
+    try {
+      const res = await listThreadsForDrawer();
+      let items = res.items || [];
+
+      // Student-first flow: if no threads yet, create one then refetch
+      if (!items.length) {
+        await ensureThread({ anonymous: false }).catch(() => {});
+        const res2 = await listThreadsForDrawer();
+        items = res2.items || [];
+      }
+
+      setThreads(items);
+      setChatBooted(true);
+      setChatError("");
+    } catch (e) {
+      setChatError(e?.message || "Failed to load messages.");
+    }
+  }, []);
+
+  useEffect(() => {
+    if (chatBooted) return;
+    if (!pillUnlocked && !openMessages) return;
+    bootChat();
+  }, [chatBooted, pillUnlocked, openMessages, bootChat]);
+
+  useEffect(() => {
+    if (!pillUnlocked && !openMessages) return;
+
+    connectMessagesSocket();
+
+    const offNew = onMessageNew((payload) => {
+      const threadId = String(payload?.threadId || "");
+      const msg = payload?.message;
+      if (!threadId || !msg) return;
+
+      const myId = getMyUserId();
+
+      const uiMsg = {
+        id: String(msg._id),
+        from: String(msg.senderId) === String(myId) ? "me" : "them",
+        text: msg.text,
+        time: new Intl.DateTimeFormat("en-US", {
+          timeZone: PH_TZ,
+          hour: "2-digit",
+          minute: "2-digit",
+          hour12: true,
+        }).format(new Date(msg.createdAt)),
+        createdAt: new Date(msg.createdAt).getTime(),
+        _raw: msg,
+      };
+
+      setThreads((prev) => {
+        const i = prev.findIndex((t) => String(t.id) === threadId);
+        if (i === -1) return prev;
+
+        const t = prev[i];
+        const unreadNext = Number(payload?.thread?.unreadCounts?.[myId] ?? t.unread ?? 0);
+
+        const updated = {
+          ...t,
+          messages: [...(t.messages || []), uiMsg],
+          lastMessage: msg.text,
+          lastTime: "now",
+          unread: openMessages ? 0 : unreadNext,
+        };
+
+        const next = [...prev];
+        next[i] = updated;
+        return next;
+      });
+
+      if (openMessages) markThreadRead(threadId).catch(() => {});
+    });
+
+    const offCreated = onThreadCreated(() => bootChat());
+
+    return () => {
+      offNew?.();
+      offCreated?.();
+    };
+  }, [pillUnlocked, openMessages, bootChat]);
+
+  // When opening the drawer, clear unread on all threads (once)
+  useEffect(() => {
+    if (!openMessages) {
+      markedReadOnOpenRef.current = false;
+      return;
+    }
+    if (markedReadOnOpenRef.current) return;
+    if (!threads.length) return;
+
+    markedReadOnOpenRef.current = true;
+
+    setThreads((prev) => prev.map((t) => ({ ...t, unread: 0 })));
+    threads.forEach((t) => markThreadRead(t.id).catch(() => {}));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openMessages]);
+
   const handleSendMessage = async ({ threadId, text }) => {
-    const clean = String(text || "").trim();
-    if (!clean) return;
+    const clean = String(text ?? "").trim();
+    const tid = String(threadId || "").trim();
+    if (!tid || !clean) return;
 
-    setChatError("");
-
-    // optimistic append (avoid duplicates via socket handler)
-    const tempId = makeId("tmp");
-    const now = new Date();
-    const timeLabel = new Intl.DateTimeFormat("en-US", {
+    const localTime = new Intl.DateTimeFormat("en-US", {
       timeZone: PH_TZ,
       hour: "2-digit",
       minute: "2-digit",
       hour12: true,
-    }).format(now);
+    }).format(new Date());
 
+    const tempId = `tmp-${Date.now()}`;
+
+    // Optimistic UI (instant)
     setThreads((prev) =>
       prev.map((t) => {
-        if (t.id !== threadId) return t;
-        const newMsg = { id: tempId, from: "me", text: clean, time: timeLabel, createdAt: Date.now() };
+        if (String(t.id) !== tid) return t;
+
+        const newMsg = {
+          id: tempId,
+          from: "me",
+          text: clean,
+          time: localTime,
+          createdAt: Date.now(),
+          _optimistic: true,
+        };
+
         return {
           ...t,
           messages: [...(t.messages || []), newMsg],
           lastMessage: clean,
           lastTime: "now",
+          unread: 0,
         };
       })
     );
 
     try {
-      const res = await sendMessage(threadId, clean);
-      const msg = res?.message;
-      if (msg?.id) {
-        // Replace temp with real id (if still there)
-        setThreads((prev) =>
-          prev.map((t) => {
-            if (t.id !== threadId) return t;
-            const msgs = (t.messages || []).map((m) => (m.id === tempId ? { ...m, id: msg.id } : m));
-            return { ...t, messages: msgs };
-          })
-        );
-      }
-    } catch (e) {
-      // remove temp + show inline error
+      await sendDrawerMessage({ threadId: tid, text: clean });
+      markThreadRead(tid).catch(() => {});
+      setChatError("");
+    } catch (err) {
+      // Revert optimistic bubble
       setThreads((prev) =>
-        prev.map((t) => {
-          if (t.id !== threadId) return t;
-          return { ...t, messages: (t.messages || []).filter((m) => m.id !== tempId) };
-        })
+        prev.map((t) =>
+          String(t.id) === tid
+            ? { ...t, messages: (t.messages || []).filter((m) => m.id !== tempId) }
+            : t
+        )
       );
-      setChatError(e?.message || "Failed to send message.");
-      throw e;
+      setChatError(err?.message || "Failed to send message.");
+      throw err;
     }
   };
 
@@ -507,133 +577,6 @@ export default function Request({ onClose }) {
     setPillUnlocked(true);
     setOpenMessages(true);
   }, [termsAccepted]);
-
-  const formatMsgTime = useCallback((isoOrDate) => {
-    try {
-      const d = new Date(isoOrDate);
-      return d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" });
-    } catch {
-      return "";
-    }
-  }, []);
-
-  const hydrateThread = useCallback(
-    async () => {
-      setChatError("");
-      setChatLoading(true);
-      try {
-        const ensured = await ensureMyThread();
-        const thread = ensured?.thread;
-        if (!thread?.id) throw new Error("Unable to open messages.");
-
-        setActiveThreadId(thread.id);
-        joinThread(thread.id);
-
-        const msgsRes = await listMessages(thread.id);
-        const msgs = Array.isArray(msgsRes?.messages) ? msgsRes.messages : [];
-
-        const mappedMsgs = msgs.map((m) => ({
-          id: m.id,
-          from: m.senderRole === "Student" ? "me" : "them",
-          text: m.text,
-          time: formatMsgTime(m.createdAt),
-          createdAt: new Date(m.createdAt).getTime(),
-        }));
-
-        const drawerThread = {
-          id: thread.id,
-          name: thread?.other?.fullName || "Guidance Counselor",
-          subtitle: thread?.other?.label || "Counselor",
-          avatarUrl: "https://via.placeholder.com/48",
-          lastMessage: thread.lastMessageText || (mappedMsgs[mappedMsgs.length - 1]?.text || ""),
-          lastTime: thread.lastMessageAt ? "now" : "",
-          unread: Number(thread.unread || 0),
-          messages: mappedMsgs,
-        };
-
-        setThreads([drawerThread]);
-
-        // When drawer is open, clear unread for student
-        await markRead(thread.id).catch(() => {});
-        setThreads((prev) => prev.map((t) => (t.id === thread.id ? { ...t, unread: 0 } : t)));
-      } catch (e) {
-        setChatError(e?.message || "Unable to load messages.");
-      } finally {
-        setChatLoading(false);
-      }
-    },
-    [formatMsgTime]
-  );
-
-  // When opening messages, ensure thread + load messages
-  useEffect(() => {
-    if (!openMessages) return;
-    hydrateThread();
-  }, [openMessages, hydrateThread]);
-
-  // Live updates (message stream)
-  useEffect(() => {
-    if (!activeThreadId) return;
-
-    const offMsg = onNewMessage(({ message, threadId }) => {
-      if (!message || String(threadId) !== String(activeThreadId)) return;
-
-      setThreads((prev) =>
-        prev.map((t) => {
-          if (t.id !== activeThreadId) return t;
-
-          const exists = (t.messages || []).some((x) => x.id === message.id);
-          if (exists) return t;
-
-          const from = message.senderRole === "Student" ? "me" : "them";
-          const newMsg = {
-            id: message.id,
-            from,
-            text: message.text,
-            time: formatMsgTime(message.createdAt),
-            createdAt: new Date(message.createdAt).getTime(),
-          };
-
-          const shouldIncUnread = !openMessages && from === "them";
-          const nextUnread = shouldIncUnread ? (t.unread || 0) + 1 : 0;
-
-          return {
-            ...t,
-            messages: [...(t.messages || []), newMsg],
-            lastMessage: message.text,
-            lastTime: "now",
-            unread: nextUnread,
-          };
-        })
-      );
-    });
-
-    const offActivity = onThreadActivity(async ({ threadId }) => {
-      if (!threadId || String(threadId) !== String(activeThreadId)) return;
-      // refresh thread header (shows counselor name after claim)
-      try {
-        const ensured = await ensureMyThread();
-        const th = ensured?.thread;
-        if (!th?.id) return;
-        setThreads((prev) =>
-          prev.map((t) =>
-            t.id === th.id
-              ? {
-                  ...t,
-                  name: th?.other?.fullName || t.name,
-                  subtitle: th?.other?.label || t.subtitle,
-                }
-              : t
-          )
-        );
-      } catch {}
-    });
-
-    return () => {
-      offMsg?.();
-      offActivity?.();
-    };
-  }, [activeThreadId, formatMsgTime, openMessages]);
 
   useEffect(() => {
     const wasOpen = prevOpenRef.current;
@@ -659,14 +602,12 @@ export default function Request({ onClose }) {
     notes: "",
   });
 
-
   const [counselorsList, setCounselorsList] = useState([]);
   const [availabilityAny, setAvailabilityAny] = useState(null);
   const [availabilitySel, setAvailabilitySel] = useState(null);
   const [availabilityErr, setAvailabilityErr] = useState("");
   const [availabilityLoading, setAvailabilityLoading] = useState(false);
   const [nextDateFinding, setNextDateFinding] = useState(false);
-
 
   const fetchCounselors = useCallback(async () => {
     try {
@@ -675,15 +616,18 @@ export default function Request({ onClose }) {
       if (items.length) {
         setCounselorsList(
           items.map((c) => ({
-            id: c.id,
+            id: String(c.id || c._id || ""),
             name: c.name || c.fullName || "Counselor",
           }))
         );
+      } else {
+        setCounselorsList([]);
       }
     } catch (e) {
       console.warn("fetchCounselors failed:", e?.message || e);
+      setCounselorsList([]);
     }
-  }, [apiFetch]);
+  }, []);
 
   const fetchAvailability = useCallback(async () => {
     if (!meet.date) return;
@@ -692,7 +636,7 @@ export default function Request({ onClose }) {
     setAvailabilityErr("");
 
     try {
-      // Always fetch "any counselor" availability (used for slots when no counselor is selected + counselor list status)
+      // Any counselor
       try {
         const paramsAny = new URLSearchParams({ date: meet.date });
         const any = await apiFetch(`/api/counseling/availability?${paramsAny.toString()}`);
@@ -702,7 +646,7 @@ export default function Request({ onClose }) {
         setAvailabilityErr(e?.message || "Availability error");
       }
 
-      // If a counselor is selected, fetch that counselor's availability too
+      // Selected counselor
       if (meet.counselorId) {
         try {
           const paramsSel = new URLSearchParams({ date: meet.date, counselorId: meet.counselorId });
@@ -718,7 +662,7 @@ export default function Request({ onClose }) {
     } finally {
       setAvailabilityLoading(false);
     }
-  }, [apiFetch, meet.date, meet.counselorId]);
+  }, [meet.date, meet.counselorId]);
 
   useEffect(() => {
     fetchCounselors();
@@ -727,7 +671,6 @@ export default function Request({ onClose }) {
   useEffect(() => {
     fetchAvailability();
   }, [fetchAvailability]);
-
 
   const [meetError, setMeetError] = useState("");
   const [meetSuccess, setMeetSuccess] = useState("");
@@ -745,16 +688,17 @@ export default function Request({ onClose }) {
     return () => clearInterval(id);
   }, []);
 
-  // ✅ Keep pending lock fresh (source of truth = DB)
+  // ✅ Keep pending lock fresh
   useEffect(() => {
     refreshPendingLock();
   }, [refreshPendingLock]);
 
-  // ✅ Backward compatibility: if legacy currentRequest exists, ensure it is stored in shared list
+  // ✅ Backward compatibility: store legacy currentRequest into shared list once
   useEffect(() => {
     if (!currentRequest) return;
     if (currentRequest?.status && currentRequest.status !== "Pending") return;
-    if (!currentRequest?.date || !currentRequest?.time) return; // only MEET-like
+    if (!currentRequest?.date || !currentRequest?.time) return;
+
     const maybe = {
       id: currentRequest.id || makeId("REQ-MEET"),
       type: "MEET",
@@ -775,7 +719,6 @@ export default function Request({ onClose }) {
 
   const dayState = useMemo(() => getDayState(meet.date), [meet.date]);
 
-  // ✅ Used for Step 3 UX: if a date has zero enabled slots, push users to the next working day.
   const anyEnabledSlotsCount = useMemo(() => {
     if (!meet.date) return null;
     const slots = Array.isArray(availabilityAny?.slots) ? availabilityAny.slots : null;
@@ -784,7 +727,6 @@ export default function Request({ onClose }) {
   }, [meet.date, availabilityAny]);
 
   const hasBookableSlotsSelectedDate = anyEnabledSlotsCount === null ? null : anyEnabledSlotsCount > 0;
-
 
   const openCountByCounselor = useMemo(() => {
     const map = {};
@@ -807,6 +749,13 @@ export default function Request({ onClose }) {
 
     return map;
   }, [meet.date, counselorsList, availabilityAny]);
+
+  function counselorStatus(onLeave, openCount) {
+    if (onLeave) return "On Leave";
+    if (openCount <= 0) return "Fully Booked";
+    if (openCount <= 2) return "Limited";
+    return "Available";
+  }
 
   const counselorsComputed = useMemo(() => {
     return counselorsList
@@ -855,37 +804,31 @@ export default function Request({ onClose }) {
     SCHOOL_SLOTS.forEach((t) => (out[t] = { enabled: false, reason }));
     out[LUNCH_SLOT] = { enabled: false, reason: LUNCH_REASON };
     return out;
-  }, [meet.date, meet.counselorId, dayState.ok, dayState.label, availabilityAny, availabilitySel, availabilityErr]);
+  }, [
+    meet.date,
+    meet.counselorId,
+    dayState.ok,
+    dayState.label,
+    availabilityAny,
+    availabilitySel,
+    availabilityErr,
+  ]);
 
-  const selectedCounselor = useMemo(
-  () => counselorsList.find((c) => c.id === meet.counselorId) || null,
-  [meet.counselorId, counselorsList]
-);
+  const onDateChange = useCallback(
+    (val) => {
+      const ds = getDayState(val);
+      clearMeetFeedback();
 
-const autoAssignCounselor = useCallback(
-  (time24) => {
-    if (!availabilityAny?.slots?.length) return null;
-    const slot = availabilityAny.slots.find((s) => String(s.time) === String(time24));
-    const list = Array.isArray(slot?.availableCounselors) ? slot.availableCounselors : [];
-    if (!list.length) return null;
-    return list[0];
-  },
-  [availabilityAny]
-);
+      setMeet((p) => ({
+        ...p,
+        date: val,
+        time: "",
+        counselorId: ds.ok ? p.counselorId : "",
+      }));
+    },
+    [clearMeetFeedback]
+  );
 
-  const onDateChange = useCallback((val) => {
-    const ds = getDayState(val);
-    clearMeetFeedback();
-
-    setMeet((p) => ({
-      ...p,
-      date: val,
-      time: "",
-      counselorId: ds.ok ? p.counselorId : "",
-    }));
-  }, [clearMeetFeedback]);
-
-  // ✅ Step 3 helper: find the next date that has at least one enabled slot (backend source of truth).
   const pickNextBookableDate = useCallback(async () => {
     clearMeetFeedback();
     setMeetError("");
@@ -894,7 +837,8 @@ const autoAssignCounselor = useCallback(
 
     setNextDateFinding(true);
     try {
-      let cur = meet.date && compareISO(meet.date, safeMinDateISO()) >= 0 ? meet.date : safeMinDateISO();
+      let cur =
+        meet.date && compareISO(meet.date, safeMinDateISO()) >= 0 ? meet.date : safeMinDateISO();
       cur = findNextWorkingDay(cur);
 
       for (let i = 0; i < 90; i++) {
@@ -923,9 +867,7 @@ const autoAssignCounselor = useCallback(
     } finally {
       setNextDateFinding(false);
     }
-  }, [apiFetch, clearMeetFeedback, meet.date, nextDateFinding, onDateChange]);
-
-
+  }, [clearMeetFeedback, meet.date, nextDateFinding, onDateChange]);
 
   const requireTermsOr = (fn) => {
     if (!termsAccepted) return setShowTerms(true);
@@ -933,7 +875,8 @@ const autoAssignCounselor = useCallback(
   };
 
   const totalSteps = 5;
-  const progress = step <= 0 ? 0 : step >= 6 ? 100 : Math.round(((step - 1) / (totalSteps - 1)) * 100);
+  const progress =
+    step <= 0 ? 0 : step >= 6 ? 100 : Math.round(((step - 1) / (totalSteps - 1)) * 100);
 
   const meetSummary = useMemo(() => {
     const parts = [];
@@ -980,7 +923,10 @@ const autoAssignCounselor = useCallback(
       if (availabilityLoading) return { ok: false, msg: "Checking available times… please wait." };
       if (availabilityErr) return { ok: false, msg: availabilityErr };
       if (hasBookableSlotsSelectedDate === false) {
-        return { ok: false, msg: "No remaining time slots for this date. Please choose the next available date." };
+        return {
+          ok: false,
+          msg: "No remaining time slots for this date. Please choose the next available date.",
+        };
       }
     }
     if (step === 4) {
@@ -990,7 +936,20 @@ const autoAssignCounselor = useCallback(
       if (!slot?.enabled) return { ok: false, msg: `Time not available${slot?.reason ? ` (${slot.reason})` : ""}.` };
     }
     return { ok: true };
-  }, [termsAccepted, step, meet.sessionType, meet.reason, meet.date, meet.time, dayState.ok, dayState.label, slotAvailability, availabilityLoading, availabilityErr, hasBookableSlotsSelectedDate]);
+  }, [
+    termsAccepted,
+    step,
+    meet.sessionType,
+    meet.reason,
+    meet.date,
+    meet.time,
+    dayState.ok,
+    dayState.label,
+    slotAvailability,
+    availabilityLoading,
+    availabilityErr,
+    hasBookableSlotsSelectedDate,
+  ]);
 
   // ✅ Hard lock: if pendingLocked and user is in booking steps, push to success view
   useEffect(() => {
@@ -1026,7 +985,6 @@ const autoAssignCounselor = useCallback(
 
   const submitMeet = async () => {
     clearMeetFeedback();
-
     if (meetSubmitting) return;
 
     if (pendingLocked) {
@@ -1058,8 +1016,8 @@ const autoAssignCounselor = useCallback(
       // Re-check slot before submit (server is source of truth)
       const params = new URLSearchParams({ date: meet.date });
       if (assigned?.id) params.set("counselorId", assigned.id);
-      const availabilityCheck = await apiFetch(`/api/counseling/availability?${params.toString()}`);
 
+      const availabilityCheck = await apiFetch(`/api/counseling/availability?${params.toString()}`);
       const slots = Array.isArray(availabilityCheck?.slots) ? availabilityCheck.slots : [];
       const hit = slots.find((s) => String(s?.time || "") === selectedSlot);
 
@@ -1089,7 +1047,6 @@ const autoAssignCounselor = useCallback(
         time: selectedSlot,
         notes: meet.notes || "",
       };
-
       if (assigned?.id) payload.counselorId = assigned.id;
 
       const created = await apiFetch("/api/counseling/requests/meet", {
@@ -1123,35 +1080,24 @@ const autoAssignCounselor = useCallback(
     }
   };
 
-
   const tapClass = "active:scale-[0.98] transition-transform";
   const rootClass =
-    "w-full min-h-[70vh] flex items-center justify-center px-4 pt-8 " + (pillUnlocked && termsAccepted ? "pb-24" : "pb-8");
+    "w-full min-h-[70vh] flex items-center justify-center px-4 pt-8 " +
+    (pillUnlocked && termsAccepted ? "pb-24" : "pb-8");
+
   const displayReq = currentRequest || null;
-const isOverlayOpen = showTerms || showCancelConfirm;
+  const isOverlayOpen = showTerms || showCancelConfirm;
 
   return (
-    
     <div className={rootClass}>
-     {pillUnlocked && termsAccepted && !isOverlayOpen ? (
-  <FloatingMessagesPill
-    accent={LOGIN_PRIMARY}
-    unread={totalUnread}
-    onClick={openMessagesFlow}
-    hidden={openMessages || isOverlayOpen}
-    pop={pillPop}
+      {pillUnlocked && termsAccepted && !isOverlayOpen ? (
+        <FloatingMessagesPill
+          accent={LOGIN_PRIMARY}
+          unread={totalUnread}
+          onClick={openMessagesFlow}
+          hidden={openMessages || isOverlayOpen}
+          pop={pillPop}
         />
-      ) : null}
-
-      {chatError ? (
-        <div className="mb-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[13px] text-red-700">
-          {chatError}
-        </div>
-      ) : null}
-      {chatLoading ? (
-        <div className="mb-3 rounded-xl border border-black/10 bg-white/70 px-4 py-3 text-[13px] text-black/70">
-          Loading messages…
-        </div>
       ) : null}
 
       <MessagesDrawer
@@ -1206,7 +1152,6 @@ const isOverlayOpen = showTerms || showCancelConfirm;
                     method: "PATCH",
                   });
 
-                  // keep local cache in sync (optional)
                   patchRequest(displayReq.id, { status: "Canceled", canceledAt: new Date().toISOString() });
 
                   setCurrentRequest((prev) =>
@@ -1256,7 +1201,10 @@ const isOverlayOpen = showTerms || showCancelConfirm;
                   <h2 className="font-[Nunito] text-[30px] md:text-[40px] font-extrabold" style={{ color: TEXT_MAIN }}>
                     How can we support you today?
                   </h2>
-                  <p className="mt-2 font-[Lora] text-[15.5px] md:text-[16.5px] leading-relaxed" style={{ color: TEXT_MUTED }}>
+                  <p
+                    className="mt-2 font-[Lora] text-[15.5px] md:text-[16.5px] leading-relaxed"
+                    style={{ color: TEXT_MUTED }}
+                  >
                     Tap one option to begin. You’re in control.
                   </p>
                 </div>
@@ -1466,19 +1414,28 @@ const isOverlayOpen = showTerms || showCancelConfirm;
                   {meet.date && dayState.ok ? (
                     <div className="mt-3">
                       {availabilityLoading ? (
-                        <div className="rounded-xl border border-black/10 bg-white/60 p-3 text-[13.5px] font-[Lora]" style={{ color: TEXT_MUTED }}>
+                        <div
+                          className="rounded-xl border border-black/10 bg-white/60 p-3 text-[13.5px] font-[Lora]"
+                          style={{ color: TEXT_MUTED }}
+                        >
                           Checking available times…
                         </div>
                       ) : availabilityErr ? (
                         <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-[13.5px] font-[Lora] flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2" style={{ color: "#7f1d1d" }}>
                           <div>Availability is unavailable. {availabilityErr}</div>
-                          <button type="button" className={[pillBtn, tapClass, "disabled:opacity-50 disabled:cursor-not-allowed"].join(" ")} onClick={fetchAvailability}>
+                          <button
+                            type="button"
+                            className={[pillBtn, tapClass, "disabled:opacity-50 disabled:cursor-not-allowed"].join(" ")}
+                            onClick={fetchAvailability}
+                          >
                             Retry
                           </button>
                         </div>
                       ) : hasBookableSlotsSelectedDate === false ? (
                         <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-[13.5px] font-[Lora]" style={{ color: "#78350f" }}>
-                          No remaining time slots for <span style={{ fontWeight: 800 }}>{isoToNice(meet.date)}</span>. Tap <span style={{ fontWeight: 800 }}>Next available date</span> to jump to the next working day with available times.
+                          No remaining time slots for <span style={{ fontWeight: 800 }}>{isoToNice(meet.date)}</span>. Tap{" "}
+                          <span style={{ fontWeight: 800 }}>Next available date</span> to jump to the next working day with
+                          available times.
                         </div>
                       ) : null}
                     </div>
@@ -1542,8 +1499,12 @@ const isOverlayOpen = showTerms || showCancelConfirm;
                   <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
                     {counselorsComputed.map((c) => {
                       const disabled =
-                        !meet.date || !dayState.ok || c._status === "Unavailable" || c._status === "Fully Booked";
-                      const active = meet.counselorId === c.id;
+                        !meet.date ||
+                        !dayState.ok ||
+                        c._status === "Unavailable" ||
+                        c._status === "Fully Booked";
+
+                      const active = String(meet.counselorId) === String(c.id);
 
                       return (
                         <button
@@ -1552,7 +1513,11 @@ const isOverlayOpen = showTerms || showCancelConfirm;
                           disabled={disabled}
                           onClick={() => {
                             clearMeetFeedback();
-                            setMeet((p) => ({ ...p, counselorId: active ? "" : c.id, time: "" }));
+                            setMeet((p) => ({
+                              ...p,
+                              counselorId: active ? "" : String(c.id),
+                              time: "",
+                            }));
                           }}
                           className={[
                             "w-full text-left rounded-2xl px-4 py-3 transition border",
@@ -1604,7 +1569,8 @@ const isOverlayOpen = showTerms || showCancelConfirm;
                     <div className="mt-3 rounded-2xl bg-white border border-black/5 p-3">
                       <div className="flex items-start justify-between gap-3">
                         <div className="text-[13.5px] font-[Lora]" style={{ color: TEXT_MUTED }}>
-                          Availability couldn’t be loaded: <span style={{ color: TEXT_MAIN, fontWeight: 700 }}>{availabilityErr}</span>
+                          Availability couldn’t be loaded:{" "}
+                          <span style={{ color: TEXT_MAIN, fontWeight: 700 }}>{availabilityErr}</span>
                         </div>
                         <button
                           type="button"
@@ -1657,7 +1623,8 @@ const isOverlayOpen = showTerms || showCancelConfirm;
 
                   {meet.time ? (
                     <div className="mt-3 text-[14px] font-[Lora]" style={{ color: TEXT_SOFT }}>
-                      Selected time: <span style={{ color: TEXT_MAIN, fontWeight: 700 }}>{formatTime12(meet.time)}</span>
+                      Selected time:{" "}
+                      <span style={{ color: TEXT_MAIN, fontWeight: 700 }}>{formatTime12(meet.time)}</span>
                     </div>
                   ) : null}
                 </div>
@@ -1753,7 +1720,7 @@ const isOverlayOpen = showTerms || showCancelConfirm;
                     <div className="flex items-start justify-between gap-4">
                       <div>
                         <div className="font-[Nunito] text-[28px] md:text-[34px] font-extrabold" style={{ color: TEXT_MAIN }}>
-                          {displayReq?.status === "Canceled" ? "Request canceled ✅" : "Request sent "}
+                          {displayReq?.status === "Canceled" ? "Request canceled ✅" : "Request sent"}
                         </div>
                         <div className="mt-2 font-[Lora] text-[15.5px]" style={{ color: TEXT_MUTED }}>
                           {meetSuccess || "You’ll receive a confirmation once approved."}
@@ -1770,7 +1737,8 @@ const isOverlayOpen = showTerms || showCancelConfirm;
                       </div>
 
                       <div className="mt-2 font-[Lora] text-[15px]" style={{ color: TEXT_MUTED }}>
-                        {(displayReq?.sessionType || meet.sessionType || "—")} • {(displayReq?.reason || meet.reason || "—")} •{" "}
+                        {(displayReq?.sessionType || meet.sessionType || "—")} •{" "}
+                        {(displayReq?.reason || meet.reason || "—")} •{" "}
                         {(displayReq?.date ? isoToNice(displayReq.date) : meet.date ? isoToNice(meet.date) : "—")} •{" "}
                         {(displayReq?.time || meet.time) ? formatTime12(displayReq?.time || meet.time) : "—"}
                       </div>
@@ -1794,35 +1762,37 @@ const isOverlayOpen = showTerms || showCancelConfirm;
                       ) : null}
                     </div>
 
-                   <div className="mt-5 flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between">
-  <div className="flex flex-col sm:flex-row gap-3">
-    <button
-      type="button"
-      onClick={openMessagesFlow}
-      className={[primaryBtn, tapClass].join(" ")}
-      style={{ backgroundColor: LOGIN_PRIMARY }}
-    >
-      Message counselor
-    </button>
+                    <div className="mt-5 flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between">
+                      <div className="flex flex-col sm:flex-row gap-3">
+                        <button
+                          type="button"
+                          onClick={openMessagesFlow}
+                          className={[primaryBtn, tapClass].join(" ")}
+                          style={{ backgroundColor: LOGIN_PRIMARY }}
+                        >
+                          Message counselor
+                        </button>
 
-    <button
-      type="button"
-      disabled={!currentRequest || currentRequest.status !== "Pending"}
-      onClick={() => setShowCancelConfirm(true)}
-      className={[
-        ghostBtn,
-        tapClass,
-        !currentRequest || currentRequest.status !== "Pending" ? "opacity-60 cursor-not-allowed" : "",
-      ].join(" ")}
-    >
-      Cancel request
-    </button>
+                        <button
+                          type="button"
+                          disabled={!currentRequest || String(currentRequest.status) !== "Pending"}
+                          onClick={() => setShowCancelConfirm(true)}
+                          className={[
+                            ghostBtn,
+                            tapClass,
+                            !currentRequest || String(currentRequest.status) !== "Pending"
+                              ? "opacity-60 cursor-not-allowed"
+                              : "",
+                          ].join(" ")}
+                        >
+                          Cancel request
+                        </button>
 
-    <button type="button" onClick={() => setStep(0)} className={[ghostBtn, tapClass].join(" ")}>
-      Return home
-    </button>
-  </div>
-</div>
+                        <button type="button" onClick={() => setStep(0)} className={[ghostBtn, tapClass].join(" ")}>
+                          Return home
+                        </button>
+                      </div>
+                    </div>
 
                     <div className="mt-3 text-[12.5px] font-[Lora]" style={{ color: TEXT_SOFT }}>
                       For emergencies, use the hotline.
@@ -1838,6 +1808,15 @@ const isOverlayOpen = showTerms || showCancelConfirm;
                 style={{ color: ERROR_TEXT }}
               >
                 {meetError}
+              </div>
+            ) : null}
+
+            {chatError && pillUnlocked ? (
+              <div
+                className="mt-4 rounded-2xl bg-white px-4 py-3 text-[13.5px] font-[Lora] border border-black/5"
+                style={{ color: ERROR_TEXT }}
+              >
+                {chatError}
               </div>
             ) : null}
           </div>
@@ -1888,7 +1867,10 @@ function ProgressHeader({ title, subtitle, progress, accent, onBack }) {
       </div>
 
       <div className="mt-3 h-3 rounded-full bg-black/5 overflow-hidden">
-        <div className="h-full rounded-full transition-all duration-300" style={{ width: `${progress}%`, backgroundColor: accent }} />
+        <div
+          className="h-full rounded-full transition-all duration-300"
+          style={{ width: `${progress}%`, backgroundColor: accent }}
+        />
       </div>
     </div>
   );
@@ -1922,7 +1904,11 @@ function BottomNav({ leftLabel, rightLabel, onLeft, onRight, rightDisabled, acce
         type="button"
         onClick={onRight}
         disabled={rightDisabled}
-        className={[primaryBtn, tapClass, rightDisabled ? "opacity-60 cursor-not-allowed" : "hover:brightness-95"].join(" ")}
+        className={[
+          primaryBtn,
+          tapClass,
+          rightDisabled ? "opacity-60 cursor-not-allowed" : "hover:brightness-95",
+        ].join(" ")}
         style={{ backgroundColor: accent }}
       >
         {rightLabel} →
@@ -2175,25 +2161,23 @@ function TermsModal({ accent, onAccept, onClose }) {
           </div>
         </div>
 
-       <div className="px-6 py-4 border-t border-black/10 flex flex-col md:flex-row gap-3 md:items-center md:justify-between">
-  <button
-    type="button"
-    onClick={onAccept}
-    className="h-11 px-7 rounded-xl hover:brightness-95 transition font-[Nunito] text-[15.5px] font-extrabold text-[#141414]"
-    style={{ backgroundColor: accent }}
-  >
-    Accept
-  </button>
+        <div className="px-6 py-4 border-t border-black/10 flex flex-col md:flex-row gap-3 md:items-center md:justify-between">
+          <button
+            type="button"
+            onClick={onAccept}
+            className="h-11 px-7 rounded-xl hover:brightness-95 transition font-[Nunito] text-[15.5px] font-extrabold text-[#141414]"
+            style={{ backgroundColor: accent }}
+          >
+            Accept
+          </button>
 
-  <button
-    type="button"
-    onClick={onClose}
-    className="h-11 px-6 rounded-xl bg-black/5 hover:bg-black/10 transition font-[Nunito] font-extrabold text-[#141414]"
-  >
-    Cancel
-  </button>
-
-
+          <button
+            type="button"
+            onClick={onClose}
+            className="h-11 px-6 rounded-xl bg-black/5 hover:bg-black/10 transition font-[Nunito] font-extrabold text-[#141414]"
+          >
+            Cancel
+          </button>
         </div>
       </div>
     </div>
@@ -2226,7 +2210,10 @@ function ConfirmCancelModal({ accent, busy = false, onClose, onConfirm }) {
             type="button"
             onClick={onClose}
             disabled={busy}
-            className={"h-10 px-4 rounded-xl bg-black/5 hover:bg-black/10 transition font-[Nunito] font-extrabold text-[#141414] " + (busy ? "opacity-60 cursor-not-allowed" : "")}
+            className={
+              "h-10 px-4 rounded-xl bg-black/5 hover:bg-black/10 transition font-[Nunito] font-extrabold text-[#141414] " +
+              (busy ? "opacity-60 cursor-not-allowed" : "")
+            }
           >
             Keep
           </button>
@@ -2235,7 +2222,10 @@ function ConfirmCancelModal({ accent, busy = false, onClose, onConfirm }) {
             type="button"
             onClick={onConfirm}
             disabled={busy}
-            className={"h-10 px-4 rounded-xl hover:brightness-95 transition font-[Nunito] font-extrabold text-[#141414] " + (busy ? "opacity-60 cursor-not-allowed" : "")}
+            className={
+              "h-10 px-4 rounded-xl hover:brightness-95 transition font-[Nunito] font-extrabold text-[#141414] " +
+              (busy ? "opacity-60 cursor-not-allowed" : "")
+            }
             style={{ backgroundColor: accent }}
           >
             Yes, cancel
@@ -2282,8 +2272,14 @@ function CalendarIcon({ accent }) {
 function ArrowRightIcon() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path d="M10 7l5 5-5 5" stroke={TEXT_MAIN} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" opacity="0.55" />
+      <path
+        d="M10 7l5 5-5 5"
+        stroke={TEXT_MAIN}
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        opacity="0.55"
+      />
     </svg>
   );
 }
-// ...
