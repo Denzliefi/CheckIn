@@ -1,54 +1,64 @@
-// frontend/src/api/messagesRealtime.js
+// src/api/messagesRealtime.js
 import { io } from "socket.io-client";
-import { getSocketBaseUrl, getToken } from "./messages.api";
+import { getApiBaseUrl } from "./apiFetch";
 
 let socket = null;
 
-export function connectMessagesSocket() {
-  if (socket && socket.connected) return socket;
+function getToken() {
+  try {
+    return localStorage.getItem("token") || localStorage.getItem("checkin:token") || "";
+  } catch {
+    return "";
+  }
+}
 
-  const url = getSocketBaseUrl();
-  const token = getToken();
+function guessLocalBackend() {
+  if (typeof window === "undefined") return "http://localhost:5000";
+  const { protocol, hostname } = window.location;
+  // common dev setups: CRA on :3000, backend on :5000
+  return `${protocol}//${hostname}:5000`;
+}
+
+export function getSocket() {
+  if (socket) return socket;
+
+  const base = getApiBaseUrl(); // "" in localhost dev with proxy
+  const url = base && String(base).trim() ? base : guessLocalBackend();
 
   socket = io(url, {
-    transports: ["websocket", "polling"],
-    auth: { token },
-    reconnection: true,
-    reconnectionAttempts: 20,
-    reconnectionDelay: 500,
-    timeout: 20000,
+    transports: ["websocket"],
+    auth: { token: getToken() },
   });
 
-  socket.on("connect_error", (err) => {
-    // Keep quiet in UI; just log for dev
-    console.warn("Socket connect_error:", err?.message || err);
-  });
-
+  // If token changes (login/logout), you can call resetSocket()
   return socket;
 }
 
-export function disconnectMessagesSocket() {
-  if (!socket) return;
+export function resetSocket() {
   try {
-    socket.disconnect();
+    socket?.disconnect();
   } catch {}
   socket = null;
 }
 
-export function onMessageNew(handler) {
-  const s = connectMessagesSocket();
+export function joinThread(threadId) {
+  if (!threadId) return;
+  getSocket().emit("thread:join", { threadId });
+}
+
+export function leaveThread(threadId) {
+  if (!threadId) return;
+  getSocket().emit("thread:leave", { threadId });
+}
+
+export function onNewMessage(handler) {
+  const s = getSocket();
   s.on("message:new", handler);
   return () => s.off("message:new", handler);
 }
 
-export function onThreadUpdate(handler) {
-  const s = connectMessagesSocket();
-  s.on("thread:update", handler);
-  return () => s.off("thread:update", handler);
-}
-
-export function onThreadCreated(handler) {
-  const s = connectMessagesSocket();
-  s.on("thread:created", handler);
-  return () => s.off("thread:created", handler);
+export function onThreadActivity(handler) {
+  const s = getSocket();
+  s.on("thread:activity", handler);
+  return () => s.off("thread:activity", handler);
 }
