@@ -1,174 +1,242 @@
-// src/api/messages.api.js
-// Adapter layer: UI calls these functions only.
-// Today: static in-memory.
-// Later: replace internals with real fetch/axios calls.
+// frontend/src/api/messages.api.js
+import { apiFetch, getApiBaseUrl } from "./apiFetch";
 
-const USE_REAL_API = false; // ✅ set to true once backend is ready
-
-// If you already have an auth token helper, plug it here later.
-function getToken() {
-  return localStorage.getItem("token"); // or your auth storage key
-}
-
-const BASE_URL =
-  process.env.REACT_APP_API_URL
-    ? `${process.env.REACT_APP_API_URL}/api`
-    : "http://localhost:5000/api";
-
-/* ---------------------------
-   STATIC STORE (temporary)
----------------------------- */
-let STATIC_THREADS = [
-  {
-    id: "t1",
-    name: "Counselor A",
-    subtitle: "Guidance Counselor",
-    avatarUrl:
-      "https://images.unsplash.com/photo-1524504388940-b1c1722653e1?auto=format&fit=crop&w=160&q=60",
-    lastMessage: "Kamusta kana?",
-    lastTime: "17h",
-    unread: 1,
-    messages: [
-      { id: "m1", from: "them", text: "Kamusta kana?", time: "2:16 AM" },
-      { id: "m2", from: "me", text: "Hi counselor, I’m slightly depressed. Ikaw ba?", time: "3:22 AM" },
-    ],
-  },
-  {
-    id: "t2",
-    name: "Counselor B",
-    subtitle: "Guidance Counselor",
-    avatarUrl:
-      "https://images.unsplash.com/photo-1544723795-3fb6469f5b39?auto=format&fit=crop&w=160&q=60",
-    lastMessage: "I saw your request. Are you safe right now?",
-    lastTime: "6d",
-    unread: 0,
-    messages: [
-      { id: "m1", from: "them", text: "I saw your request. Are you safe right now?", time: "10:11 AM" },
-      { id: "m2", from: "me", text: "Yes po, I’m safe. Just overwhelmed.", time: "10:14 AM" },
-    ],
-  },
-];
-
-/* ---------------------------
-   HELPERS
----------------------------- */
-function nowTimeLabel() {
-  const now = new Date();
-  return now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-}
-
-function sortThreads(threads) {
-  // Simple: keep as is. Later you can sort by updatedAt/lastMessageAt.
-  return threads;
-}
-
-async function apiFetch(path, { method = "GET", body, auth = true } = {}) {
-  const headers = { "Content-Type": "application/json" };
-  if (auth) {
-    const token = getToken();
-    if (token) headers.Authorization = `Bearer ${token}`;
+/* =========================================================
+   JWT helper (no extra deps)
+========================================================= */
+export function getToken() {
+  try {
+    return (
+      window.localStorage.getItem("token") ||
+      window.localStorage.getItem("authToken") ||
+      window.sessionStorage.getItem("token") ||
+      ""
+    );
+  } catch {
+    return "";
   }
+}
 
-  const res = await fetch(`${BASE_URL}${path}`, {
-    method,
-    headers,
-    body: body ? JSON.stringify(body) : undefined,
-  });
-
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`API ${method} ${path} failed: ${res.status} ${text}`);
+export function getMyUserId() {
+  const token = getToken();
+  if (!token) return "";
+  try {
+    const [, payload] = token.split(".");
+    if (!payload) return "";
+    const normalized = payload.replace(/-/g, "+").replace(/_/g, "/");
+    const json = atob(normalized);
+    const obj = JSON.parse(json);
+    return String(obj?.id || obj?._id || "");
+  } catch {
+    return "";
   }
-  return res.json();
 }
 
 /* =========================================================
-   PUBLIC FUNCTIONS (UI should only call these)
+   Time helpers (UI format)
+========================================================= */
+function pad2(n) {
+  const s = String(n);
+  return s.length === 1 ? `0${s}` : s;
+}
+
+function formatClock(isoOrDate) {
+  try {
+    const d = new Date(isoOrDate);
+    if (Number.isNaN(d.getTime())) return "";
+    return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+  } catch {
+    return "";
+  }
+}
+
+function formatRelative(isoOrDate) {
+  try {
+    const d = new Date(isoOrDate);
+    const now = new Date();
+    const diff = now.getTime() - d.getTime();
+    if (!Number.isFinite(diff)) return "";
+
+    const mins = Math.floor(diff / 60000);
+    if (mins < 1) return "now";
+    if (mins < 60) return `${mins}m`;
+
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `${hrs}h`;
+
+    const days = Math.floor(hrs / 24);
+    if (days < 7) return `${days}d`;
+
+    return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  } catch {
+    return "";
+  }
+}
+
+/* =========================================================
+   Raw API
+========================================================= */
+export async function listThreadsRaw({ includeMessages = true, limit = 40 } = {}) {
+  const qs = new URLSearchParams();
+  qs.set("includeMessages", includeMessages ? "1" : "0");
+  qs.set("limit", String(limit));
+  return apiFetch(`/api/messages/threads?${qs.toString()}`);
+}
+
+export async function ensureThread({ anonymous = false, counselorId = null } = {}) {
+  return apiFetch("/api/messages/threads/ensure", {
+    method: "POST",
+    body: JSON.stringify({ anonymous, counselorId }),
+  });
+}
+
+export async function getThreadRaw(threadId, { limit = 60 } = {}) {
+  const qs = new URLSearchParams();
+  qs.set("limit", String(limit));
+  return apiFetch(`/api/messages/threads/${threadId}?${qs.toString()}`);
+}
+
+export async function sendMessageRaw({ threadId, text }) {
+  return apiFetch(`/api/messages/threads/${threadId}/messages`, {
+    method: "POST",
+    body: JSON.stringify({ text }),
+  });
+}
+
+export async function markThreadRead(threadId) {
+  return apiFetch(`/api/messages/threads/${threadId}/read`, { method: "POST" });
+}
+
+/* =========================================================
+   MAPPERS
+   - User side: MessagesDrawer expects threads[] shape
+   - Counselor side: Inbox expects items[] shape
 ========================================================= */
 
-/**
- * List all conversation threads (for drawer list)
- * Returns: { items: Thread[] }
- */
-export async function listThreads() {
-  if (!USE_REAL_API) {
-    return { items: sortThreads([...STATIC_THREADS]) };
-  }
+export function toDrawerThreads(rawThreads = []) {
+  const myId = getMyUserId();
 
-  // ✅ Replace with your backend endpoint later
-  // Example:
-  // const data = await apiFetch("/counseling/threads");
-  // return { items: normalizeThreads(data.items) };
+  return (rawThreads || []).map((t) => {
+    const threadId = String(t._id);
+    const student = t.studentId;
+    const counselor = t.counselorId;
 
-  const data = await apiFetch("/messages/threads"); // placeholder
-  return data;
-}
+    const isStudentMe = String(student?._id) === myId;
 
-/**
- * Get a single thread with its messages
- * Returns: { item: Thread }
- */
-export async function getThread(threadId) {
-  if (!USE_REAL_API) {
-    const t = STATIC_THREADS.find((x) => x.id === threadId);
-    if (!t) throw new Error("Thread not found");
-    return { item: { ...t, messages: [...(t.messages || [])] } };
-  }
+    const other = isStudentMe ? counselor : student;
 
-  // placeholder real endpoint
-  const data = await apiFetch(`/messages/threads/${threadId}`);
-  return data;
-}
+    const name = isStudentMe
+      ? counselor?.fullName || "Guidance Counselor"
+      : t.anonymous
+      ? "Anonymous Student"
+      : other?.fullName || "Student";
 
-/**
- * Send a message in a thread
- * Returns: { item: Message }
- */
-export async function sendMessage({ threadId, text }) {
-  const clean = String(text || "").trim();
-  if (!clean) throw new Error("Message is empty");
+    const subtitle = isStudentMe ? "Counselor" : "Student";
 
-  if (!USE_REAL_API) {
-    const idx = STATIC_THREADS.findIndex((x) => x.id === threadId);
-    if (idx < 0) throw new Error("Thread not found");
+    const unread = Number(t?.unreadCounts?.[myId] || 0);
 
-    const msg = {
-      id: `m_${Date.now()}`,
-      from: "me",
-      text: clean,
-      time: nowTimeLabel(),
+    const messages = (t.messages || []).map((m) => {
+      const from = String(m.senderId) === myId ? "me" : "them";
+      return {
+        id: String(m._id),
+        from,
+        text: m.text,
+        time: formatClock(m.createdAt),
+        createdAt: new Date(m.createdAt).getTime(),
+        _raw: m,
+      };
+    });
+
+    const lastAt = t.lastMessageAt || t.updatedAt || null;
+
+    return {
+      id: threadId,
+      name,
+      subtitle,
+      avatarUrl: "", // optional
+      lastMessage: t.lastMessage || (messages[messages.length - 1]?.text || ""),
+      lastTime: lastAt ? formatRelative(lastAt) : "",
+      unread,
+      status: t.status,
+      anonymous: !!t.anonymous,
+      messages,
+      _raw: t,
     };
-
-    const nextThread = { ...STATIC_THREADS[idx] };
-    nextThread.messages = [...(nextThread.messages || []), msg];
-    nextThread.lastMessage = clean;
-    nextThread.lastTime = "now";
-    nextThread.unread = 0;
-
-    STATIC_THREADS = STATIC_THREADS.map((t, i) => (i === idx ? nextThread : t));
-    return { item: msg };
-  }
-
-  // placeholder real endpoint
-  const data = await apiFetch(`/messages/threads/${threadId}/messages`, {
-    method: "POST",
-    body: { text: clean },
   });
-
-  return data;
 }
 
-/**
- * Optional: mark thread as read
- */
-export async function markThreadRead(threadId) {
-  if (!USE_REAL_API) {
-    STATIC_THREADS = STATIC_THREADS.map((t) =>
-      t.id === threadId ? { ...t, unread: 0 } : t
-    );
-    return { ok: true };
-  }
+export function toInboxItems(rawThreads = []) {
+  const myId = getMyUserId();
 
-  // placeholder real endpoint
-  return apiFetch(`/messages/threads/${threadId}/read`, { method: "POST" });
+  return (rawThreads || []).map((t) => {
+    const threadId = String(t._id);
+
+    const student = t.studentId;
+    const displayName = t.anonymous
+      ? `Anonymous (T-${threadId.slice(-5)})`
+      : student?.fullName || `Student (T-${threadId.slice(-5)})`;
+
+    const studentId = t.anonymous ? null : student?.studentNumber || null;
+
+    const unread = Number(t?.unreadCounts?.[myId] || 0);
+    const read = unread === 0;
+
+    const thread = (t.messages || []).map((m) => {
+      const by = String(m.senderId) === myId ? "Counselor" : "Participant";
+      return {
+        id: String(m._id),
+        by,
+        at: formatClock(m.createdAt),
+        text: m.text,
+        _raw: m,
+      };
+    });
+
+    const lastAt = t.lastMessageAt || t.updatedAt || null;
+    const lastActivity = lastAt ? new Date(lastAt).getTime() : 0;
+
+    // keep mood tracker ready (empty for now)
+    const moodTracking = { entries: [] };
+
+    return {
+      id: threadId,
+      studentId: studentId ? `#${studentId}` : null,
+      anonymous: !!t.anonymous,
+      displayName,
+      read,
+      lastSeen: lastAt ? new Date(lastAt).toISOString().slice(0, 10) : "",
+      lastMessage: t.lastMessage || (thread[thread.length - 1]?.text || "—"),
+      lastActivity,
+      thread,
+      moodTracking,
+      _raw: t,
+    };
+  });
+}
+
+/* =========================================================
+   Convenience
+========================================================= */
+export async function listThreadsForDrawer() {
+  const data = await listThreadsRaw({ includeMessages: true, limit: 60 });
+  return { items: toDrawerThreads(data.items || []) };
+}
+
+export async function listThreadsForInbox() {
+  const data = await listThreadsRaw({ includeMessages: true, limit: 120 });
+  return { items: toInboxItems(data.items || []) };
+}
+
+export async function sendDrawerMessage({ threadId, text }) {
+  const res = await sendMessageRaw({ threadId, text });
+  return res;
+}
+
+export function getSocketBaseUrl() {
+  // Socket.io should connect to the same base as API.
+  // apiFetch uses REACT_APP_API_URL or relative; relative won't work for sockets on local dev.
+  const base = getApiBaseUrl();
+  if (base) return base;
+  // local fallback
+  return "http://localhost:5000";
 }
