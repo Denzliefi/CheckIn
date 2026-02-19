@@ -120,17 +120,21 @@ export function toDrawerThreads(rawThreads = []) {
     const threadId = String(t._id);
     const student = t.studentId;
 
-// If thread is unclaimed, always mask identity (privacy-first)
-const isUnclaimed = !t.counselorId;
-const suffix = `T-${threadId.slice(-5)}`;
+    // If thread is unclaimed, always mask identity (privacy-first)
+    const isUnclaimed = !t.counselorId;
+    const suffix = `T-${threadId.slice(-5)}`;
 
-const displayName = isUnclaimed
-  ? `New Student • Unclaimed (${suffix})`
-  : t.anonymous
-  ? `Anonymous Student (${suffix})`
-  : student?.fullName || `Student (${suffix})`;
+    const displayName = isUnclaimed
+      ? `New Student • Unclaimed (${suffix})`
+      : t.anonymous
+      ? `Anonymous Student (${suffix})`
+      : student?.fullName || `Student (${suffix})`;
 
-const studentId = isUnclaimed ? null : (t.anonymous ? null : (student?.studentNumber || null));
+    const studentId = isUnclaimed
+      ? null
+      : t.anonymous
+      ? null
+      : student?.studentNumber || null;
 
     const unread = Number(t?.unreadCounts?.[myId] || 0);
     const read = unread === 0;
@@ -167,6 +171,64 @@ const studentId = isUnclaimed ? null : (t.anonymous ? null : (student?.studentNu
     };
   });
 }
+
+export function toInboxItems(rawThreads = []) {
+  const myId = getMyUserId();
+
+  const items = (rawThreads || []).map((t) => {
+    const threadId = String(t._id || "");
+    const student = t.studentId;
+
+    // If thread is unclaimed, always mask identity (privacy-first)
+    const isUnclaimed = !t.counselorId;
+    const suffix = `T-${threadId.slice(-5)}`;
+
+    const displayName = isUnclaimed
+      ? `New Student • Unclaimed (${suffix})`
+      : t.anonymous
+      ? `Anonymous Student (${suffix})`
+      : student?.fullName || `Student (${suffix})`;
+
+    const studentNumber =
+      !isUnclaimed && !t.anonymous ? student?.studentNumber || null : null;
+
+    const lastAt = t.lastMessageAt || t.updatedAt || null;
+    const lastActivity = lastAt ? new Date(lastAt).getTime() : 0;
+
+    const lastMsgFromMessages =
+      Array.isArray(t.messages) && t.messages.length
+        ? t.messages[t.messages.length - 1]?.text
+        : null;
+
+    const unreadCount = Number(t?.unreadCounts?.[myId] || 0);
+
+    return {
+      id: threadId,
+      threadId,
+
+      claimed: !isUnclaimed,
+      anonymous: !!t.anonymous,
+
+      displayName,
+      studentId: studentNumber ? `#${studentNumber}` : null,
+
+      lastMessage: t.lastMessage || lastMsgFromMessages || "—",
+      lastAt,
+      lastClock: lastAt ? formatClock(lastAt) : "",
+      lastRelative: lastAt ? formatRelative(lastAt) : "",
+      lastActivity,
+
+      unreadCount,
+      isUnread: unreadCount > 0,
+
+      _raw: t,
+    };
+  });
+
+  items.sort((a, b) => (b.lastActivity || 0) - (a.lastActivity || 0));
+  return items;
+}
+
 
 /* =========================================================
    Convenience
