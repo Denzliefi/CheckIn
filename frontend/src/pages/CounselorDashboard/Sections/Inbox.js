@@ -3,6 +3,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, LayoutGroup, motion, useInView, useReducedMotion } from "framer-motion";
 import Lottie from "lottie-react";
 import messageAnim from "../../../assets/lottie/Message.json";
+import { apiFetch } from "../../../api/apiFetch";
+import { connectSocket } from "../../../api/socket";
 
 /* -----------------------------
   Fixed vocab
@@ -1291,10 +1293,11 @@ function IconSend({ className = "" }) {
 export default function Inbox() {
   const today = useMemo(() => ymd(new Date()), []);
   const [desktopPaneOpen, setDesktopPaneOpen] = useState(true);
-  const seeded = useMemo(() => buildMockParticipants(50), []);
-  const [items, setItems] = useState(seeded);
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
   const [scrollKey, setScrollKey] = useState(0);
-  const [selectedId, setSelectedId] = useState(items?.[0]?.id || "");
+  const [selectedId, setSelectedId] = useState("");
   const [tab, setTab] = useState("chat");
   const [search, setSearch] = useState("");
   const [filterUnread, setFilterUnread] = useState(false);
@@ -1303,12 +1306,134 @@ export default function Inbox() {
   const [draft, setDraft] = useState("");
   const [showConversation, setShowConversation] = useState(false);
 
+  const socketRef = useRef(null);
+  const joinedRef = useRef(new Set());
+
   const closeDesktopConversation = () => {
     setDesktopPaneOpen(false);
     setSelectedId("");
     setTab("chat");
     setDraft("");
   };
+
+  const asYmd = (isoLike) => {
+    try {
+      const d = isoLike ? new Date(isoLike) : new Date();
+      const yyyy = d.getFullYear();
+      const mm = String(d.getMonth() + 1).padStart(2, "0");
+      const dd = String(d.getDate()).padStart(2, "0");
+      return `${yyyy}-${mm}-${dd}`;
+    } catch {
+      return "";
+    }
+  };
+
+  const toItem = (t) => {
+    const anonymous = !!t.anonymous;
+    const name = anonymous ? "Anonymous Student" : t.student?.fullName || "Student";
+    return {
+      id: t.id,
+      displayName: name,
+      anonymous,
+      studentId: anonymous ? "" : (t.student?.studentNumber || ""),
+      read: (Number(t.unreadCounselor || 0) === 0),
+      lastMessage: t.lastMessage || "",
+      lastSeen: t.lastSeen || asYmd(t.lastActivity),
+      lastActivity: Number(t.lastActivity || 0),
+      thread: [], // messages loaded on demand
+      moodTracking: { entries: [] },
+    };
+  };
+
+  async function loadThreads() {
+    setLoading(true);
+    setLoadError("");
+    try {
+      const data = await apiFetch("/api/messages/threads", { method: "GET" });
+      const raw = Array.isArray(data?.items) ? data.items : [];
+      const mapped = raw.map(toItem);
+      setItems(mapped);
+      if (!selectedId && mapped[0]?.id) setSelectedId(mapped[0].id);
+    } catch (e) {
+      setLoadError(e?.message || "Failed to load inbox.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function loadMessagesFor(threadId) {
+    if (!threadId) return;
+    const data = await apiFetch(`/api/messages/threads/${threadId}/messages?limit=200`, { method: "GET" });
+    const msgs = Array.isArray(data?.items) ? data.items : [];
+    setItems((prev) =>
+      prev.map((x) =>
+        x.id === threadId
+          ? {
+              ...x,
+              thread: msgs.map((m) => ({ id: m.id, by: m.by, at: m.at, text: m.text })),
+              // mark as read locally
+              read: true,
+            }
+          : x
+      )
+    );
+  }
+
+  function ensureSocket() {
+    if (socketRef.current) return socketRef.current;
+
+    const s = connectSocket();
+    socketRef.current = s;
+
+    s.on("message:new", ({ threadId, message, thread }) => {
+      if (!threadId || !message) return;
+
+      setItems((prev) => {
+        const idx = prev.findIndex((x) => x.id === threadId);
+        const base = idx >= 0 ? prev[idx] : toItem(thread || { id: threadId, anonymous: true });
+
+        const next = {
+          ...base,
+          lastMessage: thread?.lastMessage || message.text || base.lastMessage,
+          lastSeen: thread?.lastSeen || base.lastSeen,
+          lastActivity: Number(thread?.lastActivity || Date.now()),
+          read: false, // new activity for counselor
+          thread: base.thread && base.thread.length
+            ? [...base.thread, { id: message.id, by: message.by, at: message.at, text: message.text }]
+            : base.thread, // only append if already loaded
+        };
+
+        const nextArr = [...prev];
+        if (idx < 0) nextArr.unshift(next);
+        else nextArr[idx] = next;
+        return nextArr;
+      });
+    });
+
+    s.on("thread:updated", ({ threadId, thread }) => {
+      if (!threadId || !thread) return;
+      setItems((prev) =>
+        prev.map((x) =>
+          x.id === threadId
+            ? {
+                ...x,
+                lastMessage: thread.lastMessage || x.lastMessage,
+                lastSeen: thread.lastSeen || x.lastSeen,
+                lastActivity: Number(thread.lastActivity || x.lastActivity || Date.now()),
+              }
+            : x
+        )
+      );
+    });
+
+    return s;
+  }
+
+
+  useEffect(() => {
+    loadThreads();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const activityOf = useCallback((x) => {
     const ts = typeof x?.lastActivity === "number" && Number.isFinite(x.lastActivity) ? x.lastActivity : null;
@@ -1345,7 +1470,10 @@ export default function Inbox() {
     scrollToBottomAfterPaint(chatScrollRef, 60);
   }, [selected?.id, tab, selected?.thread?.length, scrollKey, showConversation]);
 
-  const markRead = (id) => setItems((prev) => prev.map((x) => (x.id === id ? { ...x, read: true } : x)));
+  const markRead = (id) => {
+    setItems((prev) => prev.map((x) => (x.id === id ? { ...x, read: true } : x)));
+    apiFetch(`/api/messages/threads/${id}/read`, { method: "POST" }).catch(() => {});
+  };
 
   const selectChat = (id) => {
     setSelectedId(id);
@@ -1363,22 +1491,38 @@ export default function Inbox() {
     const text = draft.trim();
     if (!text) return;
 
+    const s = ensureSocket();
+
+    // optimistic UI
     const now = new Date();
     const at = `${pad2(now.getHours())}:${pad2(now.getMinutes())}`;
-    const ts = now.getTime();
+    const tempId = `${selected.id}-c-${Date.now()}`;
 
-    const next = {
-      ...selected,
-      thread: [...safeArray(selected.thread), { id: `${selected.id}-c-${Date.now()}`, by: "Counselor", at, text }],
-      lastMessage: text,
-      read: true,
-      lastSeen: ymd(now),
-      lastActivity: ts,
-    };
-
-    setItems((prev) => prev.map((x) => (x.id === selected.id ? next : x)));
+    setItems((prev) =>
+      prev.map((x) =>
+        x.id === selected.id
+          ? {
+              ...x,
+              thread: [...safeArray(x.thread), { id: tempId, by: "Counselor", at, text }],
+              lastMessage: text,
+              read: true,
+              lastSeen: ymd(now),
+              lastActivity: now.getTime(),
+            }
+          : x
+      )
+    );
     setDraft("");
     setScrollKey((k) => k + 1);
+
+    s.emit("message:send", { threadId: selected.id, text }, (ack) => {
+      if (!ack?.ok) {
+        // rollback (simple): mark error by reloading messages
+        loadMessagesFor(selected.id);
+        return;
+      }
+      // server will also broadcast message:new, so we don't need to do anything else here
+    });
   };
 
   const InboxList = (
@@ -1404,6 +1548,11 @@ export default function Inbox() {
           placeholder="Search…"
           className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-700 outline-none focus:ring-4 focus:ring-slate-100"
         />
+      </div>
+
+      <div className="px-4 py-2">
+        {loading ? <div className="text-[12px] font-bold text-slate-500">Loading inbox…</div> : null}
+        {loadError ? <div className="text-[12px] font-bold text-red-600">{loadError}</div> : null}
       </div>
 
       <div className="flex-1 min-h-0">

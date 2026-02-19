@@ -84,6 +84,7 @@ export default function MessagesDrawer({
   threads = [],
   initialThreadId = "",
   onSendMessage, // async ({ threadId, text }) => messageObject
+  onStartSession, // async ({ mode, email, sessionKey }) => { threadId }
   title = "Messages",
 }) {
   const PAGE_SIZE = 10;
@@ -105,6 +106,7 @@ export default function MessagesDrawer({
   // expiry session
   const [createdAtMs, setCreatedAtMs] = useState(null);
   const [expiresAtMs, setExpiresAtMs] = useState(null);
+  const [sessionKey, setSessionKey] = useState("");
 
   // responsive flags
   const isMobile = useMedia("(max-width: 520px)");
@@ -187,6 +189,7 @@ export default function MessagesDrawer({
     setVisibleCount(PAGE_SIZE);
     setCreatedAtMs(null);
     setExpiresAtMs(null);
+    setSessionKey("");
     setActiveId(initialThreadId || threads?.[0]?.id || "");
     clearSession();
   }
@@ -222,6 +225,7 @@ export default function MessagesDrawer({
     setStudentEmail(saved.studentEmail || "");
     setCreatedAtMs(saved.createdAtMs || null);
     setExpiresAtMs(saved.expiresAtMs || null);
+    setSessionKey(saved.sessionKey || "");
     setActiveId(saved.activeId || defaultThreadId);
     setVisibleCount(saved.visibleCount || PAGE_SIZE);
     setDraft("");
@@ -238,6 +242,7 @@ export default function MessagesDrawer({
       studentEmail,
       createdAtMs,
       expiresAtMs,
+      sessionKey,
       activeId,
       visibleCount,
     });
@@ -351,14 +356,29 @@ export default function MessagesDrawer({
     if (saved?.createdAtMs && saved?.expiresAtMs) {
       setCreatedAtMs(saved.createdAtMs);
       setExpiresAtMs(saved.expiresAtMs);
+      setSessionKey(saved.sessionKey || "");
       return;
     }
 
     const now = Date.now();
     const next = { ...saved, createdAtMs: now, expiresAtMs: now + EXPIRE_MS };
+    // Ensure an anonymous session key exists (used for realtime chat)
+    if (!next.sessionKey) {
+      try {
+        const bytes =
+          typeof crypto !== "undefined" && crypto.getRandomValues
+            ? crypto.getRandomValues(new Uint8Array(16))
+            : Array.from({ length: 16 }, () => Math.floor(Math.random() * 256));
+        next.sessionKey = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+      } catch {
+        next.sessionKey = `sess_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+      }
+    }
+
     saveSession(next);
     setCreatedAtMs(next.createdAtMs);
     setExpiresAtMs(next.expiresAtMs);
+    setSessionKey(next.sessionKey || "");
   }
 
   async function handleSend() {
@@ -383,10 +403,26 @@ export default function MessagesDrawer({
     }
   }
 
-  function goToChat(threadId) {
-    setActiveId(threadId);
+  async function goToChat(threadId, meta = null) {
     setVisibleCount(PAGE_SIZE);
     ensureChatSessionStarted();
+
+    const saved = loadSession() || {};
+    const sk = saved.sessionKey || sessionKey || "";
+
+    let nextThreadId = threadId;
+
+    // Allow parent container to create/ensure thread in backend
+    if (meta && typeof onStartSession === "function") {
+      try {
+        const out = await onStartSession({ ...meta, sessionKey: sk });
+        if (out?.threadId) nextThreadId = out.threadId;
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    setActiveId(nextThreadId);
     setView("chat");
   }
 
@@ -400,7 +436,7 @@ export default function MessagesDrawer({
     if (nextMode === "anonymous") {
       setStudentEmail("");
       setEmailTouched(false);
-      goToChat(threadId);
+      void goToChat(threadId, { mode: "anonymous", email: "" });
       return;
     }
 
@@ -412,13 +448,10 @@ export default function MessagesDrawer({
     if (!isValidEmail(studentEmail)) return;
 
     const threadId = initialThreadId || threads?.[0]?.id || "";
-    goToChat(threadId);
+    void goToChat(threadId, { mode: "student", email: studentEmail });
   }
 
   function endConversationByUser() {
-    // optional confirm to prevent accidental reset
-    const ok = window.confirm?.("End this conversation? It will reset to the beginning.");
-    if (ok === false) return;
     resetToStart();
   }
 
