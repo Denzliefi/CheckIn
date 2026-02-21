@@ -9,6 +9,7 @@ export function getToken() {
     return (
       window.localStorage.getItem("token") ||
       window.localStorage.getItem("authToken") ||
+      window.localStorage.getItem("checkin:token") ||
       window.sessionStorage.getItem("token") ||
       ""
     );
