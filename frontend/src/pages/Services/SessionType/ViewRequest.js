@@ -1,5 +1,5 @@
 // src/pages/Services/SessionType/ViewRequest.js
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { apiFetch } from "../../../api/apiFetch";
@@ -25,6 +25,28 @@ const PAGE_SIZE = 5;
 
 function isBrowser() {
   return typeof window !== "undefined" && typeof document !== "undefined";
+}
+
+function useMediaQuery(query) {
+  const [matches, setMatches] = useState(false);
+
+  useEffect(() => {
+    if (!isBrowser()) return;
+    const mql = window.matchMedia(query);
+    const onChange = (e) => setMatches(e.matches);
+
+    if (mql.addEventListener) mql.addEventListener("change", onChange);
+    else mql.addListener(onChange);
+
+    setMatches(mql.matches);
+
+    return () => {
+      if (mql.removeEventListener) mql.removeEventListener("change", onChange);
+      else mql.removeListener(onChange);
+    };
+  }, [query]);
+
+  return matches;
 }
 
 function normalizeStatus(raw) {
@@ -442,30 +464,101 @@ export default function ViewRequest() {
 
 /* ===================== TABS ===================== */
 function Tabs({ items, active, counts, onChange }) {
-  return (
-    <div className="w-full max-w-3xl">
-      <div className="cc-tabs-scroll rounded-2xl bg-white/80 border border-gray-200 p-1 shadow-sm backdrop-blur">
-        <div className="cc-tabs-inner inline-flex items-center gap-1">
-          {items.map((t) => (
-            <button
-              key={t}
-              type="button"
-              onClick={() => onChange(t)}
-              className={`cc-focus cc-clickable relative rounded-xl font-extrabold ${
-                active === t ? "text-gray-900 cc-tab-active" : "text-gray-600 hover:text-gray-900"
-              }`}
-              style={{
-                padding: "9px 12px",
-                fontSize: "0.92rem",
-                background: active === t ? `linear-gradient(135deg, ${PRIMARY_SOFT}, ${PRIMARY_SOFT_2})` : "transparent",
-                border: "1px solid rgba(148,163,184,.25)",
-              }}
-              aria-pressed={active === t}
-            >
-              {t} <span className="text-sm opacity-60">({counts[t]})</span>
-            </button>
-          ))}
+  const isCompact = useMediaQuery("(max-width: 1024px)");
+  const containerRef = useRef(null);
+  const btnRefs = useRef(new Map());
+  const [indicator, setIndicator] = useState({ left: 0, width: 0 });
+
+  const updateIndicator = useCallback(() => {
+    if (isCompact) return;
+    const container = containerRef.current;
+    const activeBtn = btnRefs.current.get(active);
+    if (!container || !activeBtn) return;
+
+    const cRect = container.getBoundingClientRect();
+    const bRect = activeBtn.getBoundingClientRect();
+
+    setIndicator({
+      left: bRect.left - cRect.left,
+      width: bRect.width,
+    });
+  }, [active, isCompact]);
+
+  useLayoutEffect(() => {
+    updateIndicator();
+  }, [updateIndicator]);
+
+  useEffect(() => {
+    if (isCompact) return;
+    if (!isBrowser()) return;
+
+    const onResize = () => updateIndicator();
+    window.addEventListener("resize", onResize);
+
+    const fontsReady = document.fonts?.ready;
+    if (fontsReady && typeof fontsReady.then === "function") {
+      fontsReady.then(() => requestAnimationFrame(updateIndicator)).catch(() => {});
+    } else {
+      requestAnimationFrame(updateIndicator);
+    }
+
+    return () => window.removeEventListener("resize", onResize);
+  }, [updateIndicator, isCompact]);
+
+  if (isCompact) {
+    return (
+      <div className="w-full max-w-4xl">
+        <div className="cc-tabs-grid rounded-2xl bg-white/80 border border-gray-200 p-2 shadow-sm backdrop-blur">
+          {items.map((t) => {
+            const isActive = active === t;
+            return (
+              <button
+                key={t}
+                type="button"
+                onClick={() => onChange(t)}
+                className={`cc-focus cc-clickable cc-tab-btn ${isActive ? "cc-tab-btn-active" : ""}`}
+                aria-pressed={isActive}
+              >
+                <span className="truncate">
+                  {t} <span className="opacity-60">({counts[t]})</span>
+                </span>
+              </button>
+            );
+          })}
         </div>
+      </div>
+    );
+  }
+
+  return (
+    <div ref={containerRef} className="w-full max-w-3xl">
+      <div className="inline-flex items-center gap-1 rounded-2xl bg-white/80 border border-gray-200 p-1 relative mx-auto shadow-sm backdrop-blur">
+        <div
+          className="cc-tab-indicator absolute top-1 bottom-1 rounded-xl transition-all duration-200"
+          style={{
+            transform: `translateX(${indicator.left}px)`,
+            width: indicator.width,
+            background: `linear-gradient(135deg, ${PRIMARY_SOFT}, ${PRIMARY_SOFT_2})`,
+          }}
+        />
+        {items.map((t) => (
+          <button
+            key={t}
+            type="button"
+            ref={(el) => {
+              if (el) btnRefs.current.set(t, el);
+              else btnRefs.current.delete(t);
+            }}
+            onClick={() => onChange(t)}
+            className={`cc-focus cc-clickable relative rounded-xl font-extrabold ${
+              active === t ? "text-gray-900 cc-tab-active" : "text-gray-600 hover:text-gray-900"
+            }`}
+            style={{ padding: "9px 12px", fontSize: "0.92rem" }}
+            aria-pressed={active === t}
+          >
+            {t} <span className="text-sm opacity-60">({counts[t]})</span>
+          </button>
+        ))}
       </div>
     </div>
   );
@@ -1011,6 +1104,45 @@ const STYLE = `
   .cc-input{ background: rgba(255,255,255,.92); }
   .cc-select{ background: rgba(255,255,255,.92); }
 
+  .cc-tabs-grid{
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 8px;
+  }
+  @media (max-width: 520px){
+    .cc-tabs-grid{ grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); }
+  }
+  @media (max-width: 360px){
+    .cc-tabs-grid{ grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+
+  .cc-tab-btn{
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 10px 12px;
+    border-radius: 14px;
+    border: 1px solid rgba(148,163,184,.35);
+    background: rgba(255,255,255,.72);
+    font: 900 13px/1 var(--cc-font-head);
+    color: rgba(15,23,42,.72);
+    text-align: center;
+    min-height: 42px;
+  }
+
+  .cc-tab-btn-active{
+    background: linear-gradient(135deg, var(--cc-soft), var(--cc-soft2));
+    border-color: rgba(185,255,102,.60);
+    color: rgba(15,23,42,.95);
+  }
+
+  .cc-tab-btn:active{
+    background: linear-gradient(135deg, rgba(185,255,102,0.28), rgba(185,255,102,0.16));
+  }
+
+  .cc-tab-indicator{ pointer-events: none; }
+  .cc-tab-active{ text-shadow: 0 1px 0 rgba(255,255,255,.6); }
+
   .cc-row-selected{
     border-color: rgba(185,255,102,.62) !important;
     box-shadow: 0 14px 40px rgba(185,255,102,.12);
@@ -1067,19 +1199,6 @@ const STYLE = `
 
   .cc-clickable:active { transform: scale(0.98); }
   .cc-clickable { transition: transform 140ms ease, background-color 140ms ease, box-shadow 140ms ease; }
-
-  .cc-tabs-scroll{
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-  }
-  .cc-tabs-inner{ padding-bottom: 1px; }
-  .cc-tabs-scroll::-webkit-scrollbar{ height: 8px; }
-  .cc-tabs-scroll::-webkit-scrollbar-thumb{
-    background: rgba(15, 23, 42, 0.18);
-    border-radius: 999px;
-    border: 2px solid transparent;
-    background-clip: content-box;
-  }
 
   .cc-scroll{ scrollbar-width: thin; }
   .cc-scroll::-webkit-scrollbar{ width: 8px; height: 8px; }
