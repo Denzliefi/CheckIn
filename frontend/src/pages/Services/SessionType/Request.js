@@ -28,8 +28,131 @@ const TEXT_SOFT = "rgba(20,20,20,0.66)";
 const ERROR_TEXT = "#C62828";
 const PH_TZ = "Asia/Manila";
 
+/* ===================== AUTH (for drawer identity, no email prompt UI) ===================== */
+function safeJSON(v) {
+  try {
+    return JSON.parse(v);
+  } catch {
+    return null;
+  }
+}
+
+function base64UrlDecode(str) {
+  try {
+    const pad = "=".repeat((4 - (str.length % 4)) % 4);
+    const b64 = (str + pad).replace(/-/g, "+").replace(/_/g, "/");
+    return decodeURIComponent(
+      Array.from(atob(b64))
+        .map((c) => `%${c.charCodeAt(0).toString(16).padStart(2, "0")}`)
+        .join("")
+    );
+  } catch {
+    return null;
+  }
+}
+
+function decodeJWT(token) {
+  if (!token || typeof token !== "string") return null;
+  const parts = token.split(".");
+  if (parts.length < 2) return null;
+  const payload = base64UrlDecode(parts[1]);
+  return payload ? safeJSON(payload) : null;
+}
+
+function pickIdentity(obj) {
+  if (!obj || typeof obj !== "object") return null;
+
+  const email =
+    obj.email ||
+    obj.user?.email ||
+    obj.profile?.email ||
+    obj.account?.email ||
+    obj.data?.email ||
+    obj.user?.profile?.email;
+
+  if (!email || typeof email !== "string") return null;
+
+  const name =
+    obj.name ||
+    obj.user?.name ||
+    obj.profile?.name ||
+    obj.displayName ||
+    obj.user?.displayName ||
+    obj.fullName ||
+    obj.user?.fullName ||
+    "";
+
+  const studentNumber =
+    obj.studentNumber ||
+    obj.user?.studentNumber ||
+    obj.profile?.studentNumber ||
+    obj.studentNo ||
+    obj.user?.studentNo ||
+    "";
+
+  return { email, name, studentNumber };
+}
+
+function readLoggedInIdentity() {
+  if (typeof window === "undefined") return null;
+
+  const preferredKeys = [
+    "currentUser",
+    "user",
+    "authUser",
+    "profile",
+    "checkin:user",
+    "checkin:auth",
+    "firebase:authUser",
+    "persist:root",
+  ];
+
+  for (const k of preferredKeys) {
+    const raw = window.localStorage.getItem(k);
+    if (!raw) continue;
+
+    if (k === "persist:root") {
+      const root = safeJSON(raw);
+      if (root && typeof root === "object") {
+        for (const v of Object.values(root)) {
+          if (typeof v !== "string") continue;
+          const parsed = safeJSON(v);
+          const id = pickIdentity(parsed);
+          if (id) return id;
+        }
+      }
+      continue;
+    }
+
+    const parsed = safeJSON(raw);
+    const id = pickIdentity(parsed);
+    if (id) return id;
+  }
+
+  try {
+    for (const k of Object.keys(window.localStorage)) {
+      const raw = window.localStorage.getItem(k);
+      if (!raw || raw.length > 50_000) continue;
+
+      const parsed = safeJSON(raw);
+      const id = pickIdentity(parsed);
+      if (id) return id;
+
+      if (k.toLowerCase().includes("token")) {
+        const payload = decodeJWT(raw);
+        const tokId = pickIdentity(payload);
+        if (tokId) return tokId;
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  return null;
+}
+
 /* ===================== STORAGE (shared with ViewRequest.js) ===================== */
-const REQUESTS_STORAGE_KEY = "checkin:counseling_requests"; // ✅ same key used by ViewRequest.js
+const REQUESTS_STORAGE_KEY = "checkin:counseling_requests";
 
 function safeJSONParse(v, fallback) {
   try {
@@ -100,7 +223,7 @@ const HOLIDAYS = [
 /* ===================== TIME RULES ===================== */
 const LUNCH_SLOT = "12:00";
 const LUNCH_REASON = "Lunch break (12:00–12:59 PM)";
-const ALWAYS_OPEN_SLOT = "13:00"; // ✅ 1:00 PM always available (demo)
+const ALWAYS_OPEN_SLOT = "13:00"; // reserved/demo compatibility
 
 /* ===================== ID HELPERS ===================== */
 function makeId(prefix = "id") {
@@ -133,7 +256,7 @@ function minToTime(min) {
   return `${pad2(h)}:${pad2(m)}`;
 }
 
-/** ✅ FIX: accepts "HH:MM" or "H:MM AM/PM" safely */
+/** accepts "HH:MM" or "H:MM AM/PM" safely */
 function formatTime12(input) {
   const v = String(input || "").trim();
   if (!v) return "";
@@ -309,6 +432,16 @@ function getReviewInfoPH() {
 export default function Request({ onClose }) {
   const navigate = useNavigate();
 
+  // ✅ Restored identity for drawer to skip email UI
+  const [userIdentity, setUserIdentity] = useState(() => readLoggedInIdentity());
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const onStorage = () => setUserIdentity(readLoggedInIdentity());
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
+
   const [openMessages, setOpenMessages] = useState(false);
 
   const [pillUnlocked, setPillUnlocked] = useState(() => {
@@ -470,7 +603,25 @@ export default function Request({ onClose }) {
 
         const updated = {
           ...t,
-          messages: [...(t.messages || []), uiMsg],
+          messages: (() => {
+            const prevMsgs = t.messages || [];
+            const exists = prevMsgs.some((m) => String(m.id) === String(uiMsg.id));
+            if (exists) return prevMsgs;
+
+            const optIdx = prevMsgs.findIndex(
+              (m) =>
+                m?._optimistic &&
+                m.from === uiMsg.from &&
+                String(m.text || "") === String(uiMsg.text || "")
+            );
+            if (optIdx !== -1) {
+              const nextMsgs = [...prevMsgs];
+              nextMsgs[optIdx] = { ...uiMsg, _optimistic: false };
+              return nextMsgs;
+            }
+
+            return [...prevMsgs, uiMsg];
+          })(),
           lastMessage: msg.text,
           lastTime: "now",
           unread: openMessages ? 0 : unreadNext,
@@ -508,16 +659,13 @@ export default function Request({ onClose }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openMessages]);
 
-  const handleSendMessage = async ({ threadId, text, senderMode }) => {
+  const handleRefreshThreads = useCallback(() => {
+    bootChat();
+  }, [bootChat]);
+
+  const handleSendMessage = async ({ threadId, text }) => {
     const clean = String(text ?? "").trim();
     const tid = String(threadId || "").trim();
-    const mode = String(senderMode || "student").toLowerCase();
-    const wantsAnonymous = mode === "anonymous";
-
-    // ✅ If identity isn't locked yet, ensure the thread reflects the selected start mode BEFORE sending.
-    // Backend will ignore updates once identityLocked=true.
-    await ensureThread({ anonymous: wantsAnonymous }).catch(() => {});
-
     if (!tid || !clean) return;
 
     const localTime = new Intl.DateTimeFormat("en-US", {
@@ -528,6 +676,7 @@ export default function Request({ onClose }) {
     }).format(new Date());
 
     const tempId = `tmp-${Date.now()}`;
+    const clientId = `c_${Date.now()}_${Math.random().toString(16).slice(2)}`;
 
     // Optimistic UI (instant)
     setThreads((prev) =>
@@ -554,16 +703,55 @@ export default function Request({ onClose }) {
     );
 
     try {
-      await sendDrawerMessage({ threadId: tid, text: clean });
+      const sent = await sendDrawerMessage({ threadId: tid, text: clean, clientId });
+      const real = sent?.item || sent?.message || sent;
+
+      if (real?._id) {
+        setThreads((prev) =>
+          prev.map((t) => {
+            if (String(t.id) !== tid) return t;
+            const msgs = t.messages || [];
+            const exists = msgs.some((m) => String(m.id) === String(real._id));
+
+            if (exists) {
+              return { ...t, messages: msgs.filter((m) => m.id !== tempId) };
+            }
+
+            const localTime2 = new Intl.DateTimeFormat("en-US", {
+              timeZone: PH_TZ,
+              hour: "2-digit",
+              minute: "2-digit",
+              hour12: true,
+            }).format(new Date(real.createdAt));
+
+            const uiMsg2 = {
+              id: String(real._id),
+              from: "me",
+              text: real.text,
+              time: localTime2,
+              createdAt: new Date(real.createdAt).getTime(),
+              _raw: real,
+            };
+
+            const idx = msgs.findIndex((m) => m.id === tempId);
+            if (idx !== -1) {
+              const nextMsgs = [...msgs];
+              nextMsgs[idx] = uiMsg2;
+              return { ...t, messages: nextMsgs, lastMessage: real.text, lastTime: "now", unread: 0 };
+            }
+
+            return { ...t, messages: [...msgs, uiMsg2], lastMessage: real.text, lastTime: "now", unread: 0 };
+          })
+        );
+      }
+
       markThreadRead(tid).catch(() => {});
       setChatError("");
     } catch (err) {
       // Revert optimistic bubble
       setThreads((prev) =>
         prev.map((t) =>
-          String(t.id) === tid
-            ? { ...t, messages: (t.messages || []).filter((m) => m.id !== tempId) }
-            : t
+          String(t.id) === tid ? { ...t, messages: (t.messages || []).filter((m) => m.id !== tempId) } : t
         )
       );
       setChatError(err?.message || "Failed to send message.");
@@ -695,12 +883,12 @@ export default function Request({ onClose }) {
     return () => clearInterval(id);
   }, []);
 
-  // ✅ Keep pending lock fresh
+  // Keep pending lock fresh
   useEffect(() => {
     refreshPendingLock();
   }, [refreshPendingLock]);
 
-  // ✅ Backward compatibility: store legacy currentRequest into shared list once
+  // Backward compatibility: store legacy currentRequest into shared list once
   useEffect(() => {
     if (!currentRequest) return;
     if (currentRequest?.status && currentRequest.status !== "Pending") return;
@@ -786,7 +974,7 @@ export default function Request({ onClose }) {
     const out = {};
     const source = meet.counselorId ? availabilitySel : availabilityAny;
 
-    // ✅ Backend availability (source of truth)
+    // Backend availability (source of truth)
     if (source?.slots?.length) {
       SCHOOL_SLOTS.forEach((t) => {
         const time24 = to24h(t);
@@ -811,15 +999,7 @@ export default function Request({ onClose }) {
     SCHOOL_SLOTS.forEach((t) => (out[t] = { enabled: false, reason }));
     out[LUNCH_SLOT] = { enabled: false, reason: LUNCH_REASON };
     return out;
-  }, [
-    meet.date,
-    meet.counselorId,
-    dayState.ok,
-    dayState.label,
-    availabilityAny,
-    availabilitySel,
-    availabilityErr,
-  ]);
+  }, [meet.date, meet.counselorId, dayState.ok, dayState.label, availabilityAny, availabilitySel, availabilityErr]);
 
   const onDateChange = useCallback(
     (val) => {
@@ -844,8 +1024,7 @@ export default function Request({ onClose }) {
 
     setNextDateFinding(true);
     try {
-      let cur =
-        meet.date && compareISO(meet.date, safeMinDateISO()) >= 0 ? meet.date : safeMinDateISO();
+      let cur = meet.date && compareISO(meet.date, safeMinDateISO()) >= 0 ? meet.date : safeMinDateISO();
       cur = findNextWorkingDay(cur);
 
       for (let i = 0; i < 90; i++) {
@@ -882,8 +1061,7 @@ export default function Request({ onClose }) {
   };
 
   const totalSteps = 5;
-  const progress =
-    step <= 0 ? 0 : step >= 6 ? 100 : Math.round(((step - 1) / (totalSteps - 1)) * 100);
+  const progress = step <= 0 ? 0 : step >= 6 ? 100 : Math.round(((step - 1) / (totalSteps - 1)) * 100);
 
   const meetSummary = useMemo(() => {
     const parts = [];
@@ -958,7 +1136,7 @@ export default function Request({ onClose }) {
     hasBookableSlotsSelectedDate,
   ]);
 
-  // ✅ Hard lock: if pendingLocked and user is in booking steps, push to success view
+  // Hard lock: if pendingLocked and user is in booking steps, push to success view
   useEffect(() => {
     if (!pendingLocked) return;
     if (step >= 1 && step <= 5) {
@@ -1008,9 +1186,7 @@ export default function Request({ onClose }) {
     if (!meet.sessionType) return setMeetError("Please select session type.");
     if (!meet.reason.trim()) return setMeetError("Please enter a reason for the session.");
 
-    const assigned = selectedCounselorId
-      ? counselorsList.find((c) => String(c.id) === selectedCounselorId)
-      : null;
+    const assigned = selectedCounselorId ? counselorsList.find((c) => String(c.id) === selectedCounselorId) : null;
 
     if (selectedCounselorId && !assigned) {
       setMeetError("Selected counselor not found. Please refresh and try again.");
@@ -1068,7 +1244,8 @@ export default function Request({ onClose }) {
       const createdCounselorName =
         created?.counselorName ||
         (createdCounselorId ? counselorsList.find((c) => String(c.id) === createdCounselorId)?.name : "") ||
-        (assigned?.name || "");
+        assigned?.name ||
+        "";
 
       const createdForUI =
         createdCounselorName && !created?.counselorName
@@ -1078,6 +1255,21 @@ export default function Request({ onClose }) {
       setMeetSuccess("Request submitted!");
       setCurrentRequest(createdForUI);
       setStep(6);
+
+      // Keep legacy ViewRequest local cache in sync (safe fallback)
+      upsertRequest({
+        id: createdForUI?.id || createdForUI?._id || makeId("REQ-MEET"),
+        type: "MEET",
+        status: createdForUI?.status || "Pending",
+        sessionType: createdForUI?.sessionType || meet.sessionType,
+        reason: createdForUI?.reason || meet.reason,
+        date: createdForUI?.date || meet.date,
+        time: formatTime12(createdForUI?.time || meet.time),
+        counselorName: createdForUI?.counselorName || "Any counselor",
+        notes: createdForUI?.notes || meet.notes || "",
+        createdAt: new Date(createdForUI?.createdAt || Date.now()).toISOString(),
+        completedAt: createdForUI?.completedAt || "",
+      });
 
       await refreshPendingLock();
     } catch (e) {
@@ -1112,6 +1304,8 @@ export default function Request({ onClose }) {
         onClose={() => setOpenMessages(false)}
         threads={threads}
         onSendMessage={handleSendMessage}
+        onRefreshThreads={handleRefreshThreads}
+        userIdentity={userIdentity}
         title="Messages"
       />
 
@@ -1428,7 +1622,10 @@ export default function Request({ onClose }) {
                           Checking available times…
                         </div>
                       ) : availabilityErr ? (
-                        <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-[13.5px] font-[Lora] flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2" style={{ color: "#7f1d1d" }}>
+                        <div
+                          className="rounded-xl border border-red-200 bg-red-50 p-3 text-[13.5px] font-[Lora] flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2"
+                          style={{ color: "#7f1d1d" }}
+                        >
                           <div>Availability is unavailable. {availabilityErr}</div>
                           <button
                             type="button"
@@ -1441,8 +1638,8 @@ export default function Request({ onClose }) {
                       ) : hasBookableSlotsSelectedDate === false ? (
                         <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-[13.5px] font-[Lora]" style={{ color: "#78350f" }}>
                           No remaining time slots for <span style={{ fontWeight: 800 }}>{isoToNice(meet.date)}</span>. Tap{" "}
-                          <span style={{ fontWeight: 800 }}>Next available date</span> to jump to the next working day with
-                          available times.
+                          <span style={{ fontWeight: 800 }}>Next available date</span> to jump to the next working day
+                          with available times.
                         </div>
                       ) : null}
                     </div>
@@ -1630,8 +1827,7 @@ export default function Request({ onClose }) {
 
                   {meet.time ? (
                     <div className="mt-3 text-[14px] font-[Lora]" style={{ color: TEXT_SOFT }}>
-                      Selected time:{" "}
-                      <span style={{ color: TEXT_MAIN, fontWeight: 700 }}>{formatTime12(meet.time)}</span>
+                      Selected time: <span style={{ color: TEXT_MAIN, fontWeight: 700 }}>{formatTime12(meet.time)}</span>
                     </div>
                   ) : null}
                 </div>
@@ -1746,8 +1942,8 @@ export default function Request({ onClose }) {
                       <div className="mt-2 font-[Lora] text-[15px]" style={{ color: TEXT_MUTED }}>
                         {(displayReq?.sessionType || meet.sessionType || "—")} •{" "}
                         {(displayReq?.reason || meet.reason || "—")} •{" "}
-                        {(displayReq?.date ? isoToNice(displayReq.date) : meet.date ? isoToNice(meet.date) : "—")} •{" "}
-                        {(displayReq?.time || meet.time) ? formatTime12(displayReq?.time || meet.time) : "—"}
+                        {displayReq?.date ? isoToNice(displayReq.date) : meet.date ? isoToNice(meet.date) : "—"} •{" "}
+                        {displayReq?.time || meet.time ? formatTime12(displayReq?.time || meet.time) : "—"}
                       </div>
 
                       {displayReq?.counselorName ? (
@@ -1762,7 +1958,7 @@ export default function Request({ onClose }) {
                         </div>
                       ) : null}
 
-                      {(displayReq?.notes?.trim() || meet.notes?.trim()) ? (
+                      {displayReq?.notes?.trim() || meet.notes?.trim() ? (
                         <div className="mt-2 text-[14px] font-[Lora]" style={{ color: TEXT_SOFT }}>
                           Notes: {displayReq?.notes || meet.notes}
                         </div>
@@ -1940,7 +2136,10 @@ function BigChoiceCard({ title, subtitle, icon, accent, onClick, disabled }) {
       title={disabled ? "Accept Terms / resolve pending request to continue" : ""}
     >
       <div className="flex items-start gap-4">
-        <div className="h-14 w-14 rounded-2xl flex items-center justify-center" style={{ backgroundColor: `${accent}33` }}>
+        <div
+          className="h-14 w-14 rounded-2xl flex items-center justify-center"
+          style={{ backgroundColor: `${accent}33` }}
+        >
           {icon}
         </div>
         <div className="min-w-0">
@@ -1983,7 +2182,9 @@ function SelectCard({ active, title, subtitle, onClick, accent }) {
 
         <span
           className="h-6 w-6 rounded-full border flex items-center justify-center"
-          style={{ borderColor: active ? "rgba(0,0,0,0.15)" : "rgba(0,0,0,0.10)" }}
+          style={{
+            borderColor: active ? "rgba(0,0,0,0.15)" : "rgba(0,0,0,0.10)",
+          }}
         >
           {active ? <span className="h-3 w-3 rounded-full" style={{ backgroundColor: accent }} /> : null}
         </span>
@@ -2044,7 +2245,10 @@ function DayChip({ ok, label, accent }) {
   const bg = ok ? `${accent}55` : "rgba(0,0,0,0.05)";
   const color = ok ? TEXT_MAIN : "rgba(20,20,20,0.78)";
   return (
-    <span className="px-3 py-1 rounded-full text-[13.5px] font-[Nunito] font-extrabold" style={{ backgroundColor: bg, color }}>
+    <span
+      className="px-3 py-1 rounded-full text-[13.5px] font-[Nunito] font-extrabold"
+      style={{ backgroundColor: bg, color }}
+    >
       {label}
     </span>
   );
@@ -2054,7 +2258,10 @@ function StatusPill({ status, accent }) {
   const bg = status === "Available" ? `${accent}55` : "rgba(0,0,0,0.05)";
   const color = status === "Available" ? TEXT_MAIN : "rgba(20,20,20,0.75)";
   return (
-    <span className="px-3 py-1 rounded-full text-[13px] font-[Nunito] font-extrabold" style={{ backgroundColor: bg, color }}>
+    <span
+      className="px-3 py-1 rounded-full text-[13px] font-[Nunito] font-extrabold"
+      style={{ backgroundColor: bg, color }}
+    >
       {status}
     </span>
   );
@@ -2077,7 +2284,10 @@ function OutlinedToggle({ checked, onChange, accent }) {
     >
       <span
         className="h-5 w-5 rounded-full shadow-sm transition"
-        style={{ backgroundColor: "#fff", transform: checked ? "translateX(22px)" : "translateX(2px)" }}
+        style={{
+          backgroundColor: "#fff",
+          transform: checked ? "translateX(22px)" : "translateX(2px)",
+        }}
       />
     </button>
   );
@@ -2094,7 +2304,11 @@ function TermsModal({ accent, onAccept, onClose }) {
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center px-4">
       <div className="absolute inset-0 bg-black/35" onClick={onClose} />
-      <div className="relative w-full max-w-2xl rounded-[22px] bg-white shadow-2xl overflow-hidden" role="dialog" aria-modal="true">
+      <div
+        className="relative w-full max-w-2xl rounded-[22px] bg-white shadow-2xl overflow-hidden"
+        role="dialog"
+        aria-modal="true"
+      >
         <div className="px-6 py-5 border-b border-black/10">
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0">
@@ -2126,7 +2340,7 @@ function TermsModal({ accent, onAccept, onClose }) {
             <div className="mt-2 grid gap-2 text-[15px] font-[Lora]" style={{ color: TEXT_MUTED }}>
               <div>• Message content you submit (chat messages, notes)</div>
               <div>• Scheduling details (date, time, session type, selected counselor)</div>
-              <div>• Account identifiers (if not anonymous): name, email, student number</div>
+              <div>• Account identifiers from your login (no extra email prompt needed)</div>
               <div>• Basic technical logs for security (e.g., timestamps)</div>
             </div>
           </div>
@@ -2194,15 +2408,19 @@ function TermsModal({ accent, onAccept, onClose }) {
 /* ===================== CANCEL CONFIRM MODAL ===================== */
 function ConfirmCancelModal({ accent, busy = false, onClose, onConfirm }) {
   useEffect(() => {
-    const onKey = (e) => e.key === "Escape" && onClose();
+    const onKey = (e) => e.key === "Escape" && !busy && onClose();
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [onClose, busy]);
 
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center px-4">
-      <div className="absolute inset-0 bg-black/35" onClick={onClose} />
-      <div className="relative w-full max-w-md rounded-[18px] bg-white shadow-2xl overflow-hidden" role="dialog" aria-modal="true">
+      <div className="absolute inset-0 bg-black/35" onClick={() => !busy && onClose()} />
+      <div
+        className="relative w-full max-w-md rounded-[18px] bg-white shadow-2xl overflow-hidden"
+        role="dialog"
+        aria-modal="true"
+      >
         <div className="px-5 py-4 border-b border-black/10">
           <div className="font-[Nunito] text-[18px] font-extrabold" style={{ color: TEXT_MAIN }}>
             Cancel this request?
@@ -2217,10 +2435,7 @@ function ConfirmCancelModal({ accent, busy = false, onClose, onConfirm }) {
             type="button"
             onClick={onClose}
             disabled={busy}
-            className={
-              "h-10 px-4 rounded-xl bg-black/5 hover:bg-black/10 transition font-[Nunito] font-extrabold text-[#141414] " +
-              (busy ? "opacity-60 cursor-not-allowed" : "")
-            }
+            className="h-10 px-4 rounded-xl bg-black/5 hover:bg-black/10 transition font-[Nunito] font-extrabold text-[#141414] disabled:opacity-60 disabled:cursor-not-allowed"
           >
             Keep
           </button>
@@ -2229,13 +2444,10 @@ function ConfirmCancelModal({ accent, busy = false, onClose, onConfirm }) {
             type="button"
             onClick={onConfirm}
             disabled={busy}
-            className={
-              "h-10 px-4 rounded-xl hover:brightness-95 transition font-[Nunito] font-extrabold text-[#141414] " +
-              (busy ? "opacity-60 cursor-not-allowed" : "")
-            }
+            className="h-10 px-4 rounded-xl hover:brightness-95 transition font-[Nunito] font-extrabold text-[#141414] disabled:opacity-60 disabled:cursor-not-allowed"
             style={{ backgroundColor: accent }}
           >
-            Yes, cancel
+            {busy ? "Canceling…" : "Yes, cancel"}
           </button>
         </div>
       </div>
@@ -2265,13 +2477,7 @@ function CalendarIcon({ accent }) {
       <rect x="10" y="14" width="28" height="24" rx="6" fill="#fff" stroke={TEXT_MAIN} strokeWidth="1.6" />
       <rect x="10" y="14" width="28" height="7" rx="6" fill={accent} opacity="0.9" />
       <path d="M16 12v6M32 12v6" stroke={TEXT_MAIN} strokeWidth="2" strokeLinecap="round" />
-      <path
-        d="M16 26h6M26 26h6M16 32h6M26 32h6"
-        stroke={TEXT_MAIN}
-        strokeWidth="2"
-        strokeLinecap="round"
-        opacity="0.5"
-      />
+      <path d="M16 26h6M26 26h6M16 32h6M26 32h6" stroke={TEXT_MAIN} strokeWidth="2" strokeLinecap="round" opacity="0.5" />
     </svg>
   );
 }
