@@ -12,6 +12,7 @@ import {
   ensureThread,
   sendDrawerMessage,
   markThreadRead,
+  closeThread,
   getMyUserId,
 } from "../../../api/messages.api";
 import {
@@ -545,15 +546,10 @@ export default function Request({ onClose }) {
   const bootChat = useCallback(async () => {
     try {
       const res = await listThreadsForDrawer();
-      let items = res.items || [];
+      const items = res.items || [];
 
-      // Student-first flow: if no threads yet, create one then refetch
-      if (!items.length) {
-        await ensureThread({ anonymous: false }).catch(() => {});
-        const res2 = await listThreadsForDrawer();
-        items = res2.items || [];
-      }
-
+      // ✅ Do NOT auto-create a thread here.
+      // Thread is created only AFTER the student chooses identity (Student / Anonymous).
       setThreads(items);
       setChatBooted(true);
       setChatError("");
@@ -659,13 +655,32 @@ export default function Request({ onClose }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openMessages]);
 
-  const handleRefreshThreads = useCallback(async (opts = null) => {
-    // ✅ allow drawer to request identity mode BEFORE first message
-    if (opts && typeof opts.anonymous === "boolean") {
-      await ensureThread({ anonymous: !!opts.anonymous }).catch(() => {});
-    }
-    bootChat();
-  }, [bootChat]);
+  const handleRefreshThreads = useCallback(
+    async (opts = null) => {
+      // ✅ Drawer requests identity BEFORE first message
+      let ensuredThreadId = "";
+
+      if (opts && typeof opts.anonymous === "boolean") {
+        const ensured = await ensureThread({ anonymous: !!opts.anonymous }).catch(() => null);
+        ensuredThreadId = String(ensured?.item?._id || ensured?.item?.id || "");
+      }
+
+      await bootChat();
+      return ensuredThreadId;
+    },
+    [bootChat]
+  );
+
+  const handleEndChat = useCallback(
+    async ({ threadId }) => {
+      const tid = String(threadId || "").trim();
+      if (!tid) return;
+
+      await closeThread(tid).catch(() => {});
+      await bootChat();
+    },
+    [bootChat]
+  );
 
   const handleSendMessage = async ({ threadId, text, senderMode }) => {
     const clean = String(text ?? "").trim();
@@ -1298,6 +1313,7 @@ export default function Request({ onClose }) {
         <FloatingMessagesPill
           accent={LOGIN_PRIMARY}
           unread={totalUnread}
+          hasConversation={threads.length > 0}
           onClick={openMessagesFlow}
           hidden={openMessages || isOverlayOpen}
           pop={pillPop}
@@ -1310,6 +1326,7 @@ export default function Request({ onClose }) {
         threads={threads}
         onSendMessage={handleSendMessage}
         onRefreshThreads={handleRefreshThreads}
+        onEndChat={handleEndChat}
         userIdentity={userIdentity}
         title="Messages"
       />

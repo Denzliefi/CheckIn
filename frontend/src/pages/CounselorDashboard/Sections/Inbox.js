@@ -431,6 +431,7 @@ function mapThreadToParticipant(raw, myId) {
   // thread messages will be filled when opened via getThreadRaw()
   return {
     id: tid,
+    status: raw?.status || "open",
     studentId,
     anonymous,
     displayName,
@@ -646,7 +647,7 @@ function AnimatedInboxList({
                       <div className="min-w-0">
                         <div className="flex items-baseline gap-2 flex-wrap">
                           <div className="text-sm font-black text-slate-900 truncate leading-none">{x.displayName}</div>
-                          {!x.read ? <Badge tone="unread">Unread</Badge> : null}
+                          {x.status === "closed" ? <Badge tone="unread">Closed</Badge> : null}{!x.read && x.status !== "closed" ? <Badge tone="unread">Unread</Badge> : null}
                         </div>
 
                         {!x.anonymous && x.studentId ? (
@@ -1488,6 +1489,12 @@ export default function Inbox() {
     if (!selected) return;
     const text = draft.trim();
     if (!text) return;
+
+    // Block sending to closed threads
+    if (String(selected?._raw?.status || "open") === "closed") {
+      setError("This conversation is closed.");
+      return;
+    }
 
     // Read-only if claimed by another counselor
     const claimedBy = selected?._raw?.counselorId?._id || selected?._raw?.counselorId || null;

@@ -112,6 +112,10 @@ export async function markThreadRead(threadId) {
   return apiFetch(`/api/messages/threads/${threadId}/read`, { method: "POST" });
 }
 
+export async function closeThreadRaw(threadId) {
+  return apiFetch(`/api/messages/threads/${threadId}/close`, { method: "POST" });
+}
+
 /* =========================================================
    MAPPERS
 ========================================================= */
@@ -231,4 +235,8 @@ export function getSocketBaseUrl() {
   if (base) return base;
   // local fallback
   return "http://localhost:5000";
+}
+
+export async function closeThread(threadId) {
+  return closeThreadRaw(threadId);
 }

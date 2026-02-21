@@ -169,15 +169,14 @@ function Avatar({
   );
 }
 
-export default function MessagesDrawer({
-  open,
+export default function MessagesDrawer({open,
   onClose,
   threads = [],
   initialThreadId = "",
   onSendMessage,
   title = "Messages",
   userIdentity = null,
-  onRefreshThreads = null, // ({reason}) => void
+  onRefreshThreads = null, // ({reason, onEndChat}) => void
   onEndChat = null, // async ({threadId}) => void
   theme = null, // { accent?: string, headerTint?: string }
 }) {
@@ -199,6 +198,8 @@ export default function MessagesDrawer({
   const [mode, setMode] = useState(null); // student | anonymous
   const [studentEmail, setStudentEmail] = useState("");
   const [emailTouched, setEmailTouched] = useState(false);
+
+  const [startingMode, setStartingMode] = useState(false);
 
   const [activeId, setActiveId] = useState(
     initialThreadId || threads?.[0]?.id || "",
@@ -223,6 +224,7 @@ export default function MessagesDrawer({
 
   // profanity
   const [profanityError, setProfanityError] = useState("");
+  const [identityError, setIdentityError] = useState("");
   const profanityWords = useMemo(
     () => [
       "fuck",
@@ -291,19 +293,49 @@ export default function MessagesDrawer({
   }, [activeThread]);
 
 
-const hasUserSentMessage = useMemo(() => {
-  const all = activeThread?.messages || [];
-  return all.some((m) => String(m?.from || "") === "me");
-}, [activeThread]);
+  const targetThread = useMemo(() => {
+    return (
+      activeThread ||
+      (initialThreadId ? threads?.find((x) => x.id === initialThreadId) : null) ||
+      threads?.[0] ||
+      null
+    );
+  }, [activeThread, initialThreadId, threads]);
 
-// ✅ Hide identity switch after first message (clean UI) OR if backend locks identity
-const identityLocked = Boolean(activeThread?.identityLocked) || hasUserSentMessage;
-const lockedMode = identityLocked
-  ? String(activeThread?.identityMode || (activeThread?.anonymous ? "anonymous" : "student") || mode || "student")
-  : null;
-const canChooseStudent = !identityLocked || lockedMode === "student";
-const canChooseAnonymous = !identityLocked || lockedMode === "anonymous";
-const identitySwitchAllowed = view === "chat" && mode && !identityLocked;
+  const hasUserSentMessage = useMemo(() => {
+    const all = targetThread?.messages || [];
+    return all.some((m) => String(m?.from || "") === "me");
+  }, [targetThread]);
+
+  // ✅ Hide identity switch after first message (clean UI) OR if backend locks identity
+  const identityLocked = Boolean(targetThread?.identityLocked) || hasUserSentMessage;
+  const identitySwitchAllowed = view === "chat" && mode && !identityLocked;
+
+  // Which identity is locked for this OPEN thread (used to enable "return to chat")
+  const lockedMode = useMemo(() => {
+    const t = targetThread;
+    if (!t) return null;
+    const raw = String(t.identityMode || "").toLowerCase();
+    if (raw === "student" || raw === "anonymous") return raw;
+    return t.anonymous ? "anonymous" : "student";
+  }, [targetThread]);
+
+  // ✅ Locks the identity chooser after the first message for the current OPEN thread.
+  // Allows returning to the SAME identity; switching is blocked until End conversation.
+  const identityChoiceLocked = useMemo(() => {
+    const t = targetThread;
+    if (!t) return false;
+
+    const status = String(t.status || "open").toLowerCase();
+    const isClosed = status === "closed" || t.closed === true;
+    if (isClosed) return false;
+
+    // Prefer backend lock flag; fallback to local "sent message" detection.
+    if (t.identityLocked) return true;
+
+    const msgs = Array.isArray(t.messages) ? t.messages : [];
+    return msgs.some((m) => String(m?.from || "") === "me");
+  }, [targetThread]);
 
 
   const visibleMessages = useMemo(() => {
@@ -349,6 +381,7 @@ const identitySwitchAllowed = view === "chat" && mode && !identityLocked;
     setEmailTouched(false);
     setDraft("");
     setProfanityError("");
+    setIdentityError("");
     setEmojiOpen(false);
     setMenuOpen(false);
 
@@ -369,6 +402,8 @@ const identitySwitchAllowed = view === "chat" && mode && !identityLocked;
       setEmailTouched(false);
       setDraft("");
       setProfanityError("");
+      setIdentityError("");
+    setIdentityError("");
       setEmojiOpen(false);
       setMenuOpen(false);
 
@@ -404,14 +439,32 @@ const identitySwitchAllowed = view === "chat" && mode && !identityLocked;
     const defaultThreadId = initialThreadId || threads?.[0]?.id || "";
     setActiveId((prev) => prev || defaultThreadId);
 
+    const defaultThread =
+      (defaultThreadId && threads?.find((t) => t.id === defaultThreadId)) ||
+      threads?.[0] ||
+      null;
+
+    const threadHasLockedIdentity = Boolean(defaultThread?.identityLocked);
+    const lockedModeRaw = String(
+      defaultThread?.identityMode || (defaultThread?.anonymous ? "anonymous" : "student") || ""
+    ).toLowerCase();
+    const lockedMode = lockedModeRaw === "anonymous" ? "anonymous" : "student";
+
     const saved = loadSession();
     const now = Date.now();
 
+    // ✅ Requirement #2: do NOT auto-start as Student.
+    // Show identity chooser first, unless the conversation already has a locked identity.
     if (!saved) {
-      // ✅ Always ask: Student vs Anonymous first (Ask a Question UX)
-      // Do not auto-start chat even if logged in.
-      resetToStart();
-      setActiveId((prev) => prev || defaultThreadId);
+      if (threadHasLockedIdentity && defaultThreadId) {
+        startNewChatSession({
+          nextMode: lockedMode,
+          nextStudentEmail: lockedMode === "student" ? loggedInEmail : "",
+          threadId: defaultThreadId,
+        });
+      } else {
+        resetToStart();
+      }
       return;
     }
 
@@ -421,11 +474,16 @@ const identitySwitchAllowed = view === "chat" && mode && !identityLocked;
       return;
     }
 
-    const nextView = "mode"; // ✅ always show mode chooser on open
+    let nextView = saved.view || "mode";
+    let nextMode = saved.mode || null;
 
-    const nextMode = saved.mode || (loggedInEmail ? "student" : null);
-    const nextStudentEmail =
-      nextMode === "student" ? loggedInEmail || saved.studentEmail || "" : "";
+    // If backend already locked identity, force the mode to match thread identity.
+    if (threadHasLockedIdentity) nextMode = lockedMode;
+
+    // Never auto-pick a mode. If chat view has no mode, send them to chooser.
+    if (nextView === "chat" && !nextMode) nextView = "mode";
+
+    const nextStudentEmail = nextMode === "student" ? loggedInEmail || saved.studentEmail || "" : "";
 
     applySession({
       ...saved,
@@ -550,82 +608,135 @@ const identitySwitchAllowed = view === "chat" && mode && !identityLocked;
     }
   }
 
-  function chooseMode(nextMode) {
-    if (identityLocked && lockedMode && String(nextMode) !== String(lockedMode)) return;
-    const threadId = initialThreadId || threads?.[0]?.id || "";
+  async function chooseMode(nextMode) {
+    if (startingMode) return;
 
-    setProfanityError("");
-    setDraft("");
-    setEmojiOpen(false);
-    setMenuOpen(false);
-    setVisibleCount(PAGE_SIZE);
+    // If identity is locked for this OPEN thread, only allow returning to the SAME identity.
+    if (identityChoiceLocked) {
+      const locked = lockedMode;
 
-    if (nextMode === "anonymous") {
-      onRefreshThreads?.({ reason: "anonymous_start", anonymous: true });
-      startNewChatSession({
-        nextMode: "anonymous",
-        nextStudentEmail: "",
-        threadId,
-      });
+      if (locked && nextMode === locked) {
+        setIdentityError("");
+        setProfanityError("");
+        setDraft("");
+        setEmojiOpen(false);
+        setMenuOpen(false);
+        setVisibleCount(PAGE_SIZE);
+
+        const threadId =
+          targetThread?.id || activeThread?.id || initialThreadId || threads?.[0]?.id || "";
+
+        if (threadId) setActiveId(threadId);
+
+        setMode(locked);
+        if (locked === "student") setStudentEmail(loggedInEmail || studentEmail || "");
+        else setStudentEmail("");
+
+        // Keep the existing session timer if present; otherwise start it now.
+        const now = Date.now();
+        setCreatedAtMs((prev) => prev || now);
+        setExpiresAtMs((prev) => prev || now + EXPIRE_MS);
+
+        setView("chat");
+        return;
+      }
+
+      setIdentityError(
+        "Identity is locked for this conversation. End the conversation to start again with a different identity.",
+      );
       return;
     }
 
-    if (loggedInEmail) {
-      startNewChatSession({
-        nextMode: "student",
-        nextStudentEmail: loggedInEmail,
-        threadId,
-      });
-      return;
-    }
+    setStartingMode(true);
+    try {
+      const wantsAnonymous = nextMode === "anonymous";
 
-    setMode("student");
-    setView("email");
+      setProfanityError("");
+      setIdentityError("");
+      setDraft("");
+      setEmojiOpen(false);
+      setMenuOpen(false);
+      setVisibleCount(PAGE_SIZE);
+
+      // Ensure there is an open thread, and set its identity mode BEFORE first message
+      let threadId = activeThread?.id || initialThreadId || threads?.[0]?.id || "";
+
+      if (typeof onRefreshThreads === "function") {
+        const ensuredId = await onRefreshThreads({
+          anonymous: wantsAnonymous,
+          reason: wantsAnonymous ? "anonymous_start" : "student_start",
+        });
+        if (ensuredId) threadId = String(ensuredId);
+      }
+
+      threadId = threadId || activeThread?.id || initialThreadId || threads?.[0]?.id || "";
+
+      if (wantsAnonymous) {
+        startNewChatSession({
+          nextMode: "anonymous",
+          nextStudentEmail: "",
+          threadId,
+        });
+        return;
+      }
+
+      if (loggedInEmail) {
+        startNewChatSession({
+          nextMode: "student",
+          nextStudentEmail: loggedInEmail,
+          threadId,
+        });
+        return;
+      }
+
+      // fallback if not logged-in (kept for compatibility)
+      setMode("student");
+      setView("email");
+    } finally {
+      setStartingMode(false);
+    }
   }
 
-  function continueStudent() {
+  async function continueStudent() {
     setEmailTouched(true);
     if (!isValidEmail(studentEmail)) return;
 
-    const threadId = initialThreadId || threads?.[0]?.id || "";
-    startNewChatSession({
-      nextMode: "student",
-      nextStudentEmail: studentEmail,
-      threadId,
-    });
+    setStartingMode(true);
+    try {
+      let threadId = activeThread?.id || initialThreadId || threads?.[0]?.id || "";
+
+      if (typeof onRefreshThreads === "function") {
+        const ensuredId = await onRefreshThreads({ anonymous: false, reason: "student_start" });
+        if (ensuredId) threadId = String(ensuredId);
+      }
+
+      threadId = threadId || activeThread?.id || initialThreadId || threads?.[0]?.id || "";
+
+      startNewChatSession({
+        nextMode: "student",
+        nextStudentEmail: studentEmail,
+        threadId,
+      });
+    } finally {
+      setStartingMode(false);
+    }
   }
 
   function toggleIdentity() {
     if (identityLocked) return;
-    const threadId =
-      activeThread?.id || initialThreadId || threads?.[0]?.id || "";
-
-    if (mode === "student") {
-      onRefreshThreads?.({ reason: "anonymous_toggle", anonymous: true });
-      startNewChatSession({
-        nextMode: "anonymous",
-        nextStudentEmail: "",
-        threadId,
-      });
-      return;
-    }
-
-    if (loggedInEmail) {
-      startNewChatSession({
-        nextMode: "student",
-        nextStudentEmail: loggedInEmail,
-        threadId,
-      });
-      return;
-    }
-
-    setMode("student");
-    setView("email");
+    const next = mode === "student" ? "anonymous" : "student";
+    chooseMode(next);
   }
 
   function handleBack() {
     setMenuOpen(false);
     setEmojiOpen(false);
+
+    // ✅ Requested behavior: Back from chat closes the drawer (no trap).
+    if (view === "chat") {
+      onClose?.();
+      return;
+    }
 
     if (view === "mode") {
       onClose?.();
@@ -707,13 +818,19 @@ const identitySwitchAllowed = view === "chat" && mode && !identityLocked;
     }
 
     setProfanityError("");
+    setIdentityError("");
     setDraft("");
     setEmojiOpen(false);
+
+    if (!mode) {
+      setIdentityError("Choose Student or Anonymous first.");
+      return;
+    }
 
     const payload = {
       threadId: activeThread.id,
       text,
-      senderMode: mode || (loggedInEmail ? "student" : "anonymous"),
+      senderMode: mode,
     };
 
     try {
@@ -734,14 +851,14 @@ const identitySwitchAllowed = view === "chat" && mode && !identityLocked;
     const threadId =
       activeThread?.id || initialThreadId || threads?.[0]?.id || "";
 
-    resetToStart();
-    onRefreshThreads?.({ reason: "ended" });
-
     try {
       await onEndChat?.({ threadId });
     } catch (e) {
       console.error(e);
     }
+
+    resetToStart();
+    onRefreshThreads?.({ reason: "ended" });
   }
 
   const drawerStyle = useMemo(() => {
@@ -778,14 +895,31 @@ const identitySwitchAllowed = view === "chat" && mode && !identityLocked;
   const canSend = draft.trim().length > 0 && !counselorClosed && !!activeThread;
 
   const myAvatarFallback = useMemo(() => {
-    const mMode = mode || (loggedInEmail ? "student" : "anonymous");
+    const mMode = mode || "student";
     return mMode === "anonymous" ? "🕵️" : "🎓";
   }, [mode, loggedInEmail]);
 
-  const counselorAvatarFallback = useMemo(() => {
+    const counselorAvatarFallback = useMemo(() => {
     const n = initials(counselorDisplayName);
     return n || "🧑‍⚕️";
   }, [counselorDisplayName]);
+
+  // Identity chooser UI state:
+  // - After first message, identity is locked until End conversation.
+  // - The locked identity remains enabled as "Return as ..."; the other choice is greyed out.
+  const disableStudentChoice =
+    startingMode || (identityChoiceLocked && lockedMode !== "student");
+  const disableAnonymousChoice =
+    startingMode || (identityChoiceLocked && lockedMode !== "anonymous");
+
+  const studentChoiceTitle =
+    identityChoiceLocked && lockedMode === "student"
+      ? "Return as Student"
+      : "Continue as Student";
+  const anonymousChoiceTitle =
+    identityChoiceLocked && lockedMode === "anonymous"
+      ? "Return as Anonymous"
+      : "Continue as Anonymous";
 
   if (!open) return null;
 
@@ -817,16 +951,30 @@ const identitySwitchAllowed = view === "chat" && mode && !identityLocked;
                 {view === "chat" ? "Counselor Chat" : title}
               </span>
 
-              {identitySwitchAllowed ? (
-                <button
-                  type="button"
-                  onClick={toggleIdentity}
-                  style={{ ...styles.modeBadge, cursor: "pointer" }}
-                  aria-label="Switch identity"
-                  title="Switch identity"
-                >
-                  {mode === "student" ? "Student" : "Anonymous"}
-                </button>
+              {view === "chat" && mode ? (
+                identitySwitchAllowed ? (
+                  <button
+                    type="button"
+                    onClick={toggleIdentity}
+                    style={{ ...styles.modeBadge, cursor: "pointer" }}
+                    aria-label="Switch identity"
+                    title="Switch identity"
+                  >
+                    {mode === "student" ? "Student" : "Anonymous"}
+                  </button>
+                ) : (
+                  <span
+                    style={{
+                      ...styles.modeBadge,
+                      opacity: 0.75,
+                      cursor: "default",
+                    }}
+                    aria-label="Identity"
+                    title="Identity (locked)"
+                  >
+                    {mode === "student" ? "Student" : "Anonymous"}
+                  </span>
+                )
               ) : null}
             </div>
 
@@ -922,38 +1070,57 @@ const identitySwitchAllowed = view === "chat" && mode && !identityLocked;
                 <b>24 hours</b>.
               </div>
 
+                            {identityError ? (
+                <div style={styles.profanityBanner}>{identityError}</div>
+              ) : null}
+
+              {identityChoiceLocked ? (
+                <div style={styles.lockedHint}>
+                  Identity is locked for this conversation.
+                  <br />
+                  Return as <b>{lockedMode === "anonymous" ? "Anonymous" : "Student"}</b> to continue, or end the
+                  conversation to start again with a different identity.
+                </div>
+              ) : null}
+
               <div style={{ height: 12 }} />
 
               <button
                 type="button"
-                disabled={!canChooseStudent}
                 style={{
                   ...styles.bigChoiceBtn,
-                  background: `${accent}88`,
-                  ...(canChooseStudent ? null : { opacity: 0.55, cursor: "not-allowed" }),
+                  ...(disableStudentChoice ? styles.choiceDisabled : null),
+                  background: disableStudentChoice
+                    ? "rgba(20,20,20,0.04)"
+                    : `${accent}88`,
                 }}
                 onClick={() => chooseMode("student")}
+                disabled={disableStudentChoice}
               >
-                <div style={styles.choiceTitle}>Continue as Student</div>
+                <div style={styles.choiceTitle}>{studentChoiceTitle}</div>
                 <div style={styles.choiceSub}>
-                  {loggedInEmail
-                    ? "Uses your account email on file."
-                    : "Email required for follow-up if needed."}
+                  {identityChoiceLocked && lockedMode === "student"
+                    ? "Return to your current conversation."
+                    : loggedInEmail
+                      ? "Uses your account email on file."
+                      : "Email required for follow-up if needed."}
                 </div>
               </button>
 
               <button
                 type="button"
-                disabled={!canChooseAnonymous}
                 style={{
                   ...styles.bigChoiceBtnAlt,
-                  ...(canChooseAnonymous ? null : { opacity: 0.55, cursor: "not-allowed" }),
+                  ...(disableAnonymousChoice ? styles.choiceDisabled : null),
                 }}
                 onClick={() => chooseMode("anonymous")}
+                disabled={disableAnonymousChoice}
               >
-                <div style={styles.choiceTitle}>Continue as Anonymous</div>
+                <div style={styles.choiceTitle}>{anonymousChoiceTitle}</div>
                 <div style={styles.choiceSub}>
-                  No email required (messages will refresh).
+                  {identityChoiceLocked && lockedMode === "anonymous"
+                    ? "Return to your current conversation."
+                    : "No email required (messages will refresh)."}
                 </div>
               </button>
             </div>
@@ -1016,7 +1183,7 @@ const identitySwitchAllowed = view === "chat" && mode && !identityLocked;
                       : styles.primaryBtnDisabled),
                   }}
                   onClick={continueStudent}
-                  disabled={!isValidEmail(studentEmail)}
+                  disabled={!isValidEmail(studentEmail) || startingMode}
                 >
                   Continue to Chat
                 </button>
@@ -1036,6 +1203,10 @@ const identitySwitchAllowed = view === "chat" && mode && !identityLocked;
 
               {profanityError ? (
                 <div style={styles.profanityBanner}>{profanityError}</div>
+              ) : null}
+
+              {identityError ? (
+                <div style={styles.profanityBanner}>{identityError}</div>
               ) : null}
             </div>
 
@@ -1429,6 +1600,25 @@ const styles = {
     lineHeight: 1.4,
   },
 
+
+  // Identity picker lock (after first message)
+  lockedHint: {
+    marginTop: 12,
+    padding: 12,
+    borderRadius: 14,
+    border: "1px solid rgba(20,20,20,0.10)",
+    background: "rgba(245,245,245,0.90)",
+    color: "rgba(20,20,20,0.78)",
+    fontFamily: "Nunito, sans-serif",
+    fontWeight: 900,
+    fontSize: 13,
+    lineHeight: 1.35,
+  },
+  choiceDisabled: {
+    opacity: 0.55,
+    filter: "grayscale(100%)",
+    cursor: "not-allowed",
+  },
   label: {
     fontFamily: "Nunito, sans-serif",
     fontWeight: 900,
