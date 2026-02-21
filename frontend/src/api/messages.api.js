@@ -8,8 +8,8 @@ export function getToken() {
   try {
     return (
       window.localStorage.getItem("token") ||
-      window.localStorage.getItem("authToken") ||
       window.localStorage.getItem("checkin:token") ||
+      window.localStorage.getItem("authToken") ||
       window.sessionStorage.getItem("token") ||
       ""
     );
@@ -45,7 +45,11 @@ function formatClock(isoOrDate) {
   try {
     const d = new Date(isoOrDate);
     if (Number.isNaN(d.getTime())) return "";
-    return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+    return new Intl.DateTimeFormat("en-US", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true,
+    }).format(d);
   } catch {
     return "";
   }
@@ -84,10 +88,10 @@ export async function listThreadsRaw({ includeMessages = true, limit = 40 } = {}
   return apiFetch(`/api/messages/threads?${qs.toString()}`);
 }
 
-export async function ensureThread({ anonymous = false, counselorId = null } = {}) {
+export async function ensureThread({ anonymous = false } = {}) {
   return apiFetch("/api/messages/threads/ensure", {
     method: "POST",
-    body: JSON.stringify({ anonymous, counselorId }),
+    body: JSON.stringify({ anonymous }),
   });
 }
 
@@ -110,10 +114,9 @@ export async function markThreadRead(threadId) {
 
 /* =========================================================
    MAPPERS
-   - User side: MessagesDrawer expects threads[] shape
-   - Counselor side: Inbox expects items[] shape
 ========================================================= */
 
+// Counselor side mapper (not used by your big Inbox.js, but kept for other UI)
 export function toInboxItems(rawThreads = []) {
   const myId = getMyUserId();
 
@@ -130,7 +133,6 @@ export function toInboxItems(rawThreads = []) {
       ? `Anonymous Student (${suffix})`
       : student?.fullName || `Student (${suffix})`;
 
-    // IMPORTANT: hide identity until claimed
     const meta =
       isUnclaimed || t.anonymous
         ? null
@@ -141,15 +143,15 @@ export function toInboxItems(rawThreads = []) {
     const lastAt = t.lastMessageAt || t.updatedAt || null;
     const lastActivity = lastAt ? new Date(lastAt).getTime() : 0;
 
+    const unreadCounts = t?.unreadCounts || {};
+    const unread = isUnclaimed ? Number(t?.unassignedUnread || 0) : Number(unreadCounts?.[myId] || 0);
+
     const messages = (t.messages || []).map((m) => ({
       id: String(m._id),
       senderId: String(m.senderId),
       text: m.text,
       createdAt: m.createdAt,
     }));
-
-    // unreadCounts is keyed by userId (your API design)
-    const unread = Number(t?.unreadCounts?.[myId] || 0);
 
     return {
       id: threadId,
@@ -164,56 +166,40 @@ export function toInboxItems(rawThreads = []) {
   });
 }
 
+// ✅ Student side mapper (MessagesDrawer expects { messages: [...] })
 export function toDrawerThreads(rawThreads = []) {
   const myId = getMyUserId();
 
   return (rawThreads || []).map((t) => {
     const threadId = String(t._id);
-    const student = t.studentId;
+    const counselor = t.counselorId || null;
 
-// If thread is unclaimed, always mask identity (privacy-first)
-const isUnclaimed = !t.counselorId;
-const suffix = `T-${threadId.slice(-5)}`;
-
-const displayName = isUnclaimed
-  ? `New Student • Unclaimed (${suffix})`
-  : t.anonymous
-  ? `Anonymous Student (${suffix})`
-  : student?.fullName || `Student (${suffix})`;
-
-const studentId = isUnclaimed ? null : (t.anonymous ? null : (student?.studentNumber || null));
-
-    const unread = Number(t?.unreadCounts?.[myId] || 0);
-    const read = unread === 0;
-
-    const thread = (t.messages || []).map((m) => {
-      const by = String(m.senderId) === myId ? "Counselor" : "Participant";
+    const messages = (t.messages || []).map((m) => {
+      const from = String(m.senderId) === String(myId) ? "me" : "them";
+      const createdAt = m.createdAt ? new Date(m.createdAt).getTime() : Date.now();
       return {
         id: String(m._id),
-        by,
-        at: formatClock(m.createdAt),
+        from,
         text: m.text,
+        time: formatClock(m.createdAt),
+        createdAt,
         _raw: m,
       };
     });
 
     const lastAt = t.lastMessageAt || t.updatedAt || null;
-    const lastActivity = lastAt ? new Date(lastAt).getTime() : 0;
-
-    // keep mood tracker ready (empty for now)
-    const moodTracking = { entries: [] };
 
     return {
       id: threadId,
-      studentId: studentId ? `#${studentId}` : null,
-      anonymous: !!t.anonymous,
-      displayName,
-      read,
-      lastSeen: lastAt ? new Date(lastAt).toISOString().slice(0, 10) : "",
-      lastMessage: t.lastMessage || (thread[thread.length - 1]?.text || "—"),
-      lastActivity,
-      thread,
-      moodTracking,
+      counselorName: counselor?.fullName || "Counselor",
+      counselorUsername: counselor?.fullName || "Counselor",
+      counselorAvatarUrl: "",
+      counselorOnline: false,
+      status: t.status || "open",
+      unread: Number(t?.unreadForMe ?? t?.unreadCounts?.[myId] ?? 0),
+      lastMessage: t.lastMessage || (messages[messages.length - 1]?.text || "—"),
+      lastTime: formatRelative(lastAt || Date.now()),
+      messages,
       _raw: t,
     };
   });
@@ -223,7 +209,7 @@ const studentId = isUnclaimed ? null : (t.anonymous ? null : (student?.studentNu
    Convenience
 ========================================================= */
 export async function listThreadsForDrawer() {
-  const data = await listThreadsRaw({ includeMessages: true, limit: 60 });
+  const data = await listThreadsRaw({ includeMessages: true, limit: 80 });
   return { items: toDrawerThreads(data.items || []) };
 }
 
@@ -233,13 +219,10 @@ export async function listThreadsForInbox() {
 }
 
 export async function sendDrawerMessage({ threadId, text, clientId = null }) {
-  const res = await sendMessageRaw({ threadId, text, clientId });
-  return res;
+  return sendMessageRaw({ threadId, text, clientId });
 }
 
 export function getSocketBaseUrl() {
-  // Socket.io should connect to the same base as API.
-  // apiFetch uses REACT_APP_API_URL or relative; relative won't work for sockets on local dev.
   const base = getApiBaseUrl();
   if (base) return base;
   // local fallback

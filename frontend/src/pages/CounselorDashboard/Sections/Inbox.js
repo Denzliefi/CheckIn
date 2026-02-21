@@ -425,7 +425,7 @@ function mapThreadToParticipant(raw, myId) {
   const lastSeen = lastAtISO ? String(lastAtISO).slice(0, 10) : "";
   const lastActivity = lastAtISO ? Date.parse(String(lastAtISO)) : 0;
 
-  const unread = Number(raw?.unreadCounts?.[String(myId)] || 0);
+  const unread = claimed ? Number(raw?.unreadCounts?.[String(myId)] || 0) : Number(raw?.unassignedUnread || 0);
   const read = unread === 0;
 
   // thread messages will be filled when opened via getThreadRaw()
@@ -1364,7 +1364,19 @@ export default function Inbox() {
       const res = await listThreadsRaw({ includeMessages: false, limit: 60, scope: "system" });
       const raw = Array.isArray(res?.items) ? res.items : [];
       const mapped = raw.map((t) => mapThreadToParticipant(t, myId));
-      setItems(mapped);
+      setItems((prev) => {
+  const prevMap = new Map((prev || []).map((x) => [String(x.id), x]));
+  return mapped.map((n) => {
+    const old = prevMap.get(String(n.id));
+    if (!old) return n;
+    // preserve loaded chat + mood UI state to avoid blinking
+    return {
+      ...n,
+      thread: Array.isArray(old.thread) && old.thread.length ? old.thread : n.thread,
+      moodTracking: old.moodTracking || n.moodTracking,
+    };
+  });
+});
 
       if (!selectedId && mapped.length) {
         setSelectedId(mapped[0].id);
@@ -1380,6 +1392,12 @@ export default function Inbox() {
     async (threadId) => {
       if (!threadId) return;
       try {
+        // join realtime room for this thread (counselors can join any open thread)
+        try {
+          const s = connectMessagesSocket();
+          s.emit("thread:join", { threadId: String(threadId) });
+        } catch {}
+
         setError("");
         const res = await getThreadRaw(threadId, { limit: 200 });
         const t = res?.item;
@@ -1387,7 +1405,7 @@ export default function Inbox() {
 
         const uiThread = msgs.map((m) => ({
           id: String(m._id),
-          by: String(m.senderRole || "").toLowerCase() === "counselor" ? "Counselor" : "Participant",
+          by: String(m.senderId) === String(myId) ? "Counselor" : "Participant",
           at: formatClock(m.createdAt),
           text: m.text,
           _raw: m,
@@ -1569,7 +1587,7 @@ export default function Inbox() {
                   ...thread,
                   {
                     id: String(msg._id),
-                    by: String(msg.senderRole || "").toLowerCase() === "counselor" ? "Counselor" : "Participant",
+                    by: String(msg.senderId) === String(myId) ? "Counselor" : "Participant",
                     at: formatClock(msg.createdAt),
                     text: msg.text,
                     _raw: msg,
@@ -1588,8 +1606,7 @@ export default function Inbox() {
         })
       );
 
-      // keep unread/claim info accurate
-      refreshThreads();
+      // list metadata will be updated via thread:update events
       setScrollKey((k) => k + 1);
     });
 
@@ -1600,7 +1617,7 @@ export default function Inbox() {
       try { offNew?.(); } catch {}
       try { offUpd?.(); } catch {}
       try { offCreate?.(); } catch {}
-      try { s?.close?.(); } catch {}
+      // keep socket alive (shared singleton)
     };
   }, [refreshThreads, selectedId]);
 

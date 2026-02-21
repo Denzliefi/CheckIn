@@ -5,7 +5,12 @@ import { getSocketBaseUrl, getToken } from "./messages.api";
 let socket = null;
 
 export function connectMessagesSocket() {
-  if (socket && socket.connected) return socket;
+  if (socket) {
+    try {
+      if (!socket.connected) socket.connect();
+    } catch {}
+    return socket;
+  }
 
   const url = getSocketBaseUrl();
   const token = getToken();
@@ -20,7 +25,6 @@ export function connectMessagesSocket() {
   });
 
   socket.on("connect_error", (err) => {
-    // Keep quiet in UI; just log for dev
     console.warn("Socket connect_error:", err?.message || err);
   });
 
@@ -51,4 +55,13 @@ export function onThreadCreated(handler) {
   const s = connectMessagesSocket();
   s.on("thread:created", handler);
   return () => s.off("thread:created", handler);
+}
+
+
+export function joinThread(threadId) {
+  if (!threadId) return;
+  const s = connectMessagesSocket();
+  try {
+    s.emit("thread:join", { threadId: String(threadId) });
+  } catch {}
 }
