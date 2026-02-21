@@ -101,10 +101,10 @@ export async function getThreadRaw(threadId, { limit = 60 } = {}) {
   return apiFetch(`/api/messages/threads/${threadId}?${qs.toString()}`);
 }
 
-export async function sendMessageRaw({ threadId, text, clientId = null }) {
+export async function sendMessageRaw({ threadId, text, clientId = null, senderMode = null }) {
   return apiFetch(`/api/messages/threads/${threadId}/messages`, {
     method: "POST",
-    body: JSON.stringify({ text, clientId }),
+    body: JSON.stringify({ text, clientId, senderMode }),
   });
 }
 
@@ -196,6 +196,10 @@ export function toDrawerThreads(rawThreads = []) {
       counselorAvatarUrl: "",
       counselorOnline: false,
       status: t.status || "open",
+      anonymous: !!t.anonymous,
+      identityMode: String(t.identityMode || (t.anonymous ? "anonymous" : "student")),
+      identityLocked: !!t.identityLocked,
+      identityLockedAt: t.identityLockedAt || null,
       unread: Number(t?.unreadForMe ?? t?.unreadCounts?.[myId] ?? 0),
       lastMessage: t.lastMessage || (messages[messages.length - 1]?.text || "—"),
       lastTime: formatRelative(lastAt || Date.now()),
@@ -218,8 +222,8 @@ export async function listThreadsForInbox() {
   return { items: toInboxItems(data.items || []) };
 }
 
-export async function sendDrawerMessage({ threadId, text, clientId = null }) {
-  return sendMessageRaw({ threadId, text, clientId });
+export async function sendDrawerMessage({ threadId, text, clientId = null, senderMode = null }) {
+  return sendMessageRaw({ threadId, text, clientId, senderMode });
 }
 
 export function getSocketBaseUrl() {

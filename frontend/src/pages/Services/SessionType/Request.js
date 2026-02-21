@@ -659,11 +659,15 @@ export default function Request({ onClose }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openMessages]);
 
-  const handleRefreshThreads = useCallback(() => {
+  const handleRefreshThreads = useCallback(async (opts = null) => {
+    // ✅ allow drawer to request identity mode BEFORE first message
+    if (opts && typeof opts.anonymous === "boolean") {
+      await ensureThread({ anonymous: !!opts.anonymous }).catch(() => {});
+    }
     bootChat();
   }, [bootChat]);
 
-  const handleSendMessage = async ({ threadId, text }) => {
+  const handleSendMessage = async ({ threadId, text, senderMode }) => {
     const clean = String(text ?? "").trim();
     const tid = String(threadId || "").trim();
     if (!tid || !clean) return;
@@ -703,7 +707,8 @@ export default function Request({ onClose }) {
     );
 
     try {
-      const sent = await sendDrawerMessage({ threadId: tid, text: clean, clientId });
+      const mode = String(senderMode || "student").toLowerCase();
+      const sent = await sendDrawerMessage({ threadId: tid, text: clean, clientId, senderMode: mode });
       const real = sent?.item || sent?.message || sent;
 
       if (real?._id) {
