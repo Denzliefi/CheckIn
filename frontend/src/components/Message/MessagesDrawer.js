@@ -290,6 +290,18 @@ export default function MessagesDrawer({
       }));
   }, [activeThread]);
 
+
+const hasUserSentMessage = useMemo(() => {
+  const all = activeThread?.messages || [];
+  return all.some((m) => String(m?.from || "") === "me" || String(m?.senderId || "") === "me");
+}, [activeThread]);
+
+// ✅ Lock identity UI after the first message the student sends (cleaner UX)
+const identityLocked = Boolean(activeThread?.identityLocked) || hasUserSentMessage;
+
+const identitySwitchAllowed = Boolean(view === "chat" && mode && !identityLocked);
+
+
   const visibleMessages = useMemo(() => {
     const all = normalizedMessages;
     return all.slice(Math.max(0, all.length - visibleCount));
@@ -587,6 +599,7 @@ export default function MessagesDrawer({
   }
 
   function toggleIdentity() {
+    if (identityLocked) return;
     const threadId =
       activeThread?.id || initialThreadId || threads?.[0]?.id || "";
 
@@ -807,7 +820,7 @@ export default function MessagesDrawer({
                 {view === "chat" ? "Counselor Chat" : title}
               </span>
 
-              {view === "chat" && mode ? (
+              {identitySwitchAllowed ? (
                 <button
                   type="button"
                   onClick={toggleIdentity}
@@ -861,6 +874,7 @@ export default function MessagesDrawer({
               >
                 {view === "chat" ? (
                   <>
+                    {identitySwitchAllowed ? (
                     <button
                       type="button"
                       style={styles.menuItem}
@@ -874,6 +888,7 @@ export default function MessagesDrawer({
                         ? "Message anonymously"
                         : "Use Student identity"}
                     </button>
+                    ) : null}
 
                     <div style={styles.menuDivider} />
 

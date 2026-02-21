@@ -45,11 +45,7 @@ function formatClock(isoOrDate) {
   try {
     const d = new Date(isoOrDate);
     if (Number.isNaN(d.getTime())) return "";
-    return new Intl.DateTimeFormat("en-US", {
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: true,
-    }).format(d);
+    return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
   } catch {
     return "";
   }
@@ -88,10 +84,10 @@ export async function listThreadsRaw({ includeMessages = true, limit = 40 } = {}
   return apiFetch(`/api/messages/threads?${qs.toString()}`);
 }
 
-export async function ensureThread({ anonymous = false } = {}) {
+export async function ensureThread({ anonymous = false, counselorId = null } = {}) {
   return apiFetch("/api/messages/threads/ensure", {
     method: "POST",
-    body: JSON.stringify({ anonymous }),
+    body: JSON.stringify({ anonymous, counselorId }),
   });
 }
 
@@ -101,10 +97,10 @@ export async function getThreadRaw(threadId, { limit = 60 } = {}) {
   return apiFetch(`/api/messages/threads/${threadId}?${qs.toString()}`);
 }
 
-export async function sendMessageRaw({ threadId, text, clientId = null }) {
+export async function sendMessageRaw({ threadId, text, clientId = null, senderMode = null }) {
   return apiFetch(`/api/messages/threads/${threadId}/messages`, {
     method: "POST",
-    body: JSON.stringify({ text, clientId }),
+    body: JSON.stringify({ text, clientId, senderMode }),
   });
 }
 
@@ -114,92 +110,114 @@ export async function markThreadRead(threadId) {
 
 /* =========================================================
    MAPPERS
+   - User side: MessagesDrawer expects threads[] shape
+   - Counselor side: Inbox expects items[] shape
 ========================================================= */
 
-// Counselor side mapper (not used by your big Inbox.js, but kept for other UI)
-export function toInboxItems(rawThreads = []) {
+/* =========================================================
+   MAPPERS
+   - User side: MessagesDrawer expects threads[] shape
+   - Counselor side: optional mapper for simpler Inbox UIs
+========================================================= */
+
+export function toDrawerThreads(rawThreads = []) {
   const myId = getMyUserId();
 
   return (rawThreads || []).map((t) => {
     const threadId = String(t._id);
-    const student = t.studentId;
 
-    const isUnclaimed = !t.counselorId;
+    // identity flags from backend
+    const anonymous = !!t.anonymous;
+    const identityLocked = !!t.identityLocked;
+
+    const lastAt = t.lastMessageAt || t.updatedAt || null;
+
+    const messages = (t.messages || []).map((m) => {
+      const from = String(m.senderId) === String(myId) ? "me" : "them";
+      return {
+        id: String(m._id),
+        from,
+        text: m.text,
+        time: formatClock(m.createdAt),
+        createdAt: new Date(m.createdAt).getTime(),
+        _raw: m,
+      };
+    });
+
+    const counselorName = t?.counselorId?.fullName || t?.counselorName || "Counselor";
+    const unread = Number(t?.unreadCounts?.[myId] || 0);
+
+    return {
+      id: threadId,
+      counselorName,
+      counselorUsername: counselorName,
+      status: t.status,
+      anonymous,
+      identityLocked,
+      identityLockedAt: t.identityLockedAt || null,
+      messages,
+      lastMessage: t.lastMessage || (messages[messages.length - 1]?.text || "—"),
+      lastTime: lastAt ? formatRelative(lastAt) : "",
+      unread,
+      _raw: t,
+    };
+  });
+}
+
+// Counselor-side mapper (for simpler Inbox UIs)
+// - Hides student identity until claimed by *this* counselor
+// - Shows clear label for unclaimed threads
+export function toInboxItems(rawThreads = []) {
+  const myId = getMyUserId();
+
+  return (rawThreads || []).map((t) => {
+    const threadId = String(t._id || "");
     const suffix = `T-${threadId.slice(-5)}`;
 
-    const title = isUnclaimed
+    const claimedBy = t?.counselorId?._id || t?.counselorId || null;
+    const claimed = Boolean(claimedBy);
+    const mine = claimed && String(claimedBy) === String(myId);
+
+    const hideIdentity = !claimed || !mine;
+    const trulyAnonymous = Boolean(t?.anonymous);
+    const anonymous = hideIdentity || trulyAnonymous;
+
+    const student = t?.studentId || null;
+
+    const title = !claimed
       ? `New Student • Unclaimed (${suffix})`
-      : t.anonymous
+      : anonymous
       ? `Anonymous Student (${suffix})`
       : student?.fullName || `Student (${suffix})`;
 
-    const meta =
-      isUnclaimed || t.anonymous
-        ? null
-        : student?.studentNumber
-        ? `#${student.studentNumber}`
-        : null;
+    const meta = !anonymous && student?.studentNumber ? `#${student.studentNumber}` : null;
 
-    const lastAt = t.lastMessageAt || t.updatedAt || null;
-    const lastActivity = lastAt ? new Date(lastAt).getTime() : 0;
+    const lastAt = t?.lastMessageAt || t?.updatedAt || t?.createdAt || null;
+    const lastTime = lastAt ? formatRelative(lastAt) : "";
 
-    const unreadCounts = t?.unreadCounts || {};
-    const unread = isUnclaimed ? Number(t?.unassignedUnread || 0) : Number(unreadCounts?.[myId] || 0);
+    const unread = Number(t?.unreadCounts?.[myId] || 0);
 
-    const messages = (t.messages || []).map((m) => ({
-      id: String(m._id),
-      senderId: String(m.senderId),
-      text: m.text,
-      createdAt: m.createdAt,
-    }));
+    const thread = (t?.messages || []).map((m) => {
+      const by = String(m.senderId) === String(myId) ? "Counselor" : "Participant";
+      return {
+        id: String(m._id),
+        by,
+        at: formatClock(m.createdAt),
+        text: m.text,
+        _raw: m,
+      };
+    });
 
     return {
       id: threadId,
       title,
       meta,
       unread,
-      lastActivity,
-      lastMessage: t.lastMessage || (messages[messages.length - 1]?.text || "—"),
-      messages,
-      _raw: t,
-    };
-  });
-}
-
-// ✅ Student side mapper (MessagesDrawer expects { messages: [...] })
-export function toDrawerThreads(rawThreads = []) {
-  const myId = getMyUserId();
-
-  return (rawThreads || []).map((t) => {
-    const threadId = String(t._id);
-    const counselor = t.counselorId || null;
-
-    const messages = (t.messages || []).map((m) => {
-      const from = String(m.senderId) === String(myId) ? "me" : "them";
-      const createdAt = m.createdAt ? new Date(m.createdAt).getTime() : Date.now();
-      return {
-        id: String(m._id),
-        from,
-        text: m.text,
-        time: formatClock(m.createdAt),
-        createdAt,
-        _raw: m,
-      };
-    });
-
-    const lastAt = t.lastMessageAt || t.updatedAt || null;
-
-    return {
-      id: threadId,
-      counselorName: counselor?.fullName || "Counselor",
-      counselorUsername: counselor?.fullName || "Counselor",
-      counselorAvatarUrl: "",
-      counselorOnline: false,
-      status: t.status || "open",
-      unread: Number(t?.unreadForMe ?? t?.unreadCounts?.[myId] ?? 0),
-      lastMessage: t.lastMessage || (messages[messages.length - 1]?.text || "—"),
-      lastTime: formatRelative(lastAt || Date.now()),
-      messages,
+      lastMessage: t?.lastMessage || t?.lastMessageText || (thread[thread.length - 1]?.text || "—"),
+      lastTime,
+      anonymous,
+      identityLocked: Boolean(t?.identityLocked),
+      thread,
       _raw: t,
     };
   });
@@ -209,7 +227,7 @@ export function toDrawerThreads(rawThreads = []) {
    Convenience
 ========================================================= */
 export async function listThreadsForDrawer() {
-  const data = await listThreadsRaw({ includeMessages: true, limit: 80 });
+  const data = await listThreadsRaw({ includeMessages: true, limit: 60 });
   return { items: toDrawerThreads(data.items || []) };
 }
 
@@ -218,11 +236,14 @@ export async function listThreadsForInbox() {
   return { items: toInboxItems(data.items || []) };
 }
 
-export async function sendDrawerMessage({ threadId, text, clientId = null }) {
-  return sendMessageRaw({ threadId, text, clientId });
+export async function sendDrawerMessage({ threadId, text, clientId = null, senderMode = null }) {
+  const res = await sendMessageRaw({ threadId, text, clientId, senderMode });
+  return res;
 }
 
 export function getSocketBaseUrl() {
+  // Socket.io should connect to the same base as API.
+  // apiFetch uses REACT_APP_API_URL or relative; relative won't work for sockets on local dev.
   const base = getApiBaseUrl();
   if (base) return base;
   // local fallback
