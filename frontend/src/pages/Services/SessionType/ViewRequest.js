@@ -20,7 +20,7 @@ const CTA_BG = PRIMARY;
 const CTA_TEXT = TEXT_DARK;
 const CTA_BORDER = "rgba(15,23,42,0.14)";
 
-const TABS = ["All", "Pending", "Approved", "Disapproved", "Canceled", "Past"];
+const TABS = ["All", "Pending", "Approved", "Rescheduled", "Disapproved", "Canceled", "Past"];
 const PAGE_SIZE = 5;
 
 function isBrowser() {
@@ -53,6 +53,7 @@ function normalizeStatus(raw) {
   if (!raw) return "Pending";
   const s = String(raw).trim().toLowerCase();
   if (s.includes("cancel")) return "Canceled"; // handles Cancelled/CancelledAt
+  if (s.includes("resched")) return "Rescheduled";
   if (s.includes("disapprove")) return "Disapproved";
   if (s.includes("approve")) return "Approved";
   if (s.includes("pending")) return "Pending";
@@ -154,6 +155,8 @@ function statusBadge(status) {
   switch (status) {
     case "Approved":
       return { bg: "rgba(185, 255, 102, 0.20)", text: "#166534", label: "Approved" };
+    case "Rescheduled":
+      return { bg: "rgba(59,130,246,0.14)", text: "#1D4ED8", label: "Rescheduled" };
     case "Disapproved":
       return { bg: "rgba(239,68,68,0.14)", text: "#991B1B", label: "Disapproved" };
     case "Canceled":
@@ -317,10 +320,11 @@ export default function ViewRequest() {
   }, [allRequests, tab]);
 
   const counts = useMemo(() => {
-    const c = { All: allRequests.length, Pending: 0, Approved: 0, Disapproved: 0, Canceled: 0, Past: 0 };
+    const c = { All: allRequests.length, Pending: 0, Approved: 0, Rescheduled: 0, Disapproved: 0, Canceled: 0, Past: 0 };
     for (const r of allRequests) {
       if (r.status === "Pending") c.Pending += 1;
       if (r.status === "Approved") c.Approved += 1;
+      if (r.status === "Rescheduled") c.Rescheduled += 1;
       if (r.status === "Disapproved") c.Disapproved += 1;
       if (r.status === "Canceled") c.Canceled += 1;
       if (r.type === "MEET" && isPastMeeting(r)) c.Past += 1;

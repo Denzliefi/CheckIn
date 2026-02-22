@@ -1,9 +1,9 @@
 // src/pages/CounselorDashboard/Sections/Calendar.jsx
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-
+import { apiFetch } from "../../../api/apiFetch";
 /**
  * CounselorDashboard - Calendar / Schedule
- * Connected to Meet Requests (localStorage)
+ * Connected to Meet Requests (backend)
  * - Responsive on all device sizes (xs → 4k)
  * - Uses native date input icon (no duplicate calendar icon)
  * - Mobile pagination is compact (Prev | x/y | Next)
@@ -12,16 +12,12 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
  *
  * Rules:
  * - Calendar shows ONLY Approved & Rescheduled meet requests
- * - Uses counselor scope filter (COUNSELOR_SCOPE)
+ * - Counselor scope is enforced by backend (logged-in counselor)
  */
 
 /* ===================== STORAGE / SYNC ===================== */
-const MEET_REQUESTS_KEY = "student_dashboard:meet_requests:v2";
 const CALENDAR_SELECTED_DATE_KEY = "counselor_dashboard:calendar_selected_date:v1";
 const MEET_REQUESTS_UPDATED_EVENT = "counselor_dashboard:meet_requests_updated";
-
-/* Keep in sync with MeetRequests.jsx scope */
-const COUNSELOR_SCOPE = { counselorId: "C-001" };
 
 /* ===================== RULES ===================== */
 const WORK_START = "08:00";
@@ -33,7 +29,7 @@ const STATUS = {
   PENDING: "Pending",
   APPROVED: "Approved",
   DISAPPROVED: "Disapproved",
-  CANCELED: "Canceled",
+  CANCELED: "Cancelled",
   RESCHEDULED: "Rescheduled",
 };
 
@@ -213,39 +209,57 @@ function mapMeetRequestsToSessions(requests) {
 
   return list
     .filter((r) => {
-      const cid = r?.counselor?.counselorId || "";
-      if (cid !== COUNSELOR_SCOPE.counselorId) return false;
-
       const st = String(r?.status || "").trim();
-      if (!ALLOWED_CALENDAR_STATUSES.has(st)) return false;
-
-      return true;
+      return ALLOWED_CALENDAR_STATUSES.has(st);
     })
     .map((r) => {
       const date = String(r?.date || "").trim();
       const start = parseTime12ToHHMM(r?.time);
       const end = start ? addMinutesHHMM(start, 60) : "";
 
-      const modeRaw = String(r?.mode || "").toLowerCase();
-      const mode = modeRaw.includes("online") ? "Online" : "Face-to-Face";
+      const sessionType = String(r?.sessionType || r?.mode || "").toLowerCase();
+      const mode = sessionType.includes("online") ? "Online" : "Face-to-Face";
+
+      const studentObj =
+        r?.userId && typeof r.userId === "object"
+          ? r.userId
+          : r?.studentId && typeof r.studentId === "object"
+          ? r.studentId
+          : r?.student && typeof r.student === "object"
+          ? r.student
+          : null;
+
+      const studentName = studentObj
+        ? [studentObj.firstName, studentObj.lastName].filter(Boolean).join(" ") || studentObj.fullName || studentObj.name || ""
+        : "";
+
+      const studentId = studentObj ? String(studentObj.studentNumber || studentObj.studentId || studentObj.schoolId || studentObj.idNumber || studentObj.email || "").trim() : "";
+      const course = studentObj ? String(studentObj.course || studentObj.courses || studentObj.program || "").trim() : "";
+
+      const meetingLink =
+        mode === "Online"
+          ? String(r?.meetingLink || r?.meetingUrl || r?.onlineMeetingLink || r?.meetLink || "").trim()
+          : "";
+
+      const done = !!r?.completedAt || String(r?.status || "").toLowerCase().includes("completed");
 
       return {
-        id: String(r?.id || "").trim(),
+        id: String(r?.id || r?._id || "").trim(),
         status: String(r?.status || "").trim(),
         date,
         start,
         end,
         mode,
-        studentName: String(r?.student?.name || "").trim(),
-        studentId: String(r?.student?.studentId || "").trim(),
-        course: String(r?.student?.courses || "").trim(),
-        reason: String(r?.reason || "").trim(),
-        studentNotes: String(r?.notes || ""),
-        meetingLink: mode === "Online" ? String(r?.meetLink || "").trim() : "",
-        done: false,
+        studentName,
+        studentId,
+        course,
+        reason: String(r?.reason || r?.topic || "").trim(),
+        studentNotes: String(r?.notes || r?.message || ""),
+        meetingLink,
+        done,
       };
     })
-    .filter((s) => s.id && isISODate(s.date) && s.start && s.end);
+    .filter((x) => x.id && isISODate(x.date) && x.start && x.end);
 }
 
 /* ===================== HOOKS ===================== */
@@ -466,7 +480,18 @@ export default function Calendar() {
   const [view, setView] = useState("active"); // "active" | "history"
   const [search, setSearch] = useState("");
 
-  const [meetRequests, setMeetRequests] = useState(() => lsGet(MEET_REQUESTS_KEY, []));
+  const [meetRequests, setMeetRequests] = useState([]);
+
+
+  const fetchMeetRequests = useCallback(async () => {
+    try {
+      const data = await apiFetch("/api/counseling/requests?type=MEET");
+      const items = Array.isArray(data?.items) ? data.items : [];
+      setMeetRequests(items);
+    } catch {
+      setMeetRequests([]);
+    }
+  }, []);
 
   const [nowTick, setNowTick] = useState(0);
   useEffect(() => {
@@ -474,9 +499,10 @@ export default function Calendar() {
     return () => clearInterval(id);
   }, []);
 
+
   useEffect(() => {
     const reload = () => {
-      setMeetRequests(lsGet(MEET_REQUESTS_KEY, []));
+      fetchMeetRequests();
       const savedDate = lsGet(CALENDAR_SELECTED_DATE_KEY, "");
       if (isISODate(savedDate)) setSelectedDate((prev) => (prev === savedDate ? prev : savedDate));
     };
@@ -485,7 +511,7 @@ export default function Calendar() {
 
     const onStorage = (e) => {
       if (!e?.key) return;
-      if (e.key === MEET_REQUESTS_KEY || e.key === CALENDAR_SELECTED_DATE_KEY) reload();
+      if (e.key === CALENDAR_SELECTED_DATE_KEY) reload();
     };
 
     const onCustom = () => reload();
@@ -500,7 +526,7 @@ export default function Calendar() {
     }
 
     return undefined;
-  }, []);
+  }, [fetchMeetRequests]);
 
   const [selectedId, setSelectedId] = useState(null);
   const detailsOpen = !!selectedId;
