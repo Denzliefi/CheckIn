@@ -17,6 +17,7 @@ import {
   onThreadCreated,
   onThreadUpdate,
 } from "../../../api/messagesRealtime";
+import { listCounselorThreadJournalEntries } from "../../../api/journal.api";
 
 
 /* -----------------------------
@@ -49,15 +50,20 @@ function MoodLabel({ mood }) {
 
 const REASONS = ["School", "Family", "Friends", "Health", "Other"];
 const COPING_OPTIONS = [
+  "Breathing",
+  "Talked to someone",
+  "Walk / Stretch",
+  "Rest",
+  "Music",
+  "Prayer",
+  // legacy labels (still supported)
   "Deep breathing",
   "Walk / exercise",
   "Talk to friend",
-  "Music",
-  "Journaling",
-  "Meditation",
-  "Prayer",
   "Sleep / rest",
   "Grounding (5-4-3-2-1)",
+  "Journaling",
+  "Meditation",
   "Counselor session",
 ];
 
@@ -104,6 +110,17 @@ function pad2(n) {
 }
 function ymd(date) {
   return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
+}
+function addDays(dateKey, deltaDays) {
+  const p = parseYmdParts(dateKey);
+  if (!p) {
+    const d = new Date();
+    d.setDate(d.getDate() + deltaDays);
+    return ymd(d);
+  }
+  const d = new Date(p.y, p.mo - 1, p.d);
+  d.setDate(d.getDate() + deltaDays);
+  return ymd(d);
 }
 function safeArray(v) {
   return Array.isArray(v) ? v : [];
@@ -190,13 +207,20 @@ const REASON_WEIGHT = {
 };
 
 const COPING_WEIGHT = {
+  // ✅ new student coping labels
+  Breathing: 0.15,
+  "Talked to someone": 0.18,
+  "Walk / Stretch": 0.2,
+  Rest: 0.1,
+  Music: 0.12,
+  Prayer: 0.15,
+
+  // legacy labels (in case old data exists)
   "Deep breathing": 0.15,
   "Walk / exercise": 0.2,
   "Talk to friend": 0.18,
-  Music: 0.12,
   Journaling: 0.15,
   Meditation: 0.18,
-  Prayer: 0.15,
   "Sleep / rest": 0.1,
   "Grounding (5-4-3-2-1)": 0.18,
   "Counselor session": 0.22,
@@ -205,8 +229,20 @@ const COPING_WEIGHT = {
 function scoreEntry(e) {
   const level = moodToLevel(e?.mood);
   if (typeof level !== "number" || !Number.isFinite(level)) return null;
+
   const rw = REASON_WEIGHT[e?.reason] ?? 0;
-  const cw = COPING_WEIGHT[e?.coping] ?? 0;
+
+  // ✅ Supports new backend model: copingUsed: string[]
+  const list = Array.isArray(e?.copingUsed)
+    ? e.copingUsed
+    : typeof e?.coping === "string" && e.coping.trim()
+    ? [e.coping.trim()]
+    : [];
+
+  // sum with cap (so coping helps but doesn't dominate)
+  const raw = list.reduce((sum, c) => sum + (COPING_WEIGHT[c] ?? 0), 0);
+  const cw = Math.min(0.35, raw);
+
   return level + rw + cw;
 }
 
@@ -440,7 +476,7 @@ function mapThreadToParticipant(raw, myId) {
     lastMessage,
     lastActivity,
     thread: [],
-    moodTracking: { entries: [] }, // keep feature for later
+    moodTracking: { status: "idle", entries: [], error: "", loadedAt: 0 }, // loaded when Mood tab opens
     _raw: raw,
   };
 }
@@ -829,7 +865,7 @@ function MoodTracker({ moodTracking, day, onPickDay }) {
             </div>
 
             <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-              <div className="text-xs font-extrabold text-slate-700">Last 7</div>
+              <div className="text-xs font-extrabold text-slate-700">Last 7 Days</div>
               <div className="mt-1 flex items-center gap-2 flex-wrap">
                 <span className={`inline-flex items-center px-2 py-0.5 rounded-full border text-[11px] font-extrabold ${last7Trend.badge}`}>
                   {last7Trend.arrow} {last7Trend.label}
@@ -893,7 +929,7 @@ function MoodTracker({ moodTracking, day, onPickDay }) {
                           {e.reason}
                         </span>
                       </div>
-                      <div className="min-w-0 whitespace-normal break-words">{e.coping}</div>
+                      <div className="min-w-0 whitespace-normal break-words">{(safeArray(e.copingUsed).join(", ") || e.coping || "—")}</div>
                     </div>
 
                     <div className="sm:hidden px-3 py-3 text-sm font-semibold text-slate-700 space-y-1.5">
@@ -911,7 +947,7 @@ function MoodTracker({ moodTracking, day, onPickDay }) {
                         </span>
                       </div>
                       <div className="text-[12px] font-bold text-slate-500">
-                        Coping: <span className="font-semibold text-slate-700 break-words">{e.coping}</span>
+                        Coping: <span className="font-semibold text-slate-700 break-words">{(safeArray(e.copingUsed).join(", ") || e.coping || "—")}</span>
                       </div>
                     </div>
                   </AnimatedRow>
@@ -1220,7 +1256,21 @@ function ConversationPane({
                   <div className="mt-2 text-sm font-semibold text-slate-600">This student is anonymous, so mood history is not available.</div>
                 </div>
               ) : (
-                <MoodTracker moodTracking={selected.moodTracking} day={day} onPickDay={setDay} />
+                <div className="space-y-3">
+                  {selected?.moodTracking?.status === "loading" ? (
+                    <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-[0_1px_0_rgba(0,0,0,0.03)]">
+                      <div className="text-sm font-black text-slate-900">Loading mood tracker…</div>
+                      <div className="mt-2 text-sm font-semibold text-slate-600">Fetching submitted mood history.</div>
+                    </div>
+                  ) : selected?.moodTracking?.status === "error" ? (
+                    <div className="rounded-2xl border border-rose-200 bg-rose-50 p-6 shadow-[0_1px_0_rgba(0,0,0,0.03)]">
+                      <div className="text-sm font-black text-rose-800">Couldn’t load mood tracker</div>
+                      <div className="mt-2 text-sm font-semibold text-rose-700">{selected?.moodTracking?.error || "Error"}</div>
+                    </div>
+                  ) : null}
+
+                  <MoodTracker moodTracking={selected.moodTracking} day={day} onPickDay={setDay} />
+                </div>
               )}
             </div>
           ) : null}
@@ -1437,6 +1487,79 @@ export default function Inbox() {
     [setItems]
   );
 
+
+  const loadMoodTracking = useCallback(
+    async (threadId, baseDay = today) => {
+      if (!threadId) return;
+
+      // only load when the UI allows (claimed-by-me & not anonymous)
+      const current = items.find((x) => String(x.id) === String(threadId));
+      if (!current || current.anonymous) return;
+
+      const mt = current.moodTracking || {};
+      const existing = safeArray(mt.entries);
+
+      // if already loaded recently, and baseDay is within range, skip
+      const loadedAt = Number(mt.loadedAt || 0);
+      const fresh = Date.now() - loadedAt < 60_000; // 60s cache
+      const has = existing.length > 0;
+
+      // If counselor picks an older date than our earliest entry, refetch a wider window
+      const earliest = has ? existing.reduce((min, e) => (String(e.date) < String(min) ? String(e.date) : String(min)), existing[0].date) : null;
+      const needWider = earliest && String(baseDay) < String(earliest);
+
+      if (fresh && has && !needWider) return;
+
+      // Fetch a wide window around the selected day
+      const from = addDays(baseDay, -420);
+      const to = addDays(baseDay, 0);
+
+      setItems((prev) =>
+        prev.map((x) =>
+          x.id === threadId
+            ? { ...x, moodTracking: { ...(x.moodTracking || {}), status: "loading", error: "" } }
+            : x
+        )
+      );
+
+      try {
+        const res = await listCounselorThreadJournalEntries(threadId, { from, to, limit: 1200 });
+        const raw = safeArray(res?.entries);
+
+        // map backend -> UI model (NO drafts; backend already filters)
+        const mapped = raw
+          .filter((e) => e?.daySubmitted) // safety
+          .map((e) => ({
+            date: String(e.dateKey || ""),
+            mood: e.mood || "",
+            reason: e.reason || "",
+            notes: e.notes || "",
+            copingUsed: safeArray(e.copingUsed),
+          }))
+          .filter((e) => !!e.date);
+
+        setItems((prev) =>
+          prev.map((x) =>
+            x.id === threadId
+              ? {
+                  ...x,
+                  moodTracking: { status: "ready", entries: mapped, error: "", loadedAt: Date.now() },
+                }
+              : x
+          )
+        );
+      } catch (e) {
+        setItems((prev) =>
+          prev.map((x) =>
+            x.id === threadId
+              ? { ...x, moodTracking: { ...(x.moodTracking || {}), status: "error", error: e?.message || "Failed to load mood tracker.", loadedAt: Date.now() } }
+              : x
+          )
+        );
+      }
+    },
+    [items, today]
+  );
   // initial load
   useEffect(() => {
     refreshThreads();
@@ -1448,6 +1571,14 @@ export default function Inbox() {
     if (!selectedId) return;
     loadThread(selectedId);
   }, [selectedId, loadThread]);
+  // ✅ when opening Mood tab, load mood tracker (submitted only) for this thread
+  useEffect(() => {
+    if (!selectedId) return;
+    if (tab !== "mood") return;
+    if (moodDisabled) return;
+    loadMoodTracking(selectedId, day);
+  }, [selectedId, tab, moodDisabled, day, loadMoodTracking]);
+
 
   // scroll on changes
   useEffect(() => {

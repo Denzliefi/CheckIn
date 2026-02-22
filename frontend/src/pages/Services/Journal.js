@@ -18,6 +18,12 @@ const LEGACY_TERMS_KEY = "journal_terms_accepted_v1";
 const LEGACY_OWNER_KEY = "journal_entries_owner_v1";
 
 /** =========================
+    ✅ Coping (from old Journal.js)
+    - Dropdown removed (chips only)
+========================= */
+const COPING_QUICK = ["Breathing", "Talked to someone", "Walk / Stretch", "Rest", "Music", "Prayer"];
+
+/** =========================
     JOURNAL API (DB sync)
     - Uses same Bearer token auth as the rest of your app
     - Keeps localStorage as a safety net (refresh/offline)
@@ -79,7 +85,6 @@ async function apiListJournalEntries({ from, to, limit = 500, signal } = {}) {
   return Array.isArray(data?.entries) ? data.entries : [];
 }
 
-
 /** Notes limit */
 const NOTES_WORD_LIMIT = 100;
 
@@ -129,8 +134,6 @@ function saveTermsAccepted(key = LEGACY_TERMS_KEY) {
 
 /* =========================
    ✅ Auth + per-user storage keys
-   - Keeps drafts isolated per logged-in user (prevents shared journal on the same device).
-   - Still supports anonymous local use (falls back to :anon)
 ========================= */
 function readStorageItem(key) {
   try {
@@ -183,23 +186,30 @@ function maybeMigrateLegacyEntries({ userId, entriesKey }) {
   }
 }
 
-/** Keep PHQ shape for back-compat */
+/** Keep PHQ shape for back-compat + ✅ add copingUsed */
 function ensureEntryShape(e) {
   const base = {
     mood: "",
     reason: "",
     notes: "",
+    copingUsed: [],
     daySubmitted: false,
     daySubmittedAt: null,
+    clientUpdatedAt: null,
     phq: { answers: Array(9).fill(null), submitted: false, score: null, completedAt: null },
   };
   if (!e) return base;
+
+  const copingUsed = Array.isArray(e?.copingUsed) ? e.copingUsed.filter(Boolean) : [];
+
   return {
     ...base,
     ...e,
     notes: typeof e.notes === "string" ? e.notes : "",
+    copingUsed,
     daySubmitted: !!e?.daySubmitted,
     daySubmittedAt: e?.daySubmittedAt || null,
+    clientUpdatedAt: typeof e?.clientUpdatedAt === "number" ? e.clientUpdatedAt : base.clientUpdatedAt,
     phq: {
       ...base.phq,
       ...(e.phq || {}),
@@ -224,6 +234,7 @@ function setEntry(entries, dateKey, patch) {
     [dateKey]: {
       ...prev,
       ...patch,
+      copingUsed: Array.isArray(patch?.copingUsed) ? patch.copingUsed : prev.copingUsed,
       phq: patch?.phq ? { ...prev.phq, ...patch.phq } : prev.phq,
     },
   };
@@ -253,17 +264,12 @@ function isDateKey(k) {
   return /^\d{4}-\d{2}-\d{2}$/.test(k);
 }
 
-/**
- * ✅ Local day key (consistent everywhere)
- * Avoid mixing local “today” with UTC math.
- */
+/** ✅ Local day key */
 function getTodayKey() {
   const d = new Date();
   const yyyy = d.getFullYear();
   const mm = String(d.getMonth() + 1).padStart(2, "0");
   const dd = String(d.getDate()).padStart(2, "0");
-
-  // Ensure it uses local time consistently (no UTC-based discrepancies)
   return `${yyyy}-${mm}-${dd}`;
 }
 
@@ -280,10 +286,6 @@ function keyFromDateLocal(dt) {
   return `${yyyy}-${mm}-${dd}`;
 }
 
-/**
- * ✅ Safe date rendering
- * No Date.UTC(...) -> local shift risk removed.
- */
 function formatNiceDate(dateKey) {
   const [y, m, d] = (dateKey || "").split("-").map((x) => Number(x));
   if (!y || !m || !d) return dateKey || "";
@@ -317,7 +319,7 @@ function buildTrackerSeries(entries, baseDateKey, days = TRACKER_DAYS) {
   return list;
 }
 
-/** Wellness tips based on Saved Mood/Reason/Notes (NOT PHQ requirement) */
+/** Wellness tips */
 function tipsForEntry(entry) {
   const isSubmitted = !!entry?.daySubmitted;
   if (!isSubmitted) {
@@ -478,6 +480,16 @@ function IconNotes({ className = "" }) {
   );
 }
 
+function IconCoping({ className = "" }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} fill="none" aria-hidden="true">
+      <path d="M12 21s7-4.2 7-10a5 5 0 0 0-10 0 5 5 0 0 0-10 0c0 5.8 7 10 7 10" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+      <path d="M8.5 11.6h7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+      <path d="M12 8.2v6.8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 /** Tiny animated SVG mascot (no assets) */
 function StepMascot({ show }) {
   const reduce = useReducedMotion();
@@ -551,11 +563,10 @@ function MobileStepButton({ label, active, done, disabled, onClick, icon: Icon }
         {done ? <IconCheck className="h-4 w-4" /> : <Icon className="h-4 w-4 sm:h-[18px] sm:w-[18px]" />}
       </div>
 
-      {/* ✅ ONLY TEXT INCREASED HERE */}
       <div
         className={[
           "w-full text-center font-extrabold leading-tight truncate",
-          "text-[clamp(13px,3vw,15px)]", // was ~10.5px–11px
+          "text-[clamp(13px,3vw,15px)]",
           labelClass,
         ].join(" ")}
       >
@@ -564,7 +575,6 @@ function MobileStepButton({ label, active, done, disabled, onClick, icon: Icon }
     </button>
   );
 }
-
 
 /** =========================
     3D-ish EMOTE (SVG)
@@ -723,9 +733,6 @@ function Pill({ children, tone = "light" }) {
   );
 }
 
-
-
-
 function IconMiniCheck({ className = "" }) {
   return (
     <svg viewBox="0 0 20 20" className={className} fill="none" aria-hidden="true">
@@ -739,7 +746,9 @@ function IconMiniCloud({ className = "" }) {
     <svg viewBox="0 0 24 24" className={className} fill="none" aria-hidden="true">
       <path
         d="M7.5 18.5h9.2a4.3 4.3 0 0 0 .6-8.6A5.7 5.7 0 0 0 6.6 8.6 4.2 4.2 0 0 0 7.5 18.5Z"
-        stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinejoin="round"
       />
     </svg>
   );
@@ -758,10 +767,7 @@ function IconMiniWarn({ className = "" }) {
 function SpinnerMini({ className = "" }) {
   return (
     <svg viewBox="0 0 24 24" className={className} fill="none" aria-hidden="true">
-      <path
-        d="M12 2.8a9.2 9.2 0 1 0 9.2 9.2"
-        stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"
-      />
+      <path d="M12 2.8a9.2 9.2 0 1 0 9.2 9.2" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
     </svg>
   );
 }
@@ -781,14 +787,12 @@ function CloudStatusPill({ status, message }) {
     </Pill>
   );
 }
+
 function Card({ title, right, children, className = "" }) {
   return (
     <div className={`rounded-[26px] border border-black/10 bg-white/85 backdrop-blur-xl shadow-[0_18px_60px_rgba(0,0,0,0.08)] overflow-hidden ${className}`}>
       <div className="px-5 py-4 bg-black/[0.02] flex items-center justify-between gap-3">
-        <div
-          className="text-[16px] sm:text-[17px] lg:text-[18px] font-extrabold text-[#141414] flex items-center gap-2"
-          style={{ fontFamily: "Lora, serif" }}
-        >
+        <div className="text-[16px] sm:text-[17px] lg:text-[18px] font-extrabold text-[#141414] flex items-center gap-2" style={{ fontFamily: "Lora, serif" }}>
           {title}
         </div>
         {right}
@@ -814,9 +818,7 @@ function Chip({ active, children, onClick, left, disabled }) {
       "
       style={{
         borderColor: active ? "rgba(0,0,0,0.30)" : "rgba(0,0,0,0.14)",
-        background: active
-          ? "linear-gradient(180deg, rgba(185,255,102,0.60), rgba(185,255,102,0.30))"
-          : "rgba(255,255,255,0.90)",
+        background: active ? "linear-gradient(180deg, rgba(185,255,102,0.60), rgba(185,255,102,0.30))" : "rgba(255,255,255,0.90)",
         color: CHECKIN_DARK,
         boxShadow: active ? "0 14px 40px rgba(0,0,0,0.10)" : "0 8px 24px rgba(0,0,0,0.05)",
       }}
@@ -827,7 +829,6 @@ function Chip({ active, children, onClick, left, disabled }) {
     </motion.button>
   );
 }
-
 
 /** Mood mapping for tracker */
 function moodToLevel(mood) {
@@ -985,20 +986,29 @@ function MoodTracker({ series, todayKey, title = "Mood Tracker", subtitle = "Sav
                         <MoodEmote mood={p.mood} size={28} />
                       </g>
 
-                      {/* ✅ Today badge now follows the point (no more floating top-right) */}
+                      {/* ✅ Today badge fixed + positioned above the point */}
                       {isToday && (() => {
-  const badgeW = 46;
-  const badgeH = 18;
+                        const badgeW = 50;
+                        const badgeH = 18;
+                        const rawX = p.x - badgeW / 2;
+                        const tx = clamp(rawX, 6, w - badgeW - 6);
+                        const ty = clamp(p.y - 74, 6, h - badgeH - 6);
 
-  // Calculate horizontal position to center it based on the mood point (p.x)
-  const rawX = p.x - badgeW / 2;
-  const tx = clamp(rawX, 6, w - badgeW - 6);
-
-  // Move the "Today" badge above the mood emotes (Happy/Calm), making sure it's not overlapping
-  const ty = p.y - 70;  // Adjusted position to place the "Today" badge above the mood emotes
-
-  // Return the "Today" badge at the adjusted position
-  
+                        return (
+                          <g transform={`translate(${tx}, ${ty})`}>
+                            <rect x="0" y="0" width={badgeW} height={badgeH} rx="9" fill="rgba(20,20,20,0.92)" />
+                            <text
+                              x={badgeW / 2}
+                              y={12.5}
+                              textAnchor="middle"
+                              fontSize="11"
+                              fill="white"
+                              fontWeight="900"
+                            >
+                              Today
+                            </text>
+                          </g>
+                        );
                       })()}
                     </>
                   ) : (
@@ -1040,9 +1050,6 @@ function MoodTracker({ series, todayKey, title = "Mood Tracker", subtitle = "Sav
 }
 
 /** =========================
-    History Modal
-========================= */
-/** =========================
     History Modal (Responsive + Footer Actions)
 ========================= */
 function HistoryModal({ open, onClose, items, entries, trackerSeriesForDate, todayKey }) {
@@ -1050,15 +1057,11 @@ function HistoryModal({ open, onClose, items, entries, trackerSeriesForDate, tod
   const [selectedDate, setSelectedDate] = useState(null);
   const [visibleCount, setVisibleCount] = useState(7);
 
-
   const listScrollRef = useRef(null);
   const detailScrollRef = useRef(null);
   const listSentinelRef = useRef(null);
 
-  const visibleItems = useMemo(
-    () => items.slice(0, Math.min(items.length, Math.max(7, visibleCount))),
-    [items, visibleCount]
-  );
+  const visibleItems = useMemo(() => items.slice(0, Math.min(items.length, Math.max(7, visibleCount))), [items, visibleCount]);
 
   useEffect(() => {
     if (!open) return;
@@ -1070,7 +1073,6 @@ function HistoryModal({ open, onClose, items, entries, trackerSeriesForDate, tod
     });
   }, [open]);
 
-  // Keep visibleCount within bounds when items change
   useEffect(() => {
     setVisibleCount((v) => {
       const min = 7;
@@ -1079,7 +1081,6 @@ function HistoryModal({ open, onClose, items, entries, trackerSeriesForDate, tod
     });
   }, [items.length]);
 
-  // Infinite-scroll style: show latest 7 first, then load earlier entries as you scroll
   useEffect(() => {
     if (!open) return;
     if (page !== "list") return;
@@ -1103,7 +1104,6 @@ function HistoryModal({ open, onClose, items, entries, trackerSeriesForDate, tod
     return () => obs.disconnect();
   }, [open, page, items.length, visibleCount]);
 
-
   const detailEntry = useMemo(() => (selectedDate ? getEntry(entries, selectedDate) : null), [entries, selectedDate]);
   const detailTracker = useMemo(() => (selectedDate ? trackerSeriesForDate?.(selectedDate) || [] : []), [selectedDate, trackerSeriesForDate]);
 
@@ -1125,12 +1125,7 @@ function HistoryModal({ open, onClose, items, entries, trackerSeriesForDate, tod
   return (
     <AnimatePresence>
       {open && (
-        <motion.div
-          className="fixed inset-0 z-[999] flex items-center justify-center px-2 sm:px-4"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-        >
+        <motion.div className="fixed inset-0 z-[999] flex items-center justify-center px-2 sm:px-4" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
           <div className="absolute inset-0 bg-black/40" onClick={onClose} />
 
           <motion.div
@@ -1152,52 +1147,26 @@ function HistoryModal({ open, onClose, items, entries, trackerSeriesForDate, tod
               overflow-hidden
             "
           >
-            {/* HEADER (no buttons here) */}
-            <div
-              className="p-4 sm:p-6"
-              style={{
-                background: `radial-gradient(900px 260px at 15% 0%, ${CHECKIN_GREEN} 0%, transparent 62%)`,
-              }}
-            >
+            <div className="p-4 sm:p-6" style={{ background: `radial-gradient(900px 260px at 15% 0%, ${CHECKIN_GREEN} 0%, transparent 62%)` }}>
               <div className="text-[15px] sm:text-[16px] font-extrabold text-[#141414]" style={{ fontFamily: "Lora, serif" }}>
                 {page === "list" ? "History" : "History detail"}
               </div>
-              <div className="mt-1 text-[12px] sm:text-[13px] text-black/60 font-semibold">
-                {page === "list" ? "Tap a date to view it." : "Review the saved entry."}
-              </div>
+              <div className="mt-1 text-[12px] sm:text-[13px] text-black/60 font-semibold">{page === "list" ? "Tap a date to view it." : "Review the saved entry."}</div>
             </div>
 
-            {/* BODY (extra bottom padding so footer won't cover content) */}
             <div className="p-3 sm:p-4">
               {page === "list" ? (
                 <div className="w-full">
                   {items.length === 0 ? (
-                    <div className="rounded-2xl border border-black/10 bg-black/[0.02] p-4 text-[13px] text-black/60">
-                      No saved entries yet.
-                    </div>
+                    <div className="rounded-2xl border border-black/10 bg-black/[0.02] p-4 text-[13px] text-black/60">No saved entries yet.</div>
                   ) : (
-                    <div
-                      ref={listScrollRef}
-                      className="
-                        max-h-[62vh] sm:max-h-[65vh]
-                        overflow-auto
-                        rounded-2xl
-                        border border-black/10
-                        pb-20 sm:pb-24
-                      "
-                    >
-                      {/* Latest-first view (default: 7 days). Scroll down to load earlier entries. */}
+                    <div ref={listScrollRef} className="max-h-[62vh] sm:max-h-[65vh] overflow-auto rounded-2xl border border-black/10 pb-20 sm:pb-24">
                       <div className="sticky top-0 z-10 bg-white/90 backdrop-blur px-3 sm:px-4 py-2 border-b border-black/10 text-[11px] text-black/55 font-semibold">
                         Showing latest {visibleItems.length} of {items.length}. Scroll down to load earlier entries.
                       </div>
 
                       {visibleItems.map((it, idx) => (
-                        <button
-                          key={it.date}
-                          type="button"
-                          onClick={() => goDetail(it.date)}
-                          className="w-full text-left px-3 sm:px-4 py-3 hover:bg-black/[0.03] transition"
-                        >
+                        <button key={it.date} type="button" onClick={() => goDetail(it.date)} className="w-full text-left px-3 sm:px-4 py-3 hover:bg-black/[0.03] transition">
                           <div className="flex items-center justify-between gap-3">
                             <div className="text-[13px] font-extrabold text-[#141414] flex items-center gap-2">
                               {it.mood ? (
@@ -1218,8 +1187,11 @@ function HistoryModal({ open, onClose, items, entries, trackerSeriesForDate, tod
                               <span className="font-extrabold">Reason:</span> {it.reason || "—"}
                             </span>
 
-                            {/* ✅ PHQ-only badge removed by your request: do NOT show PHQ-only days/badge */}
-                            {/* {it.phqOnly && ... } */}
+                            {it.copingPreview ? (
+                              <span className="inline-flex items-center gap-2 rounded-full border px-3 py-1" style={{ borderColor: "rgba(0,0,0,0.12)" }}>
+                                <span className="font-extrabold">Coping:</span> {it.copingPreview}
+                              </span>
+                            ) : null}
 
                             {it.notesPreview && (
                               <span className="inline-flex items-center gap-2 rounded-full border px-3 py-1" style={{ borderColor: "rgba(0,0,0,0.12)" }}>
@@ -1232,7 +1204,6 @@ function HistoryModal({ open, onClose, items, entries, trackerSeriesForDate, tod
                         </button>
                       ))}
 
-                      {/* Sentinel for auto-loading earlier entries */}
                       <div ref={listSentinelRef} className="h-10" />
 
                       {visibleCount < items.length && (
@@ -1244,9 +1215,7 @@ function HistoryModal({ open, onClose, items, entries, trackerSeriesForDate, tod
                           >
                             Load earlier entries
                           </button>
-                          <div className="mt-2 text-[11px] text-black/55 font-semibold">
-                            Tip: keep scrolling to load more.
-                          </div>
+                          <div className="mt-2 text-[11px] text-black/55 font-semibold">Tip: keep scrolling to load more.</div>
                         </div>
                       )}
                     </div>
@@ -1255,21 +1224,9 @@ function HistoryModal({ open, onClose, items, entries, trackerSeriesForDate, tod
               ) : (
                 <div className="w-full">
                   {!selectedDate || !detailEntry ? (
-                    <div className="rounded-2xl border border-black/10 bg-black/[0.02] p-4 text-[13px] text-black/60">
-                      No date selected.
-                    </div>
+                    <div className="rounded-2xl border border-black/10 bg-black/[0.02] p-4 text-[13px] text-black/60">No date selected.</div>
                   ) : (
-                    <div
-                      ref={detailScrollRef}
-                      className="
-                        max-h-[62vh] sm:max-h-[65vh]
-                        overflow-auto
-                        rounded-2xl
-                        border border-black/10
-                        bg-white
-                        pb-20 sm:pb-24
-                      "
-                    >
+                    <div ref={detailScrollRef} className="max-h-[62vh] sm:max-h-[65vh] overflow-auto rounded-2xl border border-black/10 bg-white pb-20 sm:pb-24">
                       <div className="p-4 border-b border-black/10" style={{ background: "rgba(0,0,0,0.02)" }}>
                         <div className="flex items-center justify-between gap-3">
                           <div>
@@ -1277,10 +1234,7 @@ function HistoryModal({ open, onClose, items, entries, trackerSeriesForDate, tod
                             <div className="text-[12px] text-black/55 font-semibold mt-1">{detailEntry.daySubmitted ? "Saved" : "Draft"}</div>
                           </div>
 
-                          <div
-                            className="h-9 rounded-full px-3 text-[12px] font-extrabold inline-flex items-center"
-                            style={{ backgroundColor: CHECKIN_GREEN, color: CHECKIN_DARK, border: "1px solid rgba(0,0,0,0.15)" }}
-                          >
+                          <div className="h-9 rounded-full px-3 text-[12px] font-extrabold inline-flex items-center" style={{ backgroundColor: CHECKIN_GREEN, color: CHECKIN_DARK, border: "1px solid rgba(0,0,0,0.15)" }}>
                             View only
                           </div>
                         </div>
@@ -1295,6 +1249,17 @@ function HistoryModal({ open, onClose, items, entries, trackerSeriesForDate, tod
                         </div>
                       </div>
 
+                      {/* ✅ Coping (history detail) */}
+                      <div className="p-4 border-b border-black/10">
+                        <div className="text-[12px] font-extrabold text-black/70 flex items-center gap-2">
+                          <IconCoping className="h-4 w-4 text-black/55" />
+                          Coping used
+                        </div>
+                        <div className="mt-2 rounded-2xl border border-black/10 bg-black/[0.02] p-3 text-[13px] text-black/70">
+                          {Array.isArray(detailEntry.copingUsed) && detailEntry.copingUsed.length ? detailEntry.copingUsed.join(", ") : "—"}
+                        </div>
+                      </div>
+
                       <div className="p-4 border-b border-black/10">
                         <div className="text-[12px] font-extrabold text-black/70">Notes</div>
                         <div className="mt-2 rounded-2xl border border-black/10 bg-black/[0.02] p-3 text-[13px] text-black/70 whitespace-pre-wrap">
@@ -1302,7 +1267,6 @@ function HistoryModal({ open, onClose, items, entries, trackerSeriesForDate, tod
                         </div>
                       </div>
 
-                      {/* ✅ Wellness Tips appear in history detail */}
                       <div className="p-4 border-b border-black/10">
                         <div className="flex items-center justify-between gap-2">
                           <div className="text-[12px] font-extrabold text-black/70 flex items-center gap-2">
@@ -1343,33 +1307,13 @@ function HistoryModal({ open, onClose, items, entries, trackerSeriesForDate, tod
               )}
             </div>
 
-            {/* FOOTER ACTIONS (Bottom Right, responsive) */}
-            <div
-              className="
-                absolute bottom-0 left-0 right-0
-                border-t border-black/10
-                bg-white/92 backdrop-blur
-                px-3 sm:px-4
-                py-3
-              "
-            >
+            <div className="absolute bottom-0 left-0 right-0 border-t border-black/10 bg-white/92 backdrop-blur px-3 sm:px-4 py-3">
               <div className="flex items-center justify-end gap-2 flex-wrap">
                 {page === "detail" && (
                   <button
                     type="button"
                     onClick={goList}
-                    className="
-                      h-9 sm:h-10
-                      rounded-full
-                      border border-black/15
-                      bg-white
-                      px-3 sm:px-4
-                      text-[12px] sm:text-[13px]
-                      font-extrabold
-                      text-black/70
-                      hover:bg-black/5
-                      transition
-                    "
+                    className="h-9 sm:h-10 rounded-full border border-black/15 bg-white px-3 sm:px-4 text-[12px] sm:text-[13px] font-extrabold text-black/70 hover:bg-black/5 transition"
                   >
                     Back
                   </button>
@@ -1378,14 +1322,7 @@ function HistoryModal({ open, onClose, items, entries, trackerSeriesForDate, tod
                 <button
                   type="button"
                   onClick={onClose}
-                  className="
-                    h-9 sm:h-10
-                    rounded-full
-                    px-3 sm:px-4
-                    text-[12px] sm:text-[13px]
-                    font-extrabold
-                    transition
-                  "
+                  className="h-9 sm:h-10 rounded-full px-3 sm:px-4 text-[12px] sm:text-[13px] font-extrabold transition"
                   style={{ backgroundColor: CHECKIN_DARK, color: "white" }}
                 >
                   Close
@@ -1460,20 +1397,12 @@ function TermsModal({ open, onAgree }) {
                 </div>
               </div>
 
-              {/* Adjusted bottom positioning of the button */}
-              <div className="mt-10 flex justify-end"> {/* Increased the margin-top here */}
+              <div className="mt-10 flex justify-end">
                 <button
                   type="button"
                   onClick={onAgree}
                   className="h-11 rounded-full px-6 text-[13px] font-extrabold"
-                  style={{
-                    backgroundColor: CHECKIN_DARK,
-                    color: "white",
-                    textTransform: "none", // Ensure no transformations on text
-                    writingMode: "horizontal-tb", // Ensures normal horizontal text orientation
-                    paddingRight: "20px", // Adjust padding to fix button's right text position
-                    paddingLeft: "20px", // Ensure padding on both sides is balanced
-                  }}
+                  style={{ backgroundColor: CHECKIN_DARK, color: "white", textTransform: "none", writingMode: "horizontal-tb", paddingRight: "20px", paddingLeft: "20px" }}
                 >
                   Agree & Continue
                 </button>
@@ -1595,7 +1524,7 @@ export default function Journal() {
   const [todayKey, setTodayKey] = useState(() => getTodayKey());
   const [termsAccepted, setTermsAccepted] = useState(() => loadTermsAccepted(termsStorageKey));
 
-  /** ✅ Refresh “Today” on focus + at local midnight (no interval spam) */
+  /** ✅ Refresh “Today” on focus + at local midnight */
   useEffect(() => {
     const tick = () => {
       const next = getTodayKey();
@@ -1633,21 +1562,21 @@ export default function Journal() {
   }, [entriesStorageKey, termsStorageKey]);
 
   const savedEntry = useMemo(() => getEntry(entries, todayKey), [entries, todayKey]);
+
   /** =========================
       LOAD FROM CLOUD (per user)
-      - pulls DB entries and merges into local cache
-      - newest clientUpdatedAt wins
   ========================= */
+  const cloudSupportsCoping = useRef(true);
+
   useEffect(() => {
     const token = getAuthTokenSafe();
-    if (!token) return; // not logged in
+    if (!token) return;
 
     let alive = true;
     const ac = new AbortController();
 
     (async () => {
       try {
-        // last 180 days is plenty (adjust later if you want full history)
         const to = todayKey;
         const d = new Date();
         d.setDate(d.getDate() - 180);
@@ -1666,7 +1595,6 @@ export default function Journal() {
             const localTs = Number(local.clientUpdatedAt || 0);
             const cloudTs = Number(ce.clientUpdatedAt || 0);
 
-            // newest wins; also if cloud is submitted and local isn't, cloud wins
             const cloudWins = cloudTs >= localTs || (ce.daySubmitted && !local.daySubmitted);
 
             if (cloudWins) {
@@ -1678,7 +1606,6 @@ export default function Journal() {
             }
           }
 
-          // write through local storage + state
           const ok = saveEntries(merged, entriesStorageKey);
           setSaveFailed(!ok);
           setEntries(merged);
@@ -1687,7 +1614,6 @@ export default function Journal() {
           setCloudIdle();
         }
       } catch (e) {
-        // Don't block UI; journal still works locally
         setCloudError(e?.message ? `Could not load cloud journal: ${e.message}` : "Could not load cloud journal.");
       }
     })();
@@ -1699,13 +1625,13 @@ export default function Journal() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [todayKey, entriesStorageKey]);
 
-
   const dayLocked = !!savedEntry.daySubmitted;
   const inputsDisabled = dayLocked || !termsAccepted;
 
   const [mood, setMood] = useState(savedEntry.mood || "");
   const [reason, setReason] = useState(savedEntry.reason || "");
   const [notes, setNotes] = useState(savedEntry.notes || "");
+  const [copingUsed, setCopingUsed] = useState(Array.isArray(savedEntry.copingUsed) ? savedEntry.copingUsed : []);
   const [moodCollapsed, setMoodCollapsed] = useState(false);
 
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -1718,12 +1644,11 @@ export default function Journal() {
   const cloudAbort = useRef(null);
   const pendingCloudRef = useRef(null);
 
-  // UX: show sync as a small pill and auto-hide success after a moment
+  // UX: show sync as a small pill and auto-hide success
   const [showCloudPill, setShowCloudPill] = useState(false);
   const cloudPillTimer = useRef(null);
 
   useEffect(() => {
-    // idle: hide
     if (cloudSync.status === "idle") {
       setShowCloudPill(false);
       if (cloudPillTimer.current) {
@@ -1733,10 +1658,8 @@ export default function Journal() {
       return;
     }
 
-    // saving/error/saved: show
     setShowCloudPill(true);
 
-    // auto-hide ONLY the success state (Option A)
     if (cloudSync.status === "saved") {
       if (cloudPillTimer.current) clearTimeout(cloudPillTimer.current);
       cloudPillTimer.current = setTimeout(() => setShowCloudPill(false), 2600);
@@ -1812,6 +1735,7 @@ export default function Journal() {
     setMood(e.mood || "");
     setReason(e.reason || "");
     setNotes(e.notes || "");
+    setCopingUsed(Array.isArray(e.copingUsed) ? e.copingUsed : []);
     setSaveFailed(false);
     setMoodCollapsed(false);
   }, [todayKey, entries]);
@@ -1821,19 +1745,52 @@ export default function Journal() {
     const sameMood = (savedEntry.mood || "") === (mood || "");
     const sameReason = (savedEntry.reason || "") === (reason || "");
     const sameNotes = (savedEntry.notes || "") === (notes || "");
-    return !(sameMood && sameReason && sameNotes);
-  }, [inputsDisabled, savedEntry, mood, reason, notes]);
+    const a = Array.isArray(savedEntry.copingUsed) ? savedEntry.copingUsed : [];
+    const b = Array.isArray(copingUsed) ? copingUsed : [];
+    const sameCoping = a.length === b.length && a.every((x, i) => x === b[i]);
+    return !(sameMood && sameReason && sameNotes && sameCoping);
+  }, [inputsDisabled, savedEntry, mood, reason, notes, copingUsed]);
+
+  /** ✅ No side-effects inside setEntries updater */
+  function commitEntries(next, { pulse = false } = {}) {
+    const ok = saveEntries(next, entriesStorageKey);
+    setSaveFailed(!ok);
+    if (ok && pulse) pulseSaved();
+    setEntries(next);
+  }
+
+  function pulseSaved() {
+    setSavedPulse(true);
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => setSavedPulse(false), 1100);
+  }
+
+  async function upsertCloudWithFallback(dateKey, payload, { signal } = {}) {
+    // If the backend rejects unknown fields, retry once without copingUsed.
+    try {
+      return await apiUpsertJournalEntry(dateKey, payload, { signal });
+    } catch (err) {
+      if (cloudSupportsCoping.current && Object.prototype.hasOwnProperty.call(payload || {}, "copingUsed")) {
+        try {
+          const { copingUsed: _drop, ...rest } = payload || {};
+          const res = await apiUpsertJournalEntry(dateKey, rest, { signal });
+          cloudSupportsCoping.current = false; // stop sending copingUsed to cloud if backend is strict
+          return res;
+        } catch {
+          throw err;
+        }
+      }
+      throw err;
+    }
+  }
 
   /** =========================
       AUTO-SAVE (LOCAL + CLOUD)
-      - Debounced local save so refresh never loses typing
-      - Debounced cloud upsert so MongoDB stays in sync
   ========================= */
   useEffect(() => {
     if (inputsDisabled || !termsAccepted || dayLocked) return;
     if (!isDirty) return;
 
-    // Debounce local save (fast)
     const t = window.setTimeout(() => {
       const clientUpdatedAt = Date.now();
 
@@ -1841,24 +1798,25 @@ export default function Journal() {
         mood: (mood || "").trim(),
         reason: (reason || "").trim(),
         notes: notes ?? "",
+        copingUsed: Array.isArray(copingUsed) ? copingUsed : [],
         daySubmitted: false,
         daySubmittedAt: null,
         clientUpdatedAt,
       });
 
-      // Save locally (always)
       commitEntries(next);
 
-      // Queue cloud save (slightly slower debounce)
+      const basePayload = {
+        mood: (mood || "").trim(),
+        reason: (reason || "").trim(),
+        notes: notes ?? "",
+        daySubmitted: false,
+        clientUpdatedAt,
+      };
+
       pendingCloudRef.current = {
         dateKey: todayKey,
-        payload: {
-          mood: (mood || "").trim(),
-          reason: (reason || "").trim(),
-          notes: notes ?? "",
-          daySubmitted: false,
-          clientUpdatedAt,
-        },
+        payload: cloudSupportsCoping.current ? { ...basePayload, copingUsed: Array.isArray(copingUsed) ? copingUsed : [] } : basePayload,
       };
 
       if (cloudTimer.current) window.clearTimeout(cloudTimer.current);
@@ -1871,7 +1829,7 @@ export default function Journal() {
           if (cloudAbort.current) cloudAbort.current.abort();
           cloudAbort.current = new AbortController();
 
-          await apiUpsertJournalEntry(pending.dateKey, pending.payload, { signal: cloudAbort.current.signal });
+          await upsertCloudWithFallback(pending.dateKey, pending.payload, { signal: cloudAbort.current.signal });
           pendingCloudRef.current = null;
           setCloudSaved();
         } catch (e) {
@@ -1881,10 +1839,9 @@ export default function Journal() {
     }, 450);
 
     return () => window.clearTimeout(t);
-  }, [inputsDisabled, termsAccepted, dayLocked, isDirty, entries, todayKey, mood, reason, notes, entriesStorageKey]);
+  }, [inputsDisabled, termsAccepted, dayLocked, isDirty, entries, todayKey, mood, reason, notes, copingUsed, entriesStorageKey]);
 
-  
-  // ✅ On refresh/close: force-save the latest draft to localStorage synchronously (safest for production)
+  // ✅ On refresh/close: force-save latest draft to localStorage synchronously
   useEffect(() => {
     const onBeforeUnload = () => {
       if (inputsDisabled || !termsAccepted || dayLocked) return;
@@ -1895,27 +1852,29 @@ export default function Journal() {
         mood: (mood || "").trim(),
         reason: (reason || "").trim(),
         notes: notes ?? "",
+        copingUsed: Array.isArray(copingUsed) ? copingUsed : [],
         daySubmitted: false,
         daySubmittedAt: null,
         clientUpdatedAt,
       });
 
-      // synchronous local write (no setState needed during unload)
-      try { localStorage.setItem(entriesStorageKey, JSON.stringify(next)); } catch {}
+      try {
+        localStorage.setItem(entriesStorageKey, JSON.stringify(next));
+      } catch {}
     };
 
     window.addEventListener("beforeunload", onBeforeUnload);
     return () => window.removeEventListener("beforeunload", onBeforeUnload);
-  }, [inputsDisabled, termsAccepted, dayLocked, isDirty, entries, todayKey, mood, reason, notes]);
+  }, [inputsDisabled, termsAccepted, dayLocked, isDirty, entries, todayKey, mood, reason, notes, copingUsed, entriesStorageKey]);
 
-// Retry any pending cloud save when the browser comes back online
+  // Retry any pending cloud save when browser comes back online
   useEffect(() => {
     const onOnline = async () => {
       const pending = pendingCloudRef.current;
       if (!pending) return;
       try {
         setCloudSaving("Back online — syncing...");
-        await apiUpsertJournalEntry(pending.dateKey, pending.payload);
+        await upsertCloudWithFallback(pending.dateKey, pending.payload);
         pendingCloudRef.current = null;
         setCloudSaved("Synced after reconnect.");
       } catch (e) {
@@ -1926,27 +1885,12 @@ export default function Journal() {
     return () => window.removeEventListener("online", onOnline);
   }, []);
 
-
   const wellness = useMemo(() => tipsForEntry(savedEntry), [savedEntry]);
 
   const canSave = useMemo(() => {
     if (inputsDisabled) return false;
     return !!(mood && reason);
   }, [inputsDisabled, mood, reason]);
-
-  function pulseSaved() {
-    setSavedPulse(true);
-    if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => setSavedPulse(false), 1100);
-  }
-
-  /** ✅ No side-effects inside setEntries updater */
-  function commitEntries(next, { pulse = false } = {}) {
-    const ok = saveEntries(next, entriesStorageKey);
-    setSaveFailed(!ok);
-    if (ok && pulse) pulseSaved();
-    setEntries(next);
-  }
 
   async function saveNow() {
     if (dayLocked || !termsAccepted) return;
@@ -1955,12 +1899,12 @@ export default function Journal() {
       return;
     }
 
-    // Cancel any pending draft cloud sync so it can’t overwrite the finalized save
     if (cloudTimer.current) {
       window.clearTimeout(cloudTimer.current);
       cloudTimer.current = null;
     }
     pendingCloudRef.current = null;
+
     const prevSaved = getEntry(entries, todayKey);
     const nowISO = new Date().toISOString();
 
@@ -1968,19 +1912,20 @@ export default function Journal() {
       mood: (mood || "").trim(),
       reason: (reason || "").trim(),
       notes: notes ?? "",
+      copingUsed: Array.isArray(copingUsed) ? copingUsed : [],
       daySubmitted: true,
       daySubmittedAt: prevSaved.daySubmittedAt || nowISO,
+      clientUpdatedAt: Date.now(),
     });
 
     commitEntries(next, { pulse: true });
 
-    // ✅ Manual save = finalize day + push to MongoDB immediately
     try {
       setCloudSaving("Finalizing in cloud...");
       if (cloudAbort.current) cloudAbort.current.abort();
       cloudAbort.current = new AbortController();
 
-      const payload = {
+      const basePayload = {
         mood: (mood || "").trim(),
         reason: (reason || "").trim(),
         notes: notes ?? "",
@@ -1988,23 +1933,25 @@ export default function Journal() {
         clientUpdatedAt: Date.now(),
       };
 
-      await apiUpsertJournalEntry(todayKey, payload, { signal: cloudAbort.current.signal });
+      const payload = cloudSupportsCoping.current ? { ...basePayload, copingUsed: Array.isArray(copingUsed) ? copingUsed : [] } : basePayload;
+
+      await upsertCloudWithFallback(todayKey, payload, { signal: cloudAbort.current.signal });
       pendingCloudRef.current = null;
       setCloudSaved("Finalized and saved to cloud.");
     } catch (e) {
+      const basePayload = {
+        mood: (mood || "").trim(),
+        reason: (reason || "").trim(),
+        notes: notes ?? "",
+        daySubmitted: true,
+        clientUpdatedAt: Date.now(),
+      };
       pendingCloudRef.current = {
         dateKey: todayKey,
-        payload: {
-          mood: (mood || "").trim(),
-          reason: (reason || "").trim(),
-          notes: notes ?? "",
-          daySubmitted: true,
-          clientUpdatedAt: Date.now(),
-        },
+        payload: cloudSupportsCoping.current ? { ...basePayload, copingUsed: Array.isArray(copingUsed) ? copingUsed : [] } : basePayload,
       };
       setCloudError(e?.message ? `Cloud save failed: ${e.message}` : "Cloud save failed. Saved locally.");
     }
-
   }
 
   function clearTodayDraft() {
@@ -2013,12 +1960,26 @@ export default function Journal() {
     setMood("");
     setReason("");
     setNotes("");
+    setCopingUsed([]);
     setMoodCollapsed(false);
     setSaveFailed(false);
 
-    const next = setEntry(entries, todayKey, { mood: "", reason: "", notes: "", daySubmitted: false, daySubmittedAt: null });
+    const next = setEntry(entries, todayKey, { mood: "", reason: "", notes: "", copingUsed: [], daySubmitted: false, daySubmittedAt: null });
     commitEntries(next);
   }
+
+  /** Coping helpers (chips only) */
+  const toggleCoping = useCallback(
+    (value) => {
+      if (inputsDisabled) return;
+      if (!value) return;
+      setCopingUsed((prev) => {
+        const list = Array.isArray(prev) ? prev : [];
+        return list.includes(value) ? list.filter((x) => x !== value) : [...list, value];
+      });
+    },
+    [inputsDisabled]
+  );
 
   const trackerSeries = useMemo(() => buildTrackerSeries(entries, todayKey, TRACKER_DAYS), [entries, todayKey]);
   const trackerSeriesForDate = useCallback((baseDate) => buildTrackerSeries(entries, baseDate, TRACKER_DAYS), [entries]);
@@ -2026,7 +1987,7 @@ export default function Journal() {
   const moods = ["Happy", "Calm", "Okay", "Stressed", "Sad", "Angry", "Fear", "Surprise", "Disgust"];
   const reasons = ["School", "Family", "Friends", "Health", "Other"];
 
-  /** ✅ History: Mood/Reason/Notes only (NO PHQ-only days) + includes Wellness preview */
+  /** ✅ History: includes coping preview */
   const historyItems = useMemo(() => {
     const keys = Object.keys(entries || {}).filter(isDateKey);
 
@@ -2036,13 +1997,19 @@ export default function Journal() {
       return t.length > n ? `${t.slice(0, n)}…` : t;
     };
 
+    const copingPreview = (arr) => {
+      const list = Array.isArray(arr) ? arr.filter(Boolean) : [];
+      if (!list.length) return "";
+      const joined = list.slice(0, 2).join(", ");
+      return list.length > 2 ? `${joined}…` : joined;
+    };
+
     return keys
       .map((k) => {
         const e = getEntry(entries, k);
 
-        // ✅ Only show days that cover mood tracker content
-        const hasText = !!(e.mood || e.reason || (e.notes || "").trim());
-        if (!hasText) return null; // ❌ removes PHQ-only days
+        const hasText = !!(e.mood || e.reason || (e.notes || "").trim() || (Array.isArray(e.copingUsed) && e.copingUsed.length));
+        if (!hasText) return null;
 
         const noteTrim = (e.notes || "").trim();
         const notesPreview = noteTrim ? (noteTrim.length > 22 ? `${noteTrim.slice(0, 22)}…` : noteTrim) : "";
@@ -2055,9 +2022,10 @@ export default function Journal() {
           mood: e.mood || "",
           reason: e.reason || "",
           notesPreview,
+          copingPreview: copingPreview(e.copingUsed),
           dayLocked: !!e.daySubmitted,
-          phqSubmitted: !!e?.phq?.submitted, // optional badge
-          wellnessPreview, // ✅ wellness tip appears in history list
+          phqSubmitted: !!e?.phq?.submitted,
+          wellnessPreview,
         };
       })
       .filter(Boolean)
@@ -2081,7 +2049,6 @@ export default function Journal() {
 
   const savedTimeLabel = useMemo(() => (savedEntry?.daySubmittedAt ? formatNiceTime(savedEntry.daySubmittedAt) : ""), [savedEntry]);
 
-  /** subtle emote delight: float the selected chip emote */
   const activeEmoteAnim = useMemo(() => (shouldReduceMotion ? {} : { y: [0, -2, 0] }), [shouldReduceMotion]);
 
   return (
@@ -2089,15 +2056,14 @@ export default function Journal() {
       className="min-h-screen relative overflow-hidden"
       style={{
         fontFamily: "Nunito, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif",
-        background:
-  `
-  radial-gradient(1100px 520px at 18% 0%, rgba(185,255,102,0.48) 0%, rgba(185,255,102,0.00) 58%),
-  radial-gradient(980px 480px at 70% 6%, rgba(218,252,182,0.55) 0%, rgba(218,252,182,0.00) 62%),
-  radial-gradient(900px 420px at 30% 28%, rgba(211,243,176,0.40) 0%, rgba(211,243,176,0.00) 60%),
-  radial-gradient(760px 360px at 82% 36%, rgba(224,252,193,0.28) 0%, rgba(224,252,193,0.00) 62%),
-  radial-gradient(820px 420px at 12% 62%, rgba(199,227,168,0.25) 0%, rgba(199,227,168,0.00) 62%),
-  linear-gradient(180deg, #F8FAFC 0%, #FFFFFF 58%, #F7F7F7 100%)
-  `,
+        background: `
+          radial-gradient(1100px 520px at 18% 0%, rgba(185,255,102,0.48) 0%, rgba(185,255,102,0.00) 58%),
+          radial-gradient(980px 480px at 70% 6%, rgba(218,252,182,0.55) 0%, rgba(218,252,182,0.00) 62%),
+          radial-gradient(900px 420px at 30% 28%, rgba(211,243,176,0.40) 0%, rgba(211,243,176,0.00) 60%),
+          radial-gradient(760px 360px at 82% 36%, rgba(224,252,193,0.28) 0%, rgba(224,252,193,0.00) 62%),
+          radial-gradient(820px 420px at 12% 62%, rgba(199,227,168,0.25) 0%, rgba(199,227,168,0.00) 62%),
+          linear-gradient(180deg, #F8FAFC 0%, #FFFFFF 58%, #F7F7F7 100%)
+        `,
       }}
     >
       <style>{`@import url('https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&family=Lora:wght@400;600;700&display=swap');`}</style>
@@ -2113,14 +2079,7 @@ export default function Journal() {
         }}
       />
 
-      <HistoryModal
-        open={historyOpen}
-        onClose={() => setHistoryOpen(false)}
-        items={historyItems}
-        entries={entries}
-        trackerSeriesForDate={trackerSeriesForDate}
-        todayKey={todayKey}
-      />
+      <HistoryModal open={historyOpen} onClose={() => setHistoryOpen(false)} items={historyItems} entries={entries} trackerSeriesForDate={trackerSeriesForDate} todayKey={todayKey} />
 
       <div className="pt-[56px] sm:pt-[66px] pb-10 relative z-[1]">
         <div className="max-w-6xl mx-auto px-3 sm:px-6">
@@ -2177,7 +2136,6 @@ export default function Journal() {
                       <CloudStatusPill status={cloudSync.status} message={cloudSync.message} />
                     </div>
                   )}
-
                 </div>
 
                 <div className="relative flex flex-wrap items-center gap-2 justify-start lg:justify-end">
@@ -2188,18 +2146,14 @@ export default function Journal() {
                     <span className="font-black text-black/75">{formatNiceDate(todayKey)}</span>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={() => setHistoryOpen(true)}
-                    className="h-10 rounded-full border border-black/15 bg-white/85 backdrop-blur px-4 text-[13px] font-extrabold text-black/70 hover:bg-black/5 transition"
-                  >
+                  <button type="button" onClick={() => setHistoryOpen(true)} className="h-10 rounded-full border border-black/15 bg-white/85 backdrop-blur px-4 text-[13px] font-extrabold text-black/70 hover:bg-black/5 transition">
                     History
                   </button>
 
                   <button
                     type="button"
                     onClick={clearTodayDraft}
-                    disabled={inputsDisabled || (!mood && !reason && !notes)}
+                    disabled={inputsDisabled || (!mood && !reason && !notes && (!Array.isArray(copingUsed) || copingUsed.length === 0))}
                     className="h-10 rounded-full border border-black/15 bg-white/85 backdrop-blur px-4 text-[13px] font-extrabold text-black/70 hover:bg-black/5 transition disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     Clear
@@ -2273,17 +2227,7 @@ export default function Journal() {
                     const isActive = step === s.key;
                     const isDone = dayLocked ? true : s.done;
 
-                    return (
-                      <MobileStepButton
-                        key={s.key}
-                        label={s.label}
-                        active={isActive}
-                        done={isDone}
-                        disabled={inputsDisabled}
-                        onClick={() => jumpToStep(s.key)}
-                        icon={s.icon}
-                      />
-                    );
+                    return <MobileStepButton key={s.key} label={s.label} active={isActive} done={isDone} disabled={inputsDisabled} onClick={() => jumpToStep(s.key)} icon={s.icon} />;
                   })}
                 </div>
 
@@ -2306,12 +2250,7 @@ export default function Journal() {
                   </span>
                 }
                 right={
-                  <button
-                    type="button"
-                    disabled={inputsDisabled}
-                    onClick={() => setMoodCollapsed((v) => !v)}
-                    className="inline-flex items-center gap-2 rounded-full border px-3 py-2 text-[12px] font-extrabold disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
+                  <button type="button" disabled={inputsDisabled} onClick={() => setMoodCollapsed((v) => !v)} className="inline-flex items-center gap-2 rounded-full border px-3 py-2 text-[12px] font-extrabold disabled:opacity-50 disabled:cursor-not-allowed">
                     {moodCollapsed ? "Expand" : "Collapse"}
                     <IconChevron className="h-4 w-4" down={moodCollapsed} />
                   </button>
@@ -2326,13 +2265,7 @@ export default function Journal() {
                   <div className="h-12 w-12 lg:h-14 lg:w-14 rounded-2xl border border-black/10 bg-white flex items-center justify-center overflow-hidden" style={{ boxShadow: "0 10px 24px rgba(0,0,0,0.05)" }}>
                     <AnimatePresence mode="wait">
                       {mood ? (
-                        <motion.div
-                          key={mood}
-                          initial={{ opacity: 0, scale: 0.85, rotate: -10, y: 6 }}
-                          animate={{ opacity: 1, scale: 1, rotate: 0, y: 0 }}
-                          exit={{ opacity: 0, scale: 0.88, rotate: 8, y: -6 }}
-                          transition={shouldReduceMotion ? { duration: 0 } : { duration: 0.24, ease: "easeOut" }}
-                        >
+                        <motion.div key={mood} initial={{ opacity: 0, scale: 0.85, rotate: -10, y: 6 }} animate={{ opacity: 1, scale: 1, rotate: 0, y: 0 }} exit={{ opacity: 0, scale: 0.88, rotate: 8, y: -6 }} transition={shouldReduceMotion ? { duration: 0 } : { duration: 0.24, ease: "easeOut" }}>
                           <MoodEmote mood={mood} size={40} />
                         </motion.div>
                       ) : (
@@ -2346,21 +2279,13 @@ export default function Journal() {
                   <div className="flex-1">
                     <div className="text-[12px] font-extrabold text-black/70">Current mood</div>
                     <div className="text-[14px] lg:text-[16px] font-extrabold text-[#141414] mt-1">{mood || "Not selected"}</div>
-                    <div className="text-[12px] text-black/55 font-semibold mt-1">
-                      {(mood || "").trim() ? MOOD_MESSAGE[(mood || "").trim()] || "Thanks for checking in." : "Pick a mood to begin."}
-                    </div>
+                    <div className="text-[12px] text-black/55 font-semibold mt-1">{(mood || "").trim() ? MOOD_MESSAGE[(mood || "").trim()] || "Thanks for checking in." : "Pick a mood to begin."}</div>
                   </div>
                 </motion.div>
 
                 <AnimatePresence initial={false}>
                   {!moodCollapsed && (
-                    <motion.div
-                      initial={{ height: 0, opacity: 0 }}
-                      animate={{ height: "auto", opacity: 1 }}
-                      exit={{ height: 0, opacity: 0 }}
-                      transition={shouldReduceMotion ? { duration: 0 } : { duration: 0.2, ease: "easeOut" }}
-                      className="overflow-hidden"
-                    >
+                    <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={shouldReduceMotion ? { duration: 0 } : { duration: 0.2, ease: "easeOut" }} className="overflow-hidden">
                       <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 gap-2">
                         {moods.map((m) => (
                           <Chip
@@ -2373,20 +2298,8 @@ export default function Journal() {
                             left={
                               <motion.span
                                 initial={{ scale: 0.9 }}
-                                animate={
-                                  shouldReduceMotion
-                                    ? { scale: mood === m ? 1.06 : 1 }
-                                    : mood === m
-                                    ? { scale: 1.08, ...activeEmoteAnim }
-                                    : { scale: 1 }
-                                }
-                                transition={
-                                  shouldReduceMotion
-                                    ? { duration: 0 }
-                                    : mood === m
-                                    ? { duration: 1.2, repeat: Infinity, ease: "easeInOut" }
-                                    : { type: "spring", stiffness: 300, damping: 18 }
-                                }
+                                animate={shouldReduceMotion ? { scale: mood === m ? 1.06 : 1 } : mood === m ? { scale: 1.08, ...activeEmoteAnim } : { scale: 1 }}
+                                transition={shouldReduceMotion ? { duration: 0 } : mood === m ? { duration: 1.2, repeat: Infinity, ease: "easeInOut" } : { type: "spring", stiffness: 300, damping: 18 }}
                               >
                                 <MoodEmote mood={m} size={18} />
                               </motion.span>
@@ -2406,12 +2319,7 @@ export default function Journal() {
 
               <div ref={focusReasonRef} />
               <Card title={<span className="flex items-center gap-2">Reason {inputsDisabled && <Pill>Locked</Pill>}</span>}>
-                <motion.div
-                  initial={false}
-                  animate={!inputsDisabled && step === "reason" ? { boxShadow: "0 0 0 4px rgba(185,255,102,0.35)" } : { boxShadow: "0 0 0 0px rgba(0,0,0,0)" }}
-                  transition={shouldReduceMotion ? { duration: 0 } : { duration: 0.22, ease: "easeOut" }}
-                  className="rounded-2xl"
-                >
+                <motion.div initial={false} animate={!inputsDisabled && step === "reason" ? { boxShadow: "0 0 0 4px rgba(185,255,102,0.35)" } : { boxShadow: "0 0 0 0px rgba(0,0,0,0)" }} transition={shouldReduceMotion ? { duration: 0 } : { duration: 0.22, ease: "easeOut" }} className="rounded-2xl">
                   <div className="flex flex-wrap gap-2">
                     {reasons.map((r) => (
                       <Chip
@@ -2433,16 +2341,42 @@ export default function Journal() {
               </Card>
 
               <div ref={focusNotesRef} />
-              <motion.div
-                initial={false}
-                animate={!inputsDisabled && step === "notes" ? { boxShadow: "0 0 0 4px rgba(185,255,102,0.35)", borderRadius: 28 } : { boxShadow: "0 0 0 0px rgba(0,0,0,0)", borderRadius: 28 }}
-                transition={shouldReduceMotion ? { duration: 0 } : { duration: 0.22, ease: "easeOut" }}
-              >
+              <motion.div initial={false} animate={!inputsDisabled && step === "notes" ? { boxShadow: "0 0 0 4px rgba(185,255,102,0.35)", borderRadius: 28 } : { boxShadow: "0 0 0 0px rgba(0,0,0,0)", borderRadius: 28 }} transition={shouldReduceMotion ? { duration: 0 } : { duration: 0.22, ease: "easeOut" }}>
                 <NotesCard notes={notes} setNotes={setNotes} disabled={inputsDisabled} />
               </motion.div>
             </div>
 
             <div className="flex flex-col gap-4">
+              {/* ✅ Coping (chips only; dropdown removed) */}
+              <Card
+                title={
+                  <span className="flex items-center gap-2">
+                    <IconCoping className="h-5 w-5 text-black/60" />
+                    Coping
+                  </span>
+                }
+                right={copingUsed.length ? <Pill tone="green">{copingUsed.length} selected</Pill> : <Pill>Optional</Pill>}
+              >
+                <div className="rounded-2xl border border-black/10 bg-black/[0.02] p-4">
+                  <div className="text-[12px] text-black/60 font-semibold mb-3">Tap what you tried today. Tap again to remove.</div>
+
+                  <div className="flex flex-wrap gap-2">
+                    {COPING_QUICK.map((c) => (
+                      <Chip key={c} active={copingUsed.includes(c)} onClick={() => toggleCoping(c)} disabled={inputsDisabled}>
+                        {c}
+                      </Chip>
+                    ))}
+                  </div>
+
+                  <div className="mt-3 text-[12px] text-black/60">
+                    <span className="font-extrabold text-black/70">Selected:</span>{" "}
+                    {copingUsed.length ? copingUsed.join(", ") : "—"}
+                  </div>
+
+                  {inputsDisabled && <div className="mt-2 text-[12px] text-black/55 font-semibold">Saved today — coping is view-only.</div>}
+                </div>
+              </Card>
+
               <Card
                 title={
                   <span className="flex items-center gap-2">
@@ -2452,23 +2386,12 @@ export default function Journal() {
                 }
                 right={wellness.personalized ? <Pill tone="green">For you</Pill> : <Pill>General</Pill>}
               >
-                <motion.div
-                  className="rounded-2xl border border-black/10 bg-black/[0.02] p-5 lg:p-6"
-                  initial={{ opacity: 0, y: 8 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={shouldReduceMotion ? { duration: 0 } : { duration: 0.22, ease: "easeOut" }}
-                >
+                <motion.div className="rounded-2xl border border-black/10 bg-black/[0.02] p-5 lg:p-6" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={shouldReduceMotion ? { duration: 0 } : { duration: 0.22, ease: "easeOut" }}>
                   {wellness.personalized && <div className="text-[12px] text-black/55 font-semibold mb-3">Based on your mood + reason today.</div>}
 
                   <ul className="text-[13px] lg:text-[14px] text-black/70 leading-relaxed space-y-2">
                     {wellness.tips.map((t, i) => (
-                      <motion.li
-                        key={i}
-                        className="flex items-start gap-2"
-                        initial={{ opacity: 0, x: -6 }}
-                        animate={{ opacity: 1, x: 0 }}
-                        transition={shouldReduceMotion ? { duration: 0 } : { delay: 0.06 + i * 0.05, duration: 0.2, ease: "easeOut" }}
-                      >
+                      <motion.li key={i} className="flex items-start gap-2" initial={{ opacity: 0, x: -6 }} animate={{ opacity: 1, x: 0 }} transition={shouldReduceMotion ? { duration: 0 } : { delay: 0.06 + i * 0.05, duration: 0.2, ease: "easeOut" }}>
                         <span className="mt-[6px] h-2.5 w-2.5 rounded-full" style={{ backgroundColor: CHECKIN_GREEN }} />
                         <span>{t}</span>
                       </motion.li>
@@ -2476,9 +2399,7 @@ export default function Journal() {
                   </ul>
 
                   {!termsAccepted && (
-                    <div className="mt-4 rounded-xl border border-black/10 bg-white/80 p-3 text-[12px] text-black/60 font-semibold">
-                      Tips will unlock after you accept Terms.
-                    </div>
+                    <div className="mt-4 rounded-xl border border-black/10 bg-white/80 p-3 text-[12px] text-black/60 font-semibold">Tips will unlock after you accept Terms.</div>
                   )}
                 </motion.div>
               </Card>
@@ -2490,10 +2411,9 @@ export default function Journal() {
   );
 }
 
-
-
-// 2) Replace your existing BackgroundFX() with this upgraded version:
-
+/** =========================
+    Background FX
+========================= */
 function BackgroundFX() {
   const reduce = useReducedMotion();
 
@@ -2504,7 +2424,6 @@ function BackgroundFX() {
 
   return (
     <div className="pointer-events-none absolute inset-0 z-[0] overflow-hidden">
-      {/* Primary mint wash */}
       <motion.div
         className="absolute -top-36 -left-36 h-[560px] w-[560px] rounded-full blur-3xl"
         style={blob("rgba(185,255,102,0.95)", "rgba(185,255,102,0.00)", 0.42)}
@@ -2512,7 +2431,6 @@ function BackgroundFX() {
         transition={reduce ? {} : { duration: 12, repeat: Infinity, ease: "easeInOut" }}
       />
 
-      {/* Top-right soft green */}
       <motion.div
         className="absolute -top-40 -right-44 h-[680px] w-[680px] rounded-full blur-3xl"
         style={blob("rgba(218,252,182,0.95)", "rgba(218,252,182,0.00)", 0.34)}
@@ -2520,7 +2438,6 @@ function BackgroundFX() {
         transition={reduce ? {} : { duration: 16, repeat: Infinity, ease: "easeInOut" }}
       />
 
-      {/* Mid wash (adds the “soft field” look like your screenshot) */}
       <motion.div
         className="absolute top-[18%] left-[18%] h-[720px] w-[720px] rounded-full blur-3xl"
         style={blob("rgba(211,243,176,0.85)", "rgba(211,243,176,0.00)", 0.26)}
@@ -2528,7 +2445,6 @@ function BackgroundFX() {
         transition={reduce ? {} : { duration: 18, repeat: Infinity, ease: "easeInOut" }}
       />
 
-      {/* Bottom-left tint */}
       <motion.div
         className="absolute -bottom-44 -left-40 h-[640px] w-[640px] rounded-full blur-3xl"
         style={blob("rgba(224,252,193,0.85)", "rgba(224,252,193,0.00)", 0.22)}
@@ -2536,7 +2452,6 @@ function BackgroundFX() {
         transition={reduce ? {} : { duration: 20, repeat: Infinity, ease: "easeInOut" }}
       />
 
-      {/* Subtle darker depth (kept minimal) */}
       <motion.div
         className="absolute top-[10%] right-[6%] h-[560px] w-[560px] rounded-full blur-3xl"
         style={blob("rgba(20,20,20,0.10)", "rgba(20,20,20,0.00)", 0.16)}
@@ -2544,7 +2459,6 @@ function BackgroundFX() {
         transition={reduce ? {} : { duration: 22, repeat: Infinity, ease: "easeInOut" }}
       />
 
-      {/* Dots (existing vibe) */}
       <motion.div
         className="absolute inset-0"
         style={{
@@ -2558,7 +2472,6 @@ function BackgroundFX() {
         transition={reduce ? {} : { duration: 10, repeat: Infinity, ease: "linear" }}
       />
 
-      {/* ✅ Soft grain (adds richness without “noise assets”) */}
       <div
         className="absolute inset-0"
         style={{
