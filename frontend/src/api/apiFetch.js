@@ -29,9 +29,12 @@ function joinUrl(base, path) {
 
 function getToken() {
   try {
+    // Supports rememberMe=false (sessionStorage) + common token keys
     return (
       localStorage.getItem("token") ||
+      sessionStorage.getItem("token") ||
       localStorage.getItem("checkin:token") ||
+      sessionStorage.getItem("checkin:token") ||
       ""
     );
   } catch {

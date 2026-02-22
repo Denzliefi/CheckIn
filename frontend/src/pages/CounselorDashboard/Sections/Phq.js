@@ -1,13 +1,15 @@
 // components/CounselorPHQ9.jsx
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+import { apiFetch } from "../../../api/apiFetch";
 
 /**
- * Counselor PHQ-9 (Frontend-only)
- * Updates:
- * - Custom Course dropdown (full text, wraps, responsive; no overlap)
- * - Sample first-time students with no submissions -> "No Submission"
- * - Modal Close moved to top-right corner (button text, not "×")
+ * Counselor PHQ-9 (DB-backed)
+ * - Student list:     GET /api/assessments/phq9/students
+ * - Student history:  GET /api/assessments/phq9/student/:userId
+ * - Calendar by date: GET /api/assessments/phq9/by-date?date=YYYY-MM-DD
+ *
+ * UI is based on your existing Phq.js (course dropdown, list, calendar, modal, pagination).
  */
 
 const COURSES = [
@@ -28,7 +30,6 @@ const COURSES = [
 ];
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-const WEEK_MS = 7 * DAY_MS;
 const MONTH_MS = 30 * DAY_MS;
 
 const PAGE_SIZE = 5;
@@ -92,19 +93,11 @@ function formatDateShort(ms) {
   }
 }
 
-function formatLastSubmitted(ms, submissions, variant = "short") {
+function formatLastSubmitted(ms, variant = "short") {
   if (ms && typeof ms === "number") {
     return variant === "word" ? formatDateWord(ms) : formatDateShort(ms);
   }
-  const isFirstTime = !Array.isArray(submissions) || submissions.length === 0;
-  return isFirstTime ? "No Submission" : "—";
-}
-
-function severityLabelFromScore(score) {
-  if (score <= 4) return "Minimal";
-  if (score <= 9) return "Mild";
-  if (score <= 14) return "Moderate";
-  return "Moderately High";
+  return "No Submission";
 }
 
 const SEVERITY_STYLES = {
@@ -112,108 +105,8 @@ const SEVERITY_STYLES = {
   Mild: { pill: "border-emerald-200 bg-emerald-50 text-emerald-700", dot: "bg-emerald-500" },
   Moderate: { pill: "border-amber-200 bg-amber-50 text-amber-700", dot: "bg-amber-500" },
   "Moderately High": { pill: "border-rose-200 bg-rose-50 text-rose-700", dot: "bg-rose-500" },
+  High: { pill: "border-red-200 bg-red-50 text-red-700", dot: "bg-red-500" },
 };
-
-function mulberry32(seed) {
-  let a = seed >>> 0;
-  return function rng() {
-    a |= 0;
-    a = (a + 0x6d2b79f5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-function pick(rng, arr) {
-  return arr[Math.floor(rng() * arr.length)];
-}
-
-function makeName(rng) {
-  const first = [
-    "Ava",
-    "Liam",
-    "Noah",
-    "Emma",
-    "Olivia",
-    "Sophia",
-    "Mia",
-    "Isabella",
-    "Ethan",
-    "Lucas",
-    "Mason",
-    "Logan",
-    "Elijah",
-    "James",
-    "Benjamin",
-    "Amelia",
-    "Harper",
-    "Evelyn",
-    "Abigail",
-    "Ella",
-    "Aiden",
-    "Jayden",
-    "Gabriel",
-    "Carter",
-    "Michael",
-    "Daniel",
-    "Hannah",
-    "Grace",
-    "Chloe",
-    "Luna",
-  ];
-  const last = [
-    "Santos",
-    "Reyes",
-    "Cruz",
-    "Garcia",
-    "Torres",
-    "Ramos",
-    "Mendoza",
-    "Flores",
-    "Gonzales",
-    "Navarro",
-    "Castillo",
-    "Villanueva",
-    "Domingo",
-    "Aquino",
-    "Del Rosario",
-    "Bautista",
-    "De la Cruz",
-    "Rivera",
-    "Perez",
-    "Fernandez",
-    "Dela Peña",
-    "Salazar",
-    "Valdez",
-    "Morales",
-    "Ortega",
-    "Delos Santos",
-  ];
-  return `${pick(rng, first)} ${pick(rng, last)}`;
-}
-
-function makeWeeklySubmissions(rng, nowMs, weeksBack = 16) {
-  const subs = [];
-  const today = startOfDay(nowMs);
-
-  for (let w = 0; w < weeksBack; w++) {
-    const weekAnchor = today - w * WEEK_MS;
-    const offsetDays = Math.floor(rng() * 7);
-    const submittedAt = weekAnchor - offsetDays * DAY_MS;
-
-    const score = Math.floor(rng() * 28);
-    subs.push({
-      id: `sub_w${w}_${Math.floor(rng() * 1e9)}`,
-      submittedAt,
-      score,
-      severityLabel: severityLabelFromScore(score),
-    });
-  }
-
-  subs.sort((a, b) => b.submittedAt - a.submittedAt);
-  return subs;
-}
 
 function getPageItems(currentPage, totalPages) {
   if (totalPages <= 7) return Array.from({ length: totalPages }, (_, i) => i + 1);
@@ -350,7 +243,7 @@ function SeverityPill({ label }) {
 }
 
 function Legend() {
-  const labels = [];
+  const labels = ["Minimal", "Mild", "Moderate", "Moderately High", "High"];
   return (
     <div className="flex flex-wrap items-center gap-2 text-[11px] sm:text-xs">
       {labels.map((x) => (
@@ -387,8 +280,6 @@ function Segmented({ value, onChange }) {
     </div>
   );
 }
-// Replace ONLY the CourseDropdown() with this version
-// Replace ONLY the CourseDropdown() with this version
 
 function CourseDropdown({ value, onChange, courses }) {
   const reduce = useReducedMotion();
@@ -428,9 +319,7 @@ function CourseDropdown({ value, onChange, courses }) {
     "w-full text-left px-4 py-3 font-extrabold text-[14px] sm:text-base whitespace-normal break-words leading-snug";
 
   return (
-   <div ref={rootRef} className="relative w-full min-w-0">
-
-    
+    <div ref={rootRef} className="relative w-full min-w-0">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
@@ -508,7 +397,6 @@ function CourseDropdown({ value, onChange, courses }) {
   );
 }
 
-
 function Modal({ open, title, onClose, children }) {
   const reduce = useReducedMotion();
   const panelRef = useRef(null);
@@ -583,7 +471,7 @@ function StudentCard({ student, onOpen }) {
   return (
     <button
       type="button"
-      onClick={() => onOpen(student.id)}
+      onClick={() => onOpen(student)}
       className={cn(
         "w-full text-left bg-white border border-slate-200 shadow-sm transition",
         "rounded-2xl",
@@ -597,6 +485,11 @@ function StudentCard({ student, onOpen }) {
           <div className="font-black text-slate-900 text-[15px] sm:text-[16px] leading-snug truncate">
             {student.fullName}
           </div>
+          {!!student.studentNumber && (
+            <div className="text-[11px] sm:text-[12px] font-extrabold text-slate-500 mt-1 truncate">
+              {student.studentNumber}
+            </div>
+          )}
         </div>
         <div className="shrink-0 pt-0.5">
           <SeverityPill label={student.latestSeverity ?? "—"} />
@@ -604,14 +497,14 @@ function StudentCard({ student, onOpen }) {
       </div>
 
       <div className="mt-2 text-[12px] sm:text-[13px] text-slate-700 leading-snug whitespace-normal break-words">
-        {student.course}
+        {student.course || "—"}
       </div>
 
       <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-[12px] sm:text-[13px] font-extrabold text-slate-700">
         <span className="inline-flex items-center gap-2 min-w-0">
           <span className="text-slate-500">Last</span>
           <span className="text-slate-900 font-black truncate">
-            {formatLastSubmitted(student.latestSubmissionAt, student.submissions, "short")}
+            {formatLastSubmitted(student.latestSubmissionAt, "short")}
           </span>
         </span>
 
@@ -644,12 +537,33 @@ function SubmissionCard({ sub }) {
   );
 }
 
-function findSubmissionOnDate(subs, dateMs) {
-  const key = startOfDay(dateMs);
-  for (const s of subs) {
-    if (startOfDay(s.submittedAt) === key) return s;
-  }
-  return null;
+function toMs(v) {
+  if (!v) return null;
+  const ms = new Date(v).getTime();
+  return Number.isFinite(ms) ? ms : null;
+}
+
+function normalizeStudentRow(x) {
+  return {
+    id: String(x.userId),
+    userId: String(x.userId),
+    fullName: x.fullName || "—",
+    email: x.email || "",
+    studentNumber: x.studentNumber || "",
+    course: x.course || "",
+    latestSubmissionAt: toMs(x.lastSubmittedAt),
+    latestScore: typeof x.score === "number" ? x.score : null,
+    latestSeverity: x.severity || null,
+  };
+}
+
+function normalizeSubmission(a) {
+  return {
+    id: String(a._id),
+    submittedAt: toMs(a.createdAt || a.clientSubmittedAt || a.updatedAt) || 0,
+    score: typeof a.score === "number" ? a.score : 0,
+    severityLabel: a.severity || "—",
+  };
 }
 
 export default function CounselorPHQ9() {
@@ -657,67 +571,84 @@ export default function CounselorPHQ9() {
   const nowMs = useMemo(() => Date.now(), []);
   const todayMs = useMemo(() => startOfDay(nowMs), [nowMs]);
 
-  const dataset = useMemo(() => {
-    const students = [];
-    const baseSeed = 202610;
-    const TOTAL_STUDENTS = 50;
-
-    for (let i = 0; i < TOTAL_STUDENTS; i++) {
-      const courseIndex = i % COURSES.length;
-      const rng = mulberry32(baseSeed + courseIndex * 1000 + i * 17);
-      const fullName = makeName(rng);
-
-      const isFirstTime = i % 8 === 0;
-      const submissions = isFirstTime ? [] : makeWeeklySubmissions(rng, nowMs, 16);
-      const latest = submissions[0] ?? null;
-
-      students.push({
-        id: `stu_${courseIndex}_${i}`,
-        fullName,
-        course: COURSES[courseIndex],
-        submissions,
-        latestSubmissionAt: latest?.submittedAt ?? null,
-        latestScore: latest?.score ?? null,
-        latestSeverity: latest?.severityLabel ?? null,
-      });
-    }
-
-    return students;
-  }, [nowMs]);
-
   const [view, setView] = useState("LIST");
   const [courseFilter, setCourseFilter] = useState("ALL");
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
 
+  const [students, setStudents] = useState([]);
+  const [loadingStudents, setLoadingStudents] = useState(true);
+  const [studentsError, setStudentsError] = useState("");
+
+  // modal
   const [selectedId, setSelectedId] = useState(null);
+  const [selectedMeta, setSelectedMeta] = useState(null);
   const [modalRange, setModalRange] = useState("30D");
   const [modalPage, setModalPage] = useState(1);
+  const [modalLoading, setModalLoading] = useState(false);
+  const [modalError, setModalError] = useState("");
+  const [history, setHistory] = useState([]);
 
+  // calendar
   const [calendarMs, setCalendarMs] = useState(todayMs);
   const [calendarPage, setCalendarPage] = useState(1);
+  const [calendarLoading, setCalendarLoading] = useState(false);
+  const [calendarError, setCalendarError] = useState("");
+  const [calendarRows, setCalendarRows] = useState([]);
 
   const calendarResultsRef = useRef(null);
   const modalScrollRef = useRef(null);
 
-  const selectedStudent = useMemo(() => dataset.find((s) => s.id === selectedId) ?? null, [dataset, selectedId]);
+  const coursesForDropdown = useMemo(() => {
+    const set = new Set();
+    for (const s of students) {
+      const c = (s?.course || "").trim();
+      if (c) set.add(c);
+    }
+    const ordered = [];
+    for (const c of COURSES) if (set.has(c)) ordered.push(c);
+    const unknown = Array.from(set).filter((c) => !COURSES.includes(c)).sort((a, b) => a.localeCompare(b));
+    return [...ordered, ...unknown];
+  }, [students]);
 
-  const weeklyOnly = useMemo(() => {
-    const weekCutoff = nowMs - WEEK_MS;
-    return dataset.filter((s) => {
-      const hasRecent = !!s.latestSubmissionAt && s.latestSubmissionAt >= weekCutoff;
-      const isFirstTime = (!s.latestSubmissionAt || s.latestSubmissionAt === null) && (s.submissions?.length ?? 0) === 0;
-      return hasRecent || isFirstTime;
-    });
-  }, [dataset, nowMs]);
+  // Initial load: students list
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        setLoadingStudents(true);
+        setStudentsError("");
+        const data = await apiFetch("/api/assessments/phq9/students?limit=2000");
+        const items = Array.isArray(data?.items) ? data.items : [];
+        const mapped = items.map(normalizeStudentRow);
+        mapped.sort((a, b) => (b.latestSubmissionAt ?? 0) - (a.latestSubmissionAt ?? 0));
+        if (!mounted) return;
+        setStudents(mapped);
+      } catch (e) {
+        if (!mounted) return;
+        setStudentsError(e?.message || "Failed to load PHQ-9 student results.");
+      } finally {
+        if (!mounted) return;
+        setLoadingStudents(false);
+      }
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
+  // Filter + sort
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return weeklyOnly
+    return students
       .filter((s) => (courseFilter === "ALL" ? true : s.course === courseFilter))
-      .filter((s) => (q ? s.fullName.toLowerCase().includes(q) : true))
+      .filter((s) => {
+        if (!q) return true;
+        const hay = `${s.fullName} ${s.email} ${s.studentNumber}`.toLowerCase();
+        return hay.includes(q);
+      })
       .sort((a, b) => (b.latestSubmissionAt ?? 0) - (a.latestSubmissionAt ?? 0));
-  }, [weeklyOnly, courseFilter, query]);
+  }, [students, courseFilter, query]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const safePage = clamp(page, 1, totalPages);
@@ -731,24 +662,58 @@ export default function CounselorPHQ9() {
     setPage(1);
   }, [courseFilter, query, view]);
 
-  const openStudent = useCallback((id) => {
-    setSelectedId(id);
-    setModalRange("30D");
-    setModalPage(1);
-  }, []);
+  // Open modal: fetch history
+  const openStudent = useCallback(
+    async (studentOrId) => {
+      const id =
+        typeof studentOrId === "string"
+          ? studentOrId
+          : String(studentOrId?.id || studentOrId?.userId || "");
+      if (!id) return;
+
+      const meta =
+        typeof studentOrId === "object" && studentOrId
+          ? studentOrId
+          : students.find((s) => s.id === id) || calendarRows.find((s) => s.id === id) || null;
+
+      setSelectedId(id);
+      setSelectedMeta(meta);
+      setModalRange("30D");
+      setModalPage(1);
+      setHistory([]);
+      setModalError("");
+      setModalLoading(true);
+
+      try {
+        const data = await apiFetch(`/api/assessments/phq9/student/${id}?limit=500`);
+        const items = Array.isArray(data?.items) ? data.items : [];
+        const subs = items.map(normalizeSubmission).sort((a, b) => (b.submittedAt ?? 0) - (a.submittedAt ?? 0));
+        setHistory(subs);
+      } catch (e) {
+        setModalError(e?.message || "Failed to load PHQ-9 history.");
+      } finally {
+        setModalLoading(false);
+      }
+    },
+    [students, calendarRows]
+  );
 
   const closeModal = useCallback(() => {
     setSelectedId(null);
+    setSelectedMeta(null);
     setModalPage(1);
+    setModalRange("30D");
+    setHistory([]);
+    setModalError("");
+    setModalLoading(false);
   }, []);
 
   const modalSubmissions = useMemo(() => {
-    if (!selectedStudent) return [];
-    const subs = selectedStudent.submissions ?? [];
+    const subs = history || [];
     if (modalRange === "ALL") return subs;
-    const cutoff = nowMs - MONTH_MS;
-    return subs.filter((x) => x.submittedAt >= cutoff);
-  }, [selectedStudent, modalRange, nowMs]);
+    const cutoff = Date.now() - MONTH_MS;
+    return subs.filter((x) => (x.submittedAt ?? 0) >= cutoff);
+  }, [history, modalRange]);
 
   const modalTotalPages = Math.max(1, Math.ceil(modalSubmissions.length / MODAL_PAGE_SIZE));
   const safeModalPage = clamp(modalPage, 1, modalTotalPages);
@@ -763,36 +728,65 @@ export default function CounselorPHQ9() {
   }, [modalRange, selectedId]);
 
   useEffect(() => {
-    if (modalPage > modalTotalPages) setModalPage(1);
-  }, [modalPage, modalTotalPages]);
-
-  useEffect(() => {
-    if (!selectedStudent) return;
+    if (!selectedId) return;
     const el = modalScrollRef.current;
     if (!el) return;
     el.scrollTo({ top: 0, behavior: reduce ? "auto" : "smooth" });
-  }, [selectedStudent, modalRange, safeModalPage, reduce]);
+  }, [selectedId, modalRange, safeModalPage, reduce]);
 
+  // Calendar fetch
   const calendarValue = useMemo(() => toDateInputValue(calendarMs), [calendarMs]);
 
-  const calendarFilled = useMemo(() => {
-    const rows = [];
-    for (const s of filtered) {
-      const sub = findSubmissionOnDate(s.submissions ?? [], calendarMs);
-      if (!sub) continue;
-      rows.push({ student: s, sub });
-    }
-    rows.sort((a, b) => (b.sub.score ?? 0) - (a.sub.score ?? 0));
-    return rows;
-  }, [filtered, calendarMs]);
+  useEffect(() => {
+    let mounted = true;
 
-  const calendarTotalPages = Math.max(1, Math.ceil(calendarFilled.length / CAL_PAGE_SIZE));
+    const run = async () => {
+      if (view !== "CAL") return;
+      setCalendarLoading(true);
+      setCalendarError("");
+
+      try {
+        const date = toDateInputValue(calendarMs);
+        const data = await apiFetch(`/api/assessments/phq9/by-date?date=${encodeURIComponent(date)}&limit=2000`);
+        const items = Array.isArray(data?.items) ? data.items : [];
+        const mapped = items.map(normalizeStudentRow);
+        mapped.sort((a, b) => (b.latestScore ?? 0) - (a.latestScore ?? 0));
+        if (!mounted) return;
+        setCalendarRows(mapped);
+      } catch (e) {
+        if (!mounted) return;
+        setCalendarError(e?.message || "Failed to load submissions for that date.");
+        setCalendarRows([]);
+      } finally {
+        if (!mounted) return;
+        setCalendarLoading(false);
+      }
+    };
+
+    run();
+    return () => {
+      mounted = false;
+    };
+  }, [view, calendarMs]);
+
+  const calendarFiltered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return calendarRows
+      .filter((s) => (courseFilter === "ALL" ? true : s.course === courseFilter))
+      .filter((s) => {
+        if (!q) return true;
+        const hay = `${s.fullName} ${s.email} ${s.studentNumber}`.toLowerCase();
+        return hay.includes(q);
+      });
+  }, [calendarRows, courseFilter, query]);
+
+  const calendarTotalPages = Math.max(1, Math.ceil(calendarFiltered.length / CAL_PAGE_SIZE));
   const safeCalendarPage = clamp(calendarPage, 1, calendarTotalPages);
 
   const calendarPagedRows = useMemo(() => {
     const start = (safeCalendarPage - 1) * CAL_PAGE_SIZE;
-    return calendarFilled.slice(start, start + CAL_PAGE_SIZE);
-  }, [calendarFilled, safeCalendarPage]);
+    return calendarFiltered.slice(start, start + CAL_PAGE_SIZE);
+  }, [calendarFiltered, safeCalendarPage]);
 
   useEffect(() => {
     setCalendarPage(1);
@@ -804,6 +798,26 @@ export default function CounselorPHQ9() {
     calendarResultsRef.current?.scrollIntoView?.({ behavior: "smooth", block: "start" });
   }, [view, safeCalendarPage, calendarMs, reduce]);
 
+  const headerStudent =
+    selectedMeta ||
+    students.find((s) => s.id === selectedId) ||
+    calendarRows.find((s) => s.id === selectedId) ||
+    null;
+
+  const selectedLatest = useMemo(() => {
+    if (headerStudent) {
+      return {
+        latestSubmissionAt: headerStudent.latestSubmissionAt ?? null,
+        latestScore: headerStudent.latestScore ?? null,
+        latestSeverity: headerStudent.latestSeverity ?? null,
+      };
+    }
+    const first = history?.[0] || null;
+    return first
+      ? { latestSubmissionAt: first.submittedAt, latestScore: first.score, latestSeverity: first.severityLabel }
+      : { latestSubmissionAt: null, latestScore: null, latestSeverity: null };
+  }, [headerStudent, history]);
+
   const sectionMotion = reduce
     ? { initial: { opacity: 1 }, animate: { opacity: 1 }, exit: { opacity: 0 } }
     : { initial: { opacity: 0, x: 28 }, animate: { opacity: 1, x: 0 }, exit: { opacity: 0, x: -28 } };
@@ -813,56 +827,64 @@ export default function CounselorPHQ9() {
     : { initial: { opacity: 0, x: 18 }, animate: { opacity: 1, x: 0 }, exit: { opacity: 0, x: -18 } };
 
   return (
-  <div className="w-full min-w-0 max-w-full">
-  <div className="bg-white rounded-2xl border border-slate-200 shadow-sm px-3 sm:px-6 py-4 sm:py-6 min-w-0">
-    <div className="text-[18px] sm:text-2xl font-black text-slate-900">PHQ-9</div>
-    <div className="mt-3 text-base sm:text-lg font-extrabold text-slate-600">
-      Students with PHQ-9 submissions
-    </div>
-
-    {/* Controls row */}
-    <div className="mt-3 sm:mt-4 flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between min-w-0">
-      <div className="hidden sm:flex items-center gap-3 flex-wrap min-w-0">
-        <Legend />
-      </div>
-
-      <div className="flex flex-col sm:flex-row sm:flex-wrap gap-2 w-full lg:w-auto min-w-0">
-        <div className="w-full sm:w-auto shrink-0">
-          <Segmented value={view} onChange={setView} />
+    <div className="w-full min-w-0 max-w-full">
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm px-3 sm:px-6 py-4 sm:py-6 min-w-0">
+        <div className="text-[18px] sm:text-2xl font-black text-slate-900">PHQ-9</div>
+        <div className="mt-3 text-base sm:text-lg font-extrabold text-slate-600">
+          Students with PHQ-9 submissions
         </div>
 
-        <div className="w-full sm:w-[360px] lg:w-[440px] shrink-0 min-w-0">
-          <CourseDropdown
-            value={courseFilter}
-            onChange={setCourseFilter}
-            courses={COURSES}
+        {studentsError ? (
+          <div className="mt-4 rounded-2xl border border-rose-200 bg-rose-50 text-rose-800 px-4 py-3 text-[13px] sm:text-sm font-extrabold">
+            {studentsError}
+          </div>
+        ) : null}
+
+        {loadingStudents ? (
+          <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 text-slate-700 px-4 py-3 text-[13px] sm:text-sm font-extrabold">
+            Loading PHQ-9 results…
+          </div>
+        ) : null}
+
+        <div className="mt-3 sm:mt-4 flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between min-w-0">
+          <div className="hidden sm:flex items-center gap-3 flex-wrap min-w-0">
+            <Legend />
+          </div>
+
+          <div className="flex flex-col sm:flex-row sm:flex-wrap gap-2 w-full lg:w-auto min-w-0">
+            <div className="w-full sm:w-auto shrink-0">
+              <Segmented value={view} onChange={setView} />
+            </div>
+
+            <div className="w-full sm:w-[360px] lg:w-[440px] shrink-0 min-w-0">
+              <CourseDropdown
+                value={courseFilter}
+                onChange={setCourseFilter}
+                courses={coursesForDropdown.length ? coursesForDropdown : COURSES}
+              />
+            </div>
+          </div>
+
+          <div className="sm:hidden">
+            <Legend />
+          </div>
+        </div>
+
+        <div className="mt-3 w-full min-w-0">
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search by name, email, student ID..."
+            className={cn(
+              "h-11 w-full rounded-2xl border bg-white font-extrabold",
+              "text-[13px] sm:text-sm",
+              "px-4 min-w-0"
+            )}
           />
         </div>
       </div>
 
-      <div className="sm:hidden">
-        <Legend />
-      </div>
-    </div>
-
-    {/* Search bar row (moved DOWN, full width) */}
-    <div className="mt-3 w-full min-w-0">
-      <input
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        placeholder="Search by name, email, student ID..."
-        className={cn(
-          "h-11 w-full rounded-2xl border bg-white font-extrabold",
-          "text-[13px] sm:text-sm",
-          "px-4 min-w-0"
-        )}
-      />
-    </div>
-  </div>
-
-  <div className="h-3 sm:h-4" />
-
-
+      <div className="h-3 sm:h-4" />
 
       <AnimatePresence mode="wait">
         <motion.div
@@ -883,7 +905,7 @@ export default function CounselorPHQ9() {
 
               <AnimatePresence mode="wait">
                 <motion.div
-                  key={`${safePage}_${courseFilter}_${query}`}
+                  key={`${safePage}_${courseFilter}_${query}_${students.length}`}
                   initial={listContentMotion.initial}
                   animate={listContentMotion.animate}
                   exit={listContentMotion.exit}
@@ -910,8 +932,7 @@ export default function CounselorPHQ9() {
 
                   <div className="hidden sm:flex flex-col flex-1 min-w-0">
                     <div className="overflow-x-auto flex-1">
-  <table className="min-w-[1200px] w-full text-sm">
-
+                      <table className="min-w-[1200px] w-full text-sm">
                         <thead className="bg-slate-50 border-b">
                           <tr className="text-left">
                             <th className="px-4 py-3 font-black text-slate-700">Student</th>
@@ -934,12 +955,17 @@ export default function CounselorPHQ9() {
                               <tr
                                 key={s.id}
                                 className="hover:bg-slate-50 active:bg-slate-100 cursor-pointer transition"
-                                onClick={() => openStudent(s.id)}
+                                onClick={() => openStudent(s)}
                               >
-                                <td className="px-4 py-3 font-black text-slate-900">{s.fullName}</td>
-                                <td className="px-4 py-3 text-slate-700">{s.course}</td>
+                                <td className="px-4 py-3">
+                                  <div className="font-black text-slate-900">{s.fullName}</div>
+                                  {!!s.studentNumber && (
+                                    <div className="text-[12px] font-extrabold text-slate-500 mt-0.5">{s.studentNumber}</div>
+                                  )}
+                                </td>
+                                <td className="px-4 py-3 text-slate-700">{s.course || "—"}</td>
                                 <td className="px-4 py-3 text-slate-700 whitespace-nowrap">
-                                  {formatLastSubmitted(s.latestSubmissionAt, s.submissions, "word")}
+                                  {formatLastSubmitted(s.latestSubmissionAt, "word")}
                                 </td>
                                 <td className="px-4 py-3">
                                   <SeverityPill label={s.latestSeverity ?? "—"} />
@@ -990,16 +1016,28 @@ export default function CounselorPHQ9() {
                 <div className="flex items-start sm:items-center justify-between gap-3 flex-wrap min-w-0">
                   <div className="text-[11px] sm:text-sm font-black text-slate-800 break-words min-w-0">
                     Filled up on <span className="text-slate-900">{formatDateWord(calendarMs)}</span>{" "}
-                    <span className="text-slate-500 font-extrabold">({calendarFilled.length})</span>
+                    <span className="text-slate-500 font-extrabold">({calendarFiltered.length})</span>
                   </div>
                   <div className="text-[11px] sm:text-xs font-extrabold text-slate-500">
                     Tap a student to view all submissions
                   </div>
                 </div>
 
+                {calendarError ? (
+                  <div className="mt-4 rounded-2xl border border-rose-200 bg-rose-50 text-rose-800 px-4 py-3 text-[13px] sm:text-sm font-extrabold">
+                    {calendarError}
+                  </div>
+                ) : null}
+
+                {calendarLoading ? (
+                  <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 text-slate-700 px-4 py-3 text-[13px] sm:text-sm font-extrabold">
+                    Loading submissions…
+                  </div>
+                ) : null}
+
                 <AnimatePresence mode="wait">
                   <motion.div
-                    key={`cal_${calendarMs}_${safeCalendarPage}`}
+                    key={`cal_${calendarMs}_${safeCalendarPage}_${calendarRows.length}`}
                     initial={reduce ? { opacity: 1 } : { opacity: 0, x: 24 }}
                     animate={reduce ? { opacity: 1 } : { opacity: 1, x: 0 }}
                     exit={reduce ? { opacity: 0 } : { opacity: 0, x: -24 }}
@@ -1013,17 +1051,8 @@ export default function CounselorPHQ9() {
                         </div>
                       ) : (
                         <div className="grid gap-3 min-w-0">
-                          {calendarPagedRows.map(({ student, sub }) => (
-                            <StudentCard
-                              key={`${student.id}_${sub.id}`}
-                              student={{
-                                ...student,
-                                latestSubmissionAt: sub.submittedAt,
-                                latestScore: sub.score,
-                                latestSeverity: sub.severityLabel,
-                              }}
-                              onOpen={openStudent}
-                            />
+                          {calendarPagedRows.map((s) => (
+                            <StudentCard key={`${s.id}_${s.latestSubmissionAt || "none"}`} student={s} onOpen={openStudent} />
                           ))}
                         </div>
                       )}
@@ -1054,22 +1083,27 @@ export default function CounselorPHQ9() {
                                   </td>
                                 </tr>
                               ) : (
-                                calendarPagedRows.map(({ student, sub }) => (
+                                calendarPagedRows.map((s) => (
                                   <tr
-                                    key={`${student.id}_${sub.id}`}
+                                    key={`${s.id}_${s.latestSubmissionAt || "none"}`}
                                     className="hover:bg-slate-50 active:bg-slate-100 cursor-pointer transition"
-                                    onClick={() => openStudent(student.id)}
+                                    onClick={() => openStudent(s)}
                                   >
-                                    <td className="px-4 py-3 font-black text-slate-900">{student.fullName}</td>
-                                    <td className="px-4 py-3 text-slate-700">{student.course}</td>
+                                    <td className="px-4 py-3">
+                                      <div className="font-black text-slate-900">{s.fullName}</div>
+                                      {!!s.studentNumber && (
+                                        <div className="text-[12px] font-extrabold text-slate-500 mt-0.5">{s.studentNumber}</div>
+                                      )}
+                                    </td>
+                                    <td className="px-4 py-3 text-slate-700">{s.course || "—"}</td>
                                     <td className="px-4 py-3 text-slate-700 whitespace-nowrap">
-                                      {formatDateWord(sub.submittedAt)}
+                                      {formatDateWord(s.latestSubmissionAt)}
                                     </td>
                                     <td className="px-4 py-3">
-                                      <SeverityPill label={sub.severityLabel} />
+                                      <SeverityPill label={s.latestSeverity ?? "—"} />
                                     </td>
                                     <td className="px-4 py-3 text-right">
-                                      <span className="font-black text-slate-900 tabular-nums">{sub.score}</span>
+                                      <span className="font-black text-slate-900 tabular-nums">{s.latestScore ?? "—"}</span>
                                     </td>
                                   </tr>
                                 ))
@@ -1091,30 +1125,42 @@ export default function CounselorPHQ9() {
         </motion.div>
       </AnimatePresence>
 
-      <Modal open={!!selectedStudent} title="Student PHQ Submissions" onClose={closeModal}>
-        {selectedStudent && (
+      <Modal open={!!selectedId} title="Student PHQ Submissions" onClose={closeModal}>
+        {selectedId && (
           <div className="flex flex-col h-full sm:h-auto min-w-0">
             <div className="px-4 sm:px-6 py-4 border-b min-w-0">
               <div className="min-w-0 pr-24">
-                <div className="text-base sm:text-xl font-black text-slate-900 truncate">{selectedStudent.fullName}</div>
+                <div className="text-base sm:text-xl font-black text-slate-900 truncate">
+                  {headerStudent?.fullName || "Student"}
+                </div>
 
                 <div className="text-[12px] sm:text-sm text-slate-700 mt-2 whitespace-normal break-words">
-                  {selectedStudent.course}
+                  {headerStudent?.course || "—"}
                 </div>
 
                 <div className="mt-3 flex flex-wrap items-center gap-2">
-                  <SeverityPill label={selectedStudent.latestSeverity ?? "—"} />
+                  <SeverityPill label={selectedLatest.latestSeverity ?? "—"} />
                   <div className="text-[12px] sm:text-xs font-extrabold text-slate-700">
                     Latest score:{" "}
-                    <span className="text-slate-900 font-black tabular-nums">{selectedStudent.latestScore ?? "—"}</span>
+                    <span className="text-slate-900 font-black tabular-nums">{selectedLatest.latestScore ?? "—"}</span>
                   </div>
                   <div className="text-[12px] sm:text-xs font-extrabold text-slate-600">
                     Last submitted:{" "}
-                    <span className="text-slate-900">
-                      {formatLastSubmitted(selectedStudent.latestSubmissionAt, selectedStudent.submissions, "word")}
-                    </span>
+                    <span className="text-slate-900">{formatLastSubmitted(selectedLatest.latestSubmissionAt, "word")}</span>
                   </div>
                 </div>
+
+                {modalError ? (
+                  <div className="mt-3 rounded-2xl border border-rose-200 bg-rose-50 text-rose-800 px-4 py-3 text-[12px] sm:text-sm font-extrabold">
+                    {modalError}
+                  </div>
+                ) : null}
+
+                {modalLoading ? (
+                  <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 text-slate-700 px-4 py-3 text-[12px] sm:text-sm font-extrabold">
+                    Loading history…
+                  </div>
+                ) : null}
               </div>
             </div>
 
@@ -1146,14 +1192,14 @@ export default function CounselorPHQ9() {
             </div>
 
             <div ref={modalScrollRef} className="px-4 sm:px-6 py-4 overflow-auto flex-1 min-w-0 bg-slate-50">
-              {modalSubmissions.length === 0 ? (
+              {!modalLoading && modalSubmissions.length === 0 ? (
                 <div className="py-10 text-center text-slate-500 font-extrabold text-[13px]">
                   No PHQ submissions in this range.
                 </div>
               ) : (
                 <AnimatePresence mode="wait">
                   <motion.div
-                    key={`${modalRange}_${safeModalPage}`}
+                    key={`${modalRange}_${safeModalPage}_${modalSubmissions.length}`}
                     initial={reduce ? { opacity: 1 } : { opacity: 0, x: 24 }}
                     animate={reduce ? { opacity: 1 } : { opacity: 1, x: 0 }}
                     exit={reduce ? { opacity: 0 } : { opacity: 0, x: -24 }}

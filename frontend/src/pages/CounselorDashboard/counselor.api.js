@@ -1,3 +1,5 @@
+import { apiFetch } from "../../api/apiFetch";
+
 // src/pages/CounselorDashboard/counselor.api.js
 /**
  * Counselor Dashboard API (STATIC for now)
@@ -426,9 +428,18 @@ export function verifyCounselorPassword2(input) {
 }
 
 /* ===================== STUDENT ACCOUNTS ===================== */
-export function getStudentAccounts() {
+export async function getStudentAccounts() {
+  // Real DB (preferred)
+  try {
+    const data = await apiFetch("/api/users/students?limit=2000");
+    if (Array.isArray(data?.items)) return data.items;
+    if (Array.isArray(data)) return data;
+  } catch {
+    // fallback to static
+  }
   return loadStudents();
 }
+
 
 export function deleteStudentAccountByEmail(email) {
   const list = loadStudents();
@@ -491,4 +502,19 @@ export function retrieveStudentAccount({
   });
 
   return { ok: true };
+}
+
+/**
+ * Update a student (Counselor/Admin).
+ * Server verifies counselor password against the logged-in counselor's hashed password.
+ */
+export async function updateStudentAccount({ userId, patch, counselorPassword } = {}) {
+  if (!userId) throw new Error("Missing student id");
+  const body = { ...(patch || {}), counselorPassword: String(counselorPassword || "") };
+
+  return apiFetch(`/api/users/students/${encodeURIComponent(String(userId))}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
 }

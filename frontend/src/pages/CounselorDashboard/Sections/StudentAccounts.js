@@ -1,7 +1,7 @@
 // src/pages/CounselorDashboard/Sections/StudentAccounts.jsx
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { getStudentAccounts } from "../counselor.api";
+import { getStudentAccounts, updateStudentAccount } from "../counselor.api";
 
 /* ===================== THEME ===================== */
 const THEME = {
@@ -26,8 +26,7 @@ const PAGE_SIZE = 5;
  * - CRA: REACT_APP_COUNSELOR_PASSWORD
  * - If not set, UI requires non-empty password (no exact match check).
  */
-const COUNSELOR_PASSWORD =
-  (typeof process !== "undefined" && process?.env?.REACT_APP_COUNSELOR_PASSWORD) || "";
+const COUNSELOR_PASSWORD = ""; // ✅ server-side verification now (unused)
 
 /* ===================== DROPDOWN OPTIONS ===================== */
 const COURSE_OPTIONS = [
@@ -47,14 +46,7 @@ const COURSE_OPTIONS = [
   "Bachelor of Arts in Political Science",
 ];
 
-const CAMPUS_OPTIONS = [
-  "Legarda Campus (Manila)",
-  "Pasay Campus",
-  "Jose Abad Santos Campus (Pasay)",
-  "Andres Bonifacio Campus (Pasig)",
-  "Apolinario Mabini Campus (Quezon City)",
-  "Elisa Esguerra Campus (Malabon)",
-];
+const CAMPUS_OPTIONS = []; // ✅ removed from Student Accounts UI
 
 const PROFILE_SECTIONS = [
   {
@@ -69,11 +61,10 @@ const PROFILE_SECTIONS = [
   },
   {
     title: "Academic Info",
-    subtitle: "Campus & program",
+    subtitle: "Program",
     items: [
-      { label: "Campus", key: "campus", options: CAMPUS_OPTIONS, kind: "select" },
       { label: "Course", key: "course", options: COURSE_OPTIONS, kind: "select" },
-      { label: "Created At", key: "createdMonth", breakAll: true, inputType: "text", autoComplete: "off", readOnly: false },
+      { label: "Created At", key: "createdMonth", breakAll: true, inputType: "text", autoComplete: "off", readOnly: true },
     ],
   },
 ];
@@ -748,7 +739,6 @@ function CounselorPasswordModal({ open, busy, error, password, setPassword, onCa
       aria-label="Confirm counselor password"
       onPointerDown={(e) => e.stopPropagation()}
     >
-      <div className={cx("h-1.5", THEME.primaryBg)} aria-hidden="true" />
       <div className="px-4 sm:px-6 py-5">
         <div className="text-base sm:text-lg font-semibold text-slate-900">Confirm Changes</div>
         <div className="mt-1 text-sm font-medium text-slate-600">Enter counselor password to save the edited profile.</div>
@@ -800,6 +790,168 @@ function CounselorPasswordModal({ open, busy, error, password, setPassword, onCa
   return createPortal(
     <div className="fixed inset-0 z-[9999]" role="presentation">
       <button type="button" className="absolute inset-0 bg-black/40" aria-label="Close" onClick={onCancel} />
+      <div
+        className={cx(
+          "absolute inset-0 flex justify-center pointer-events-none",
+          isMobile ? "items-end p-0" : "items-center p-6"
+        )}
+      >
+        {isMobile ? (
+          <div className="pointer-events-auto w-full max-w-[640px] rounded-t-3xl overflow-hidden">{card}</div>
+        ) : (
+          card
+        )}
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+/* ===================== CONFIRM CHANGES MODAL ===================== */
+function ConfirmChangesModal({ open, busy, error, summaryLines, onCancel, onConfirm }) {
+  const isMobile = useIsMobile();
+  useLockBodyScroll(open);
+
+  if (!open || typeof document === "undefined") return null;
+
+  const card = (
+    <div
+      className={cx(
+        "pointer-events-auto bg-white shadow-2xl border border-slate-200",
+        "w-full sm:w-[560px]",
+        "rounded-2xl",
+        "overflow-hidden"
+      )}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Confirm changes"
+      onPointerDown={(e) => e.stopPropagation()}
+    >
+      <div className="px-4 sm:px-6 py-5">
+        <div className="text-base sm:text-lg font-semibold text-slate-900">Are you sure?</div>
+        <div className="mt-1 text-sm font-medium text-slate-600">
+          Please confirm you want to apply these changes to the student account.
+        </div>
+
+        <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+          {Array.isArray(summaryLines) && summaryLines.length ? (
+            <ul className="list-disc pl-5 space-y-1 text-sm font-medium text-slate-700">
+              {summaryLines.map((line, i) => (
+                <li key={i} className="break-words">{line}</li>
+              ))}
+            </ul>
+          ) : (
+            <div className="text-sm font-medium text-slate-700">No visible changes detected.</div>
+          )}
+        </div>
+
+        {error ? <div className="mt-3 text-sm font-medium text-red-600">{error}</div> : null}
+
+        <div className="mt-6 flex flex-col sm:flex-row justify-end gap-2">
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={busy}
+            className="order-2 sm:order-1 h-11 px-4 rounded-xl text-sm font-medium border border-slate-200 bg-white hover:bg-slate-50 disabled:opacity-60 transition-all outline-none focus:outline-none focus:ring-0 touch-manipulation"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={busy}
+            className={cx(
+              "order-1 sm:order-2 h-11 px-4 rounded-xl text-sm font-medium transition-all disabled:opacity-60",
+              "outline-none focus:outline-none focus:ring-0 touch-manipulation",
+              THEME.primaryBg,
+              THEME.primaryText,
+              THEME.primaryHover
+            )}
+          >
+            Continue
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
+  return createPortal(
+    <div className="fixed inset-0 z-[9999]" role="presentation">
+      <button type="button" className="absolute inset-0 bg-black/40" aria-label="Close" onClick={onCancel} />
+      <div
+        className={cx(
+          "absolute inset-0 flex justify-center pointer-events-none",
+          isMobile ? "items-end p-0" : "items-center p-6"
+        )}
+      >
+        {isMobile ? (
+          <div className="pointer-events-auto w-full max-w-[640px] rounded-t-3xl overflow-hidden">{card}</div>
+        ) : (
+          card
+        )}
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+
+/* ===================== SUCCESS MODAL ===================== */
+function SuccessModal({ open, message, summaryLines, onClose }) {
+  const isMobile = useIsMobile();
+  useLockBodyScroll(open);
+
+  if (!open || typeof document === "undefined") return null;
+
+  const card = (
+    <div
+      className={cx(
+        "pointer-events-auto bg-white shadow-2xl border border-slate-200",
+        "w-full sm:w-[560px]",
+        "rounded-2xl",
+        "overflow-hidden"
+      )}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Success"
+      onPointerDown={(e) => e.stopPropagation()}
+    >
+      <div className="px-4 sm:px-6 py-5">
+        <div className="text-base sm:text-lg font-semibold text-slate-900">Success</div>
+        <div className="mt-1 text-sm font-medium text-slate-600">{message || "Changes saved."}</div>
+
+        {Array.isArray(summaryLines) && summaryLines.length ? (
+          <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+            <ul className="list-disc pl-5 space-y-1 text-sm font-medium text-slate-700">
+              {summaryLines.map((line, i) => (
+                <li key={i} className="break-words">{line}</li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+
+        <div className="mt-6 flex flex-col sm:flex-row justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className={cx(
+              "h-11 px-4 rounded-xl text-sm font-medium transition-all",
+              "outline-none focus:outline-none focus:ring-0 touch-manipulation",
+              THEME.primaryBg,
+              THEME.primaryText,
+              THEME.primaryHover
+            )}
+          >
+            OK
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
+  return createPortal(
+    <div className="fixed inset-0 z-[9999]" role="presentation">
+      <button type="button" className="absolute inset-0 bg-black/40" aria-label="Close" onClick={onClose} />
       <div
         className={cx(
           "absolute inset-0 flex justify-center pointer-events-none",
@@ -1038,25 +1190,24 @@ function EditProfileBottomSheet({ open, student, draft, setDraft, saving, error,
 /* ===================== MAPPERS ===================== */
 function mapStudentToProfile(s) {
   return {
+    userId: s?.userId ?? s?._id ?? "",
     firstName: s?.firstName ?? "",
     lastName: s?.lastName ?? "",
     studentId: s?.studentId ?? s?.studentNumber ?? "",
     email: s?.email ?? "",
-    campus: s?.campus ?? "",
     course: s?.course ?? "",
+    // display only
     createdMonth: s?.createdMonth ?? "",
   };
 }
 
 function mapProfileToPatch(p) {
   return {
-    firstName: p?.firstName ?? "",
-    lastName: p?.lastName ?? "",
-    studentId: p?.studentId ?? "",
-    email: p?.email ?? "",
-    campus: p?.campus ?? "",
-    course: p?.course ?? "",
-    createdMonth: p?.createdMonth ?? "",
+    firstName: String(p?.firstName ?? "").trim(),
+    lastName: String(p?.lastName ?? "").trim(),
+    email: String(p?.email ?? "").trim(),
+    studentNumber: String(p?.studentId ?? "").trim(),
+    course: String(p?.course ?? "").trim(),
   };
 }
 
@@ -1088,7 +1239,6 @@ function generateDevSeedStudents(count = 20, startMonth = "2026-01") {
       createdMonth,
       firstName: "Seed",
       lastName: `Student ${i}`,
-      campus: CAMPUS_OPTIONS[(i - 1) % CAMPUS_OPTIONS.length],
       course: COURSE_OPTIONS[(i - 1) % COURSE_OPTIONS.length],
     });
   }
@@ -1182,6 +1332,10 @@ export default function StudentAccounts() {
   const [page, setPage] = useState(1);
   const [isLoadingStudents, setIsLoadingStudents] = useState(false);
 
+const [successOpen, setSuccessOpen] = useState(false);
+const [successMessage, setSuccessMessage] = useState("");
+const [successLines, setSuccessLines] = useState([]);
+
   const prevPageRef = useRef(1);
   const [pageAnim, setPageAnim] = useState("");
   const pageAnimTimerRef = useRef(null);
@@ -1206,6 +1360,9 @@ export default function StudentAccounts() {
   const [pwValue, setPwValue] = useState("");
   const [pwError, setPwError] = useState("");
   const [pendingSave, setPendingSave] = useState(null);
+
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [confirmError, setConfirmError] = useState("");
 
   const loadStudents = useCallback(async () => {
     setIsLoadingStudents(true);
@@ -1236,7 +1393,6 @@ export default function StudentAccounts() {
         s?.lastName,
         s?.studentId,
         s?.studentNumber,
-        s?.campus,
         s?.course,
         s?.createdMonth,
       ]
@@ -1306,10 +1462,13 @@ export default function StudentAccounts() {
     setEditError("");
     setEditSaving(false);
 
+    setConfirmOpen(false);
+
     setPwOpen(false);
     setPwValue("");
     setPwError("");
     setPendingSave(null);
+    setConfirmError("");
 
     // BUG GUARD: restore search query (prevents browser autofill/history from changing it during edit)
     setQ(qBeforeEditRef.current || "");
@@ -1317,18 +1476,20 @@ export default function StudentAccounts() {
 
   const closePassword = () => {
     if (editSaving) return;
+    setConfirmOpen(false);
+
     setPwOpen(false);
     setPwValue("");
     setPwError("");
     setPendingSave(null);
+    setConfirmError("");
   };
 
   const validateCounselorPassword = (value) => {
-    const v = String(value || "");
-    if (!v.trim()) return "Password is required.";
-    if (COUNSELOR_PASSWORD && v !== COUNSELOR_PASSWORD) return "Incorrect counselor password.";
-    return "";
-  };
+  const v = String(value || "");
+  if (!v.trim()) return "Password is required.";
+  return "";
+};
 
   const validateEditDraft = useCallback(
     (draft, currentStudent) => {
@@ -1352,71 +1513,122 @@ export default function StudentAccounts() {
     },
     [students]
   );
+const buildChangeSummary = (draft, original) => {
+  const lines = [];
+  if (!draft || !original) return lines;
 
-  const performSaveEdit = async ({ oldEmail, patch, counselorPassword }) => {
-    if (editSaving) return;
-    setEditSaving(true);
-    setEditError("");
+  const pairs = [
+    ["First Name", String(original.firstName || ""), String(draft.firstName || "")],
+    ["Last Name", String(original.lastName || ""), String(draft.lastName || "")],
+    ["Student ID", String(original.studentId || original.studentNumber || ""), String(draft.studentId || "")],
+    ["Email", String(original.email || ""), String(draft.email || "")],
+    ["Course", String(original.course || ""), String(draft.course || "")],
+  ];
 
-    try {
-      setStudents((prev) => updateStudentByEmail(prev, oldEmail, patch));
+  for (const [label, from, to] of pairs) {
+    if (from.trim() !== to.trim()) lines.push(`${label}: "${from || "—"}" → "${to || "—"}"`);
+  }
+  return lines;
+};
 
-      // eslint-disable-next-line no-console
-      console.log("SAVE PATCH (wire to API):", {
-        counselorPasswordProvided: Boolean(counselorPassword),
-        studentEmail: normalizeEmail(oldEmail),
-        nextEmail: normalizeEmail(patch?.email),
-        patch,
+
+  const performSaveEdit = async ({ userId, patch, counselorPassword }) => {
+  if (editSaving) return;
+  setEditSaving(true);
+  setEditError("");
+try {
+    const data = await updateStudentAccount({ userId, patch, counselorPassword });
+    const updated = data?.item || null;
+    if (!updated) throw new Error("Update failed.");
+
+    setStudents((prev) => {
+      const idKey = String(userId || "");
+      const next = (prev || []).map((s) => {
+        const sid = String(s?.userId || s?._id || "");
+        if (idKey && sid && sid === idKey) return { ...(s || {}), ...(updated || {}) };
+        return s;
       });
+      return next;
+    });
+closeEdit();
+  } catch (e) {
+    const msg = e?.message || "Update failed. Please try again.";
+    setEditError(msg);
+} finally {
+    setEditSaving(false);
+  }
+};
 
-      closeEdit();
-    } catch {
-      setEditError("Update failed. Please try again.");
-    } finally {
-      setEditSaving(false);
-    }
-  };
+const requestSaveEdit = () => {
+  if (editSaving) return;
+  setEditError("");
+  setPwError("");
+  setConfirmError("");
 
-  const requestSaveEdit = () => {
-    if (editSaving) return;
-    setEditError("");
-    setPwError("");
+  const draftErr = validateEditDraft(editDraft, editStudent);
+  if (draftErr) {
+    setEditError(draftErr);
+    return;
+  }
 
-    const draftErr = validateEditDraft(editDraft, editStudent);
-    if (draftErr) {
-      setEditError(draftErr);
-      return;
-    }
+  const patch = mapProfileToPatch(editDraft);
+  const userId = editStudent?.userId || editStudent?._id || editDraft?.userId;
 
-    const patch = mapProfileToPatch(editDraft);
-    const oldEmail = editStudent?.email;
+  setPendingSave({ userId, patch });
+  setConfirmOpen(true);
+};
 
-    setPendingSave({ oldEmail, patch });
-    setPwOpen(true);
-  };
+const confirmPasswordAndSave = async () => {
+  const err = validateCounselorPassword(pwValue);
+  if (err) {
+    setPwError(err);
+    return;
+  }
 
-  const confirmPasswordAndSave = async () => {
-    const err = validateCounselorPassword(pwValue);
-    if (err) {
-      setPwError(err);
-      return;
-    }
+  const payload = pendingSave;
+  if (!payload?.userId) {
+    setPwError("Missing student reference. Please close and try again.");
+    return;
+  }
 
-    const payload = pendingSave;
-    if (!payload?.oldEmail) {
-      setPwError("Missing student reference. Please close and try again.");
-      return;
-    }
+  setPwError("");
+  setEditError("");
+  setEditSaving(true);
 
-    setPwOpen(false);
-    setPwError("");
-
-    await performSaveEdit({
-      oldEmail: payload.oldEmail,
+  try {
+    const data = await updateStudentAccount({
+      userId: payload.userId,
       patch: payload.patch,
       counselorPassword: pwValue,
     });
-  };
+
+    const updated = data?.item || null;
+    if (!updated) throw new Error("Update failed.");
+
+    setStudents((prev) => {
+      const idKey = String(payload.userId || "");
+      return (prev || []).map((s) => {
+        const sid = String(s?.userId || s?._id || "");
+        return sid && idKey && sid === idKey ? { ...(s || {}), ...(updated || {}) } : s;
+      });
+    });
+
+    // Success modal (copy Confirm Changes style)
+    setSuccessMessage(data?.message || "Student details updated successfully.");
+    setSuccessLines(buildChangeSummary(editDraft, editStudent));
+    setSuccessOpen(true);
+
+    // Close password + edit UI
+    setPwOpen(false);
+    closeEdit();
+  } catch (e) {
+    const msg = e?.message || "Update failed. Please try again.";
+    // Keep password modal open and show error there
+    setPwError(msg);
+  } finally {
+    setEditSaving(false);
+  }
+};
 
   const canSwipeNow = (eventTarget) => {
     if (!isMobile) return false;
@@ -1538,6 +1750,33 @@ export default function StudentAccounts() {
         .cc-clickable { transition: transform 140ms ease, background-color 140ms ease, box-shadow 140ms ease; }
       `}</style>
 
+<SuccessModal
+  open={successOpen}
+  message={successMessage}
+  summaryLines={successLines}
+  onClose={() => {
+    setSuccessOpen(false);
+    setSuccessMessage("");
+    setSuccessLines([]);
+  }}
+/>
+
+      <ConfirmChangesModal
+        open={confirmOpen}
+        busy={editSaving}
+        error={confirmError}
+        summaryLines={buildChangeSummary(editDraft, editStudent)}
+        onCancel={() => {
+          if (editSaving) return;
+          setConfirmOpen(false);
+          setConfirmError("");
+        }}
+        onConfirm={() => {
+          setConfirmOpen(false);
+          setPwOpen(true);
+        }}
+      />
+
       <CounselorPasswordModal
         open={pwOpen}
         busy={editSaving}
@@ -1557,14 +1796,14 @@ export default function StudentAccounts() {
         error={editError}
         onClose={closeEdit}
         onSave={requestSaveEdit}
-        lockClose={pwOpen}
+        lockClose={pwOpen || confirmOpen}
       />
 
       <section className={cx("", THEME.border, THEME.surface)}>
         <div className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-6">
           <h2 className="text-lg sm:text-2xl font-black tracking-tight text-slate-900">Student Account</h2>
           <p className="mt-1 text-sm sm:text-base font-medium text-slate-600">
-            Search by name, email, student ID, campus, course, or created month.
+            Search by name, email, student ID, course, or created month.
           </p>
         </div>
       </section>
