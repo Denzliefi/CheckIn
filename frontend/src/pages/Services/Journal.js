@@ -483,12 +483,19 @@ function IconNotes({ className = "" }) {
 function IconCoping({ className = "" }) {
   return (
     <svg viewBox="0 0 24 24" className={className} fill="none" aria-hidden="true">
-      <path d="M12 21s7-4.2 7-10a5 5 0 0 0-10 0 5 5 0 0 0-10 0c0 5.8 7 10 7 10" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
-      <path d="M8.5 11.6h7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-      <path d="M12 8.2v6.8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+      {/* Clean heart + centered plus (matches the Coping card header & step chip) */}
+      <path
+        d="M12 21s-7-4.6-9-9.2C1.3 8 3.7 5.5 6.6 5.5c1.9 0 3.4 1 4.4 2.5 1-1.5 2.5-2.5 4.4-2.5 2.9 0 5.3 2.5 3.6 6.3C19 16.4 12 21 12 21Z"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinejoin="round"
+      />
+      <path d="M12 8.8v6.2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+      <path d="M8.9 11.9h6.2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
     </svg>
   );
 }
+
 
 /** Tiny animated SVG mascot (no assets) */
 function StepMascot({ show }) {
@@ -575,6 +582,8 @@ function MobileStepButton({ label, active, done, disabled, onClick, icon: Icon }
     </button>
   );
 }
+
+
 
 /** =========================
     3D-ish EMOTE (SVG)
@@ -785,6 +794,11 @@ function MoodTracker({ series, todayKey, title = "Mood Tracker", subtitle = "Sav
   const padYTop = 30;
   const padYBottom = 30;
 
+  // Emoji marker above each saved mood point
+  const EMOJI_SIZE = compact ? 20 : 24;
+  const EMOJI_LIFT = 10; // px gap above the dot
+
+
   const shouldReduceMotion = useReducedMotion();
   const gid = useId();
   const gradId = `g1-${gid}`;
@@ -894,9 +908,27 @@ function MoodTracker({ series, todayKey, title = "Mood Tracker", subtitle = "Sav
                         transition={{ duration: shouldReduceMotion ? 0 : 0.25 }}
                       />
 
-                      <g transform={`translate(${p.x - 14}, ${p.y - 32})`}>
-                        <MoodEmote mood={p.mood} size={28} />
-                      </g>
+                      {/* Mood emoji above point */}
+                      <foreignObject
+                        x={p.x - EMOJI_SIZE / 2}
+                        y={clamp(p.y - (EMOJI_SIZE + EMOJI_LIFT), 2, h - EMOJI_SIZE - 2)}
+                        width={EMOJI_SIZE}
+                        height={EMOJI_SIZE}
+                        style={{ overflow: "visible", pointerEvents: "none" }}
+                      >
+                        <div
+                          xmlns="http://www.w3.org/1999/xhtml"
+                          style={{
+                            width: `${EMOJI_SIZE}px`,
+                            height: `${EMOJI_SIZE}px`,
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                          }}
+                        >
+                          <MoodEmote mood={p.mood} size={EMOJI_SIZE} />
+                        </div>
+                      </foreignObject>
 
                       {/* ✅ Today badge fixed + positioned above the point */}
                       {isToday && (() => {
@@ -1605,27 +1637,43 @@ export default function Journal() {
   const saveTimer = useRef(null);
 
   /** ✅ Notes are optional */
+    /** ✅ Notes and Coping are optional (but tracked) */
   const step = useMemo(() => {
     if (!termsAccepted) return "terms";
     if (dayLocked) return "save";
     if (!mood) return "mood";
     if (!reason) return "reason";
-    return "save";
-  }, [termsAccepted, dayLocked, mood, reason]);
 
-  const progress = useMemo(() => {
+    const hasNotes = (notes || "").trim().length > 0;
+    const hasCoping = Array.isArray(copingUsed) && copingUsed.length > 0;
+
+    // guide the user through optional steps, without blocking Save
+    if (!hasNotes && !hasCoping) return "notes";
+    if (!hasNotes) return "notes";
+    if (!hasCoping) return "coping";
+    return "save";
+  }, [termsAccepted, dayLocked, mood, reason, notes, copingUsed]);
+
+    const progress = useMemo(() => {
     if (!termsAccepted) return 0;
     let p = 0;
+
+    // ✅ Required steps
     if (mood) p += 34;
     if (reason) p += 33;
-    if ((notes || "").trim().length > 0) p += 33;
+
+    // ✅ Optional steps (but tracked in the progress UI)
+    if ((notes || "").trim().length > 0) p += 16;
+    if (Array.isArray(copingUsed) && copingUsed.length > 0) p += 17;
+
     if (dayLocked) p = 100;
     return Math.min(100, p);
-  }, [termsAccepted, mood, reason, notes, dayLocked]);
+  }, [termsAccepted, mood, reason, notes, copingUsed, dayLocked]);
 
   const focusMoodRef = useRef(null);
   const focusReasonRef = useRef(null);
   const focusNotesRef = useRef(null);
+  const focusCopingRef = useRef(null);
 
   const jumpToStep = useCallback(
     (k) => {
@@ -1636,6 +1684,7 @@ export default function Journal() {
       }
       if (k === "reason") focusReasonRef.current?.scrollIntoView?.({ behavior: "smooth", block: "start" });
       if (k === "notes") focusNotesRef.current?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+      if (k === "coping") focusCopingRef.current?.scrollIntoView?.({ behavior: "smooth", block: "start" });
       if (k === "save") window.scrollTo({ top: 0, behavior: "smooth" });
     },
     [inputsDisabled]
@@ -1950,14 +1999,20 @@ export default function Journal() {
     };
   }, []);
 
-  const nudgeText = useMemo(() => {
+    const nudgeText = useMemo(() => {
     if (!termsAccepted) return "Please accept Terms & Conditions to continue.";
     if (dayLocked) return "Nice work — you’ve completed today’s check-in!";
     if (!mood) return "Step 1: choose your mood.";
     if (!reason) return "Step 2: choose the reason.";
-    if (!(notes || "").trim()) return "Optional: add a short note — or Save to lock today.";
+
+    const hasNotes = (notes || "").trim().length > 0;
+    const hasCoping = Array.isArray(copingUsed) && copingUsed.length > 0;
+
+    if (!hasNotes && !hasCoping) return "Optional: add a short note or coping — or Save to lock today.";
+    if (!hasNotes) return "Optional: add a short note — or Save to lock today.";
+    if (!hasCoping) return "Optional: add a coping strategy — or Save to lock today.";
     return "Final step: Save to lock today.";
-  }, [termsAccepted, dayLocked, mood, reason, notes]);
+  }, [termsAccepted, dayLocked, mood, reason, notes, copingUsed]);
 
   const savedTimeLabel = useMemo(() => (savedEntry?.daySubmittedAt ? formatNiceTime(savedEntry.daySubmittedAt) : ""), [savedEntry]);
 
@@ -2129,11 +2184,12 @@ export default function Journal() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
                   {[
                     { key: "mood", label: "Mood", icon: IconMood, done: !!mood },
                     { key: "reason", label: "Reason", icon: IconReason, done: !!reason },
                     { key: "notes", label: "Notes", icon: IconNotes, done: !!(notes || "").trim() },
+                    { key: "coping", label: "Coping", icon: IconCoping, done: Array.isArray(copingUsed) && copingUsed.length > 0 },
                     { key: "save", label: "Done", icon: IconBolt, done: dayLocked },
                   ].map((s) => {
                     const isActive = step === s.key;
@@ -2259,13 +2315,12 @@ export default function Journal() {
             </div>
 
             <div className="flex flex-col gap-4">
+              <div ref={focusCopingRef} />
+
               {/* ✅ Coping (chips only; dropdown removed) */}
               <Card
                 title={
-                  <span className="flex items-center gap-2">
-                    <IconCoping className="h-5 w-5 text-black/60" />
-                    Coping
-                  </span>
+                  <span className="flex items-center gap-2">Coping</span>
                 }
                 right={copingUsed.length ? <Pill tone="green">{copingUsed.length} selected</Pill> : <Pill>Optional</Pill>}
               >
