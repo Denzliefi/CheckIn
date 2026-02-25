@@ -1497,7 +1497,7 @@ export default function Request({ onClose }) {
                   <BigChoiceCard
                     accent={LOGIN_PRIMARY}
                     title="Book a Session"
-                    subtitle={pendingLocked ? "Disabled while a request is pending" : "Duolingo-style step-by-step booking"}
+                    subtitle={pendingLocked ? "Disabled while a request is pending" : "Face-to Face or Online step-by-step booking"}
                     icon={<CalendarIcon accent={LOGIN_PRIMARY} />}
                     disabled={!termsAccepted || pendingLocked}
                     onClick={() =>

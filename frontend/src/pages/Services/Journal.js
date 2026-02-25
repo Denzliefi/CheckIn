@@ -580,126 +580,38 @@ function MobileStepButton({ label, active, done, disabled, onClick, icon: Icon }
     3D-ish EMOTE (SVG)
 ========================= */
 function MoodEmote({ mood = "Okay", size = 28, className = "" }) {
-  const key = (mood || "Okay").toLowerCase();
-  const gid = useId();
-  const gradFace = `face-${gid}`;
-  const gradHi = `hi-${gid}`;
-  const glow = `glow-${gid}`;
-
-  const palette =
-    key === "angry"
-      ? { a: "#FF5C3A", b: "#FFB39E", stroke: "#D74322" }
-      : key === "sad" || key === "fear" || key === "disgust"
-      ? { a: "#FFD470", b: "#FFF1C2", stroke: "#D5A200" }
-      : key === "stressed"
-      ? { a: "#FFCC3A", b: "#FFF0B8", stroke: "#D5A200" }
-      : { a: "#FFD34D", b: "#FFF4C8", stroke: "#D5A200" };
-
-  const eyeMode = key === "calm" ? "closed" : key === "fear" || key === "surprise" ? "wide" : "normal";
-  const tear = key === "sad";
-
-  const mouth =
-    key === "happy"
-      ? { kind: "smile" }
-      : key === "calm"
-      ? { kind: "softsmile" }
-      : key === "okay"
-      ? { kind: "flat" }
-      : key === "stressed"
-      ? { kind: "zig" }
-      : key === "sad"
-      ? { kind: "frown" }
-      : key === "angry"
-      ? { kind: "angry" }
-      : key === "fear"
-      ? { kind: "tiny" }
-      : key === "surprise"
-      ? { kind: "o" }
-      : key === "disgust"
-      ? { kind: "tilt" }
-      : { kind: "flat" };
-
-  const brows =
-    key === "angry"
-      ? ["M8.2 9.6l3.2 1.2", "M15.8 9.6l-3.2 1.2"]
-      : key === "stressed"
-      ? ["M8.1 9.9c1.2-0.9 2.3-0.9 3.3 0", "M12.6 9.9c1.2-0.9 2.3-0.9 3.3 0"]
-      : key === "fear"
-      ? ["M8.1 9.2c1.2-1.2 2.3-1.2 3.3 0", "M12.6 9.2c1.2-1.2 2.3-1.2 3.3 0"]
-      : key === "surprise"
-      ? ["M8.2 9.1c1.2-0.8 2.2-0.8 3.2 0", "M12.6 9.1c1.2-0.8 2.2-0.8 3.2 0"]
-      : key === "disgust"
-      ? ["M8.2 10.0h3.0", "M12.6 9.1c1.0 0.3 2.0 0.8 3.0 1.4"]
-      : ["M8.2 10.0h3.2", "M15.8 10.0h-3.2"];
-
-  const Eye = ({ x, y, mode }) => {
-    if (mode === "closed") {
-      return <path d={`M${x - 2.2} ${y} Q ${x} ${y + 1.6} ${x + 2.2} ${y}`} stroke="#171717" strokeWidth="1.6" strokeLinecap="round" fill="none" />;
-    }
-    if (mode === "wide") {
-      return (
-        <>
-          <circle cx={x} cy={y} r="1.7" fill="#FFF" stroke="#171717" strokeWidth="1.1" />
-          <circle cx={x} cy={y + 0.2} r="0.85" fill="#171717" />
-          <circle cx={x - 0.45} cy={y - 0.4} r="0.28" fill="#FFF" opacity="0.9" />
-        </>
-      );
-    }
-    return (
-      <>
-        <circle cx={x} cy={y} r="1.25" fill="#171717" />
-        <circle cx={x - 0.4} cy={y - 0.45} r="0.25" fill="#FFF" opacity="0.8" />
-      </>
-    );
+  // ✅ Use the same Unicode emoji style as Counselor Inbox (no SVG brows / no "unibrow" risk)
+  const MOOD_EMOJI = {
+    Happy: "😄",
+    Calm: "😌",
+    Okay: "🙂",
+    Stressed: "😣",
+    Sad: "😢",
+    Angry: "😠",
+    Fear: "😨",
+    Surprise: "😮",
+    Disgust: "🤢",
   };
 
-  const Mouth = ({ kind }) => {
-    if (kind === "o") return <circle cx="12" cy="16.2" r="1.6" fill="#171717" opacity="0.9" />;
-    if (kind === "tiny") return <path d="M10.6 16.1c1.0-0.7 1.8-0.7 2.8 0" stroke="#171717" strokeWidth="1.7" strokeLinecap="round" fill="none" />;
-    if (kind === "smile") return <path d="M8.2 15.0c1.9 2.5 5.7 2.5 7.6 0" stroke="#171717" strokeWidth="1.7" strokeLinecap="round" fill="none" />;
-    if (kind === "softsmile") return <path d="M8.7 15.5c1.6 1.2 5.0 1.2 6.6 0" stroke="#171717" strokeWidth="1.7" strokeLinecap="round" fill="none" />;
-    if (kind === "flat") return <path d="M8.8 16.0h6.4" stroke="#171717" strokeWidth="1.7" strokeLinecap="round" fill="none" />;
-    if (kind === "zig") return <path d="M8.3 16.2c1.2-1.1 2.2 1.1 3.2 0 1.0-1.1 2.2-1.1 3.2 0" stroke="#171717" strokeWidth="1.7" strokeLinecap="round" fill="none" />;
-    if (kind === "frown") return <path d="M8.2 17.0c1.9-2.4 5.7-2.4 7.6 0" stroke="#171717" strokeWidth="1.7" strokeLinecap="round" fill="none" />;
-    if (kind === "angry") return <path d="M8.0 16.7c2.5-1.4 5.5-1.4 8.0 0" stroke="#171717" strokeWidth="1.7" strokeLinecap="round" fill="none" />;
-    if (kind === "tilt") return <path d="M9.0 16.4c1.4 1.1 2.4-1.1 3.6 0 1.2 1.1 2.2-1.1 3.4 0" stroke="#171717" strokeWidth="1.7" strokeLinecap="round" fill="none" />;
-    return null;
-  };
+  const emo = MOOD_EMOJI[mood] || "🙂";
 
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" className={className} aria-hidden="true">
-      <defs>
-        <radialGradient id={gradFace} cx="30%" cy="25%" r="75%">
-          <stop offset="0%" stopColor={palette.b} />
-          <stop offset="55%" stopColor={palette.a} />
-          <stop offset="100%" stopColor={palette.a} />
-        </radialGradient>
-        <radialGradient id={gradHi} cx="25%" cy="20%" r="55%">
-          <stop offset="0%" stopColor="#FFFFFF" stopOpacity="0.75" />
-          <stop offset="65%" stopColor="#FFFFFF" stopOpacity="0.0" />
-        </radialGradient>
-        <filter id={glow} x="-40%" y="-40%" width="180%" height="180%">
-          <feDropShadow dx="0" dy="1.6" stdDeviation="1.2" floodColor="rgba(0,0,0,0.28)" />
-        </filter>
-      </defs>
-
-      <g filter={`url(#${glow})`}>
-        <circle cx="12" cy="12" r="9.3" fill={`url(#${gradFace})`} stroke={palette.stroke} strokeWidth="1.4" />
-        <circle cx="9.2" cy="14.4" r="1.3" fill="#FFB7A3" opacity="0.30" />
-        <circle cx="14.8" cy="14.4" r="1.3" fill="#FFB7A3" opacity="0.30" />
-        <circle cx="10.3" cy="7.6" r="7.1" fill={`url(#${gradHi})`} opacity="0.55" />
-      </g>
-
-      <path d={brows[0]} stroke="#171717" strokeWidth="1.6" strokeLinecap="round" fill="none" />
-      <path d={brows[1]} stroke="#171717" strokeWidth="1.6" strokeLinecap="round" fill="none" />
-      <Eye x={9.2} y={12} mode={eyeMode} />
-      <Eye x={14.8} y={12} mode={eyeMode} />
-      <Mouth kind={mouth.kind} />
-
-      {tear && <path d="M7.1 14.2c1.0 1.4 1.0 2.5 0 3.7-1.0-1.2-1.0-2.3 0-3.7Z" fill="#4DA3FF" stroke="#2B7FE6" strokeWidth="0.7" strokeLinejoin="round" />}
-    </svg>
+    <span
+      className={className}
+      style={{
+        fontSize: typeof size === "number" ? `${size}px` : size,
+        lineHeight: 1,
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+      }}
+      aria-hidden="true"
+    >
+      {emo}
+    </span>
   );
 }
+
 
 /** Doodles (kept minimal + light) */
 function DoodleSpark({ className = "" }) {
