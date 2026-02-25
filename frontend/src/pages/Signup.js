@@ -1649,14 +1649,23 @@ function sanitizeUsernameValue(raw, maxLen) {
 
 function sanitizeEmailValue(raw, maxLen) {
   const original = String(raw ?? "");
-  const cleanedBase = stripDangerousChars(original).replace(/\s+/g, "");
-  const cleaned = cleanedBase.slice(0, maxLen);
-  const hadBad = cleaned !== cleanedBase;
+
+  // Remove control chars / angle brackets / backticks, remove spaces, normalize to lowercase.
+  const base = stripDangerousChars(original).replace(/\s+/g, "").toLowerCase();
+
+  // Keep a safe, common email character set.
+  const cleaned = base.replace(/[^a-z0-9._%+\-@]/g, "").slice(0, maxLen);
+
+  const hadBad = cleaned !== base;
+
   return {
     value: cleaned,
-    error: hadBad ? "Email contains invalid characters." : "",
+    error: hadBad
+      ? "Only letters, numbers and . _ % + - @ are allowed."
+      : "",
   };
 }
+
 
 // ✅ dash appears immediately after 2 digits if user types "-"
 function formatStudentNumber(raw) {
@@ -1753,6 +1762,85 @@ export default function Signup() {
 
   const [fieldErrors, setFieldErrors] = useState({});
   const [googleInlineError, setGoogleInlineError] = useState("");
+
+  // ✅ Auto-dismiss inline errors (2.3s)
+  const AUTO_DISMISS_MS = 2300;
+  const fieldErrTimersRef = useRef({});
+  const bannerTimerRef = useRef(null);
+  const googleErrTimerRef = useRef(null);
+
+  // Clear all timers on unmount
+  useEffect(() => {
+    return () => {
+      const timers = fieldErrTimersRef.current || {};
+      Object.values(timers).forEach((t) => {
+        if (t?.id) clearTimeout(t.id);
+      });
+      fieldErrTimersRef.current = {};
+      if (bannerTimerRef.current) clearTimeout(bannerTimerRef.current);
+      if (googleErrTimerRef.current) clearTimeout(googleErrTimerRef.current);
+    };
+  }, []);
+
+  // Auto-clear field errors after 2.3s (per message)
+  useEffect(() => {
+    const timers = fieldErrTimersRef.current;
+
+    Object.keys(timers).forEach((field) => {
+      if (!fieldErrors?.[field]) {
+        clearTimeout(timers[field]?.id);
+        delete timers[field];
+      }
+    });
+
+    Object.entries(fieldErrors || {}).forEach(([field, msg]) => {
+      if (!msg) return;
+
+      const existing = timers[field];
+      if (existing?.message === msg) return;
+
+      if (existing?.id) clearTimeout(existing.id);
+
+      const id = window.setTimeout(() => {
+        setFieldErrors((prev) => {
+          if (!prev || prev[field] !== msg) return prev;
+          const copy = { ...prev };
+          delete copy[field];
+          return copy;
+        });
+      }, AUTO_DISMISS_MS);
+
+      timers[field] = { id, message: msg };
+    });
+  }, [fieldErrors]);
+
+  // Auto-clear banner after 2.3s
+  useEffect(() => {
+    if (!formBanner?.message) return;
+
+    if (bannerTimerRef.current) clearTimeout(bannerTimerRef.current);
+    bannerTimerRef.current = window.setTimeout(() => {
+      setFormBanner(null);
+    }, AUTO_DISMISS_MS);
+
+    return () => {
+      if (bannerTimerRef.current) clearTimeout(bannerTimerRef.current);
+    };
+  }, [formBanner]);
+
+  // Auto-clear Google inline error after 2.3s
+  useEffect(() => {
+    if (!googleInlineError) return;
+
+    if (googleErrTimerRef.current) clearTimeout(googleErrTimerRef.current);
+    googleErrTimerRef.current = window.setTimeout(() => {
+      setGoogleInlineError("");
+    }, AUTO_DISMISS_MS);
+
+    return () => {
+      if (googleErrTimerRef.current) clearTimeout(googleErrTimerRef.current);
+    };
+  }, [googleInlineError]);
 
   // ✅ if /availability does not exist, stop calling it (prevents endless 404 spam)
   const availabilityRef = useRef({ supported: true });
@@ -2138,14 +2226,14 @@ export default function Signup() {
         }
 
         // show the Google email in the form
-        setForm((p) => ({ ...p, email: u.email }));
+        setForm((p) => ({ ...p, email: String(u.email || "").trim().toLowerCase() }));
 
         const fullName = [firstName, lastName].filter(Boolean).join(" ").trim();
 
         const payload = {
           intent: "signup",
           googleId: u?.uid,
-          email: u?.email,
+          email: String(u?.email || "").trim().toLowerCase(),
           fullName: fullName || u?.displayName || u?.email?.split("@")?.[0],
           firstName,
           lastName,
@@ -2284,7 +2372,7 @@ export default function Signup() {
           fullName,
           firstName: (form.firstName || "").trim(),
           lastName: (form.lastName || "").trim(),
-          email: (form.email || "").trim(),
+          email: (form.email || "").trim().toLowerCase(),
           username: (form.username || "").trim(),
           course: (form.course || "").trim(),
           studentNumber: (form.studentNumber || "").trim(),
@@ -2417,6 +2505,12 @@ export default function Signup() {
                     label="Email"
                     value={form.email}
                     onChange={setField("email")}
+                    onBlur={() => {
+                      setForm((p) => ({
+                        ...p,
+                        email: String(p.email || "").trim().toLowerCase(),
+                      }));
+                    }}
                     disabled={loading}
                     maxLength={INPUT_LIMITS.email}
                     inputMode="email"

@@ -55,7 +55,10 @@ const PROFILE_SECTIONS = [
     items: [
       { label: "First Name", key: "firstName", autoComplete: "given-name" },
       { label: "Last Name", key: "lastName", autoComplete: "family-name" },
-      { label: "Student ID", key: "studentId", mono: true, breakAll: true, autoComplete: "off" },
+
+      // ✅ constrained: NN-NNNNN (2 digits + dash + 5 digits)
+      { label: "Student ID", key: "studentId", mono: true, breakAll: true, autoComplete: "off", maxLength: 8, inputMode: "numeric", placeholder: "22-00197" },
+
       { label: "Email", key: "email", breakAll: true, inputType: "email", autoComplete: "email" },
     ],
   },
@@ -87,6 +90,32 @@ function isValidEmail(value) {
   const v = String(value || "").trim();
   if (!v) return false;
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
+}
+
+/**
+ * ✅ Silent input constraints (NO red errors while typing)
+ * - firstName/lastName: letters only
+ * - studentId: NN-NNNNN (2 digits + dash + 5 digits), max length 8 incl. dash
+ */
+function lettersOnly(value) {
+  const v = String(value ?? "");
+  // Prefer unicode letters (supports names beyond A-Z), fallback to ASCII if unsupported.
+  try {
+    return v.replace(/[^\p{L}]/gu, "");
+  } catch {
+    return v.replace(/[^a-zA-Z]/g, "");
+  }
+}
+
+function formatStudentId(value) {
+  const raw = String(value ?? "");
+  const digits = raw.replace(/\D/g, "").slice(0, 7); // 2 + 5 digits
+  const a = digits.slice(0, 2);
+  const b = digits.slice(2, 7);
+
+  if (!digits) return "";
+  if (digits.length <= 2) return a; // still typing first part
+  return `${a}-${b}`;
 }
 
 function buildFullName(student) {
@@ -539,6 +568,11 @@ function Field({
   name,
   autoComplete,
   readOnly,
+
+  // ✅ new: constraints
+  maxLength,
+  inputMode,
+  placeholder,
 }) {
   if (Array.isArray(options) && kind === "select") {
     return <CleanSelect label={label} value={String(value ?? "")} options={options} onChange={onChange} />;
@@ -563,6 +597,8 @@ function Field({
             value={String(value ?? "")}
             onChange={onChange}
             rows={3}
+            maxLength={maxLength}
+            placeholder={placeholder}
             readOnly={readOnly}
             onPointerDown={(e) => e.stopPropagation()}
             className={cx(
@@ -587,6 +623,9 @@ function Field({
           type={inputType}
           value={String(value ?? "")}
           onChange={onChange}
+          maxLength={maxLength}
+          inputMode={inputMode}
+          placeholder={placeholder}
           readOnly={readOnly}
           onPointerDown={(e) => e.stopPropagation()}
           className={cx(inputBase, mono && "font-mono", breakAll && "break-all")}
@@ -600,9 +639,17 @@ function Field({
 function ProfileSettingsForm({ profile, onChange, onSave, onCancel, saving, error }) {
   const data = profile ?? {};
 
+  // ✅ silent typing restrictions (no visible errors)
   const setField = (key, readOnly) => (e) => {
     if (readOnly) return;
-    onChange?.({ ...data, [key]: e.target.value });
+
+    const raw = e?.target?.value ?? "";
+    let next = raw;
+
+    if (key === "firstName" || key === "lastName") next = lettersOnly(raw);
+    if (key === "studentId") next = formatStudentId(raw);
+
+    onChange?.({ ...data, [key]: next });
   };
 
   const primaryBtn = cx(
@@ -625,8 +672,7 @@ function ProfileSettingsForm({ profile, onChange, onSave, onCancel, saving, erro
       data-cc-nodrag="1"
     >
       <div className={cx("rounded-2xl border overflow-hidden", THEME.border)}>
-      <div className={cx("h-1.5", THEME.surface)} aria-hidden="true" />
-
+        <div className={cx("h-1.5", THEME.surface)} aria-hidden="true" />
 
         <div className="px-4 sm:px-6 py-5 sm:py-6">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-8">
@@ -664,6 +710,9 @@ function ProfileSettingsForm({ profile, onChange, onSave, onCancel, saving, erro
                           name={`student-profile-${item.key}`}
                           autoComplete={item.autoComplete ?? "off"}
                           readOnly={Boolean(item.readOnly)}
+                          maxLength={item.maxLength}
+                          inputMode={item.inputMode}
+                          placeholder={item.placeholder}
                         />
                       </div>
                     ))}
@@ -894,7 +943,6 @@ function ConfirmChangesModal({ open, busy, error, summaryLines, onCancel, onConf
     document.body
   );
 }
-
 
 /* ===================== SUCCESS MODAL ===================== */
 function SuccessModal({ open, message, summaryLines, onClose }) {
@@ -1203,10 +1251,11 @@ function mapStudentToProfile(s) {
 
 function mapProfileToPatch(p) {
   return {
-    firstName: String(p?.firstName ?? "").trim(),
-    lastName: String(p?.lastName ?? "").trim(),
+    // ✅ keep silent constraint even if pasted / autofilled
+    firstName: lettersOnly(String(p?.firstName ?? "")).trim(),
+    lastName: lettersOnly(String(p?.lastName ?? "")).trim(),
     email: String(p?.email ?? "").trim(),
-    studentNumber: String(p?.studentId ?? "").trim(),
+    studentNumber: formatStudentId(p?.studentId),
     course: String(p?.course ?? "").trim(),
   };
 }
@@ -1332,9 +1381,9 @@ export default function StudentAccounts() {
   const [page, setPage] = useState(1);
   const [isLoadingStudents, setIsLoadingStudents] = useState(false);
 
-const [successOpen, setSuccessOpen] = useState(false);
-const [successMessage, setSuccessMessage] = useState("");
-const [successLines, setSuccessLines] = useState([]);
+  const [successOpen, setSuccessOpen] = useState(false);
+  const [successMessage, setSuccessMessage] = useState("");
+  const [successLines, setSuccessLines] = useState([]);
 
   const prevPageRef = useRef(1);
   const [pageAnim, setPageAnim] = useState("");
@@ -1486,10 +1535,10 @@ const [successLines, setSuccessLines] = useState([]);
   };
 
   const validateCounselorPassword = (value) => {
-  const v = String(value || "");
-  if (!v.trim()) return "Password is required.";
-  return "";
-};
+    const v = String(value || "");
+    if (!v.trim()) return "Password is required.";
+    return "";
+  };
 
   const validateEditDraft = useCallback(
     (draft, currentStudent) => {
@@ -1513,122 +1562,122 @@ const [successLines, setSuccessLines] = useState([]);
     },
     [students]
   );
-const buildChangeSummary = (draft, original) => {
-  const lines = [];
-  if (!draft || !original) return lines;
 
-  const pairs = [
-    ["First Name", String(original.firstName || ""), String(draft.firstName || "")],
-    ["Last Name", String(original.lastName || ""), String(draft.lastName || "")],
-    ["Student ID", String(original.studentId || original.studentNumber || ""), String(draft.studentId || "")],
-    ["Email", String(original.email || ""), String(draft.email || "")],
-    ["Course", String(original.course || ""), String(draft.course || "")],
-  ];
+  const buildChangeSummary = (draft, original) => {
+    const lines = [];
+    if (!draft || !original) return lines;
 
-  for (const [label, from, to] of pairs) {
-    if (from.trim() !== to.trim()) lines.push(`${label}: "${from || "—"}" → "${to || "—"}"`);
-  }
-  return lines;
-};
+    const pairs = [
+      ["First Name", String(original.firstName || ""), String(draft.firstName || "")],
+      ["Last Name", String(original.lastName || ""), String(draft.lastName || "")],
+      ["Student ID", String(original.studentId || original.studentNumber || ""), String(draft.studentId || "")],
+      ["Email", String(original.email || ""), String(draft.email || "")],
+      ["Course", String(original.course || ""), String(draft.course || "")],
+    ];
 
+    for (const [label, from, to] of pairs) {
+      if (from.trim() !== to.trim()) lines.push(`${label}: "${from || "—"}" → "${to || "—"}"`);
+    }
+    return lines;
+  };
 
   const performSaveEdit = async ({ userId, patch, counselorPassword }) => {
-  if (editSaving) return;
-  setEditSaving(true);
-  setEditError("");
-try {
-    const data = await updateStudentAccount({ userId, patch, counselorPassword });
-    const updated = data?.item || null;
-    if (!updated) throw new Error("Update failed.");
+    if (editSaving) return;
+    setEditSaving(true);
+    setEditError("");
+    try {
+      const data = await updateStudentAccount({ userId, patch, counselorPassword });
+      const updated = data?.item || null;
+      if (!updated) throw new Error("Update failed.");
 
-    setStudents((prev) => {
-      const idKey = String(userId || "");
-      const next = (prev || []).map((s) => {
-        const sid = String(s?.userId || s?._id || "");
-        if (idKey && sid && sid === idKey) return { ...(s || {}), ...(updated || {}) };
-        return s;
+      setStudents((prev) => {
+        const idKey = String(userId || "");
+        const next = (prev || []).map((s) => {
+          const sid = String(s?.userId || s?._id || "");
+          if (idKey && sid && sid === idKey) return { ...(s || {}), ...(updated || {}) };
+          return s;
+        });
+        return next;
       });
-      return next;
-    });
-closeEdit();
-  } catch (e) {
-    const msg = e?.message || "Update failed. Please try again.";
-    setEditError(msg);
-} finally {
-    setEditSaving(false);
-  }
-};
+      closeEdit();
+    } catch (e) {
+      const msg = e?.message || "Update failed. Please try again.";
+      setEditError(msg);
+    } finally {
+      setEditSaving(false);
+    }
+  };
 
-const requestSaveEdit = () => {
-  if (editSaving) return;
-  setEditError("");
-  setPwError("");
-  setConfirmError("");
+  const requestSaveEdit = () => {
+    if (editSaving) return;
+    setEditError("");
+    setPwError("");
+    setConfirmError("");
 
-  const draftErr = validateEditDraft(editDraft, editStudent);
-  if (draftErr) {
-    setEditError(draftErr);
-    return;
-  }
+    const draftErr = validateEditDraft(editDraft, editStudent);
+    if (draftErr) {
+      setEditError(draftErr);
+      return;
+    }
 
-  const patch = mapProfileToPatch(editDraft);
-  const userId = editStudent?.userId || editStudent?._id || editDraft?.userId;
+    const patch = mapProfileToPatch(editDraft);
+    const userId = editStudent?.userId || editStudent?._id || editDraft?.userId;
 
-  setPendingSave({ userId, patch });
-  setConfirmOpen(true);
-};
+    setPendingSave({ userId, patch });
+    setConfirmOpen(true);
+  };
 
-const confirmPasswordAndSave = async () => {
-  const err = validateCounselorPassword(pwValue);
-  if (err) {
-    setPwError(err);
-    return;
-  }
+  const confirmPasswordAndSave = async () => {
+    const err = validateCounselorPassword(pwValue);
+    if (err) {
+      setPwError(err);
+      return;
+    }
 
-  const payload = pendingSave;
-  if (!payload?.userId) {
-    setPwError("Missing student reference. Please close and try again.");
-    return;
-  }
+    const payload = pendingSave;
+    if (!payload?.userId) {
+      setPwError("Missing student reference. Please close and try again.");
+      return;
+    }
 
-  setPwError("");
-  setEditError("");
-  setEditSaving(true);
+    setPwError("");
+    setEditError("");
+    setEditSaving(true);
 
-  try {
-    const data = await updateStudentAccount({
-      userId: payload.userId,
-      patch: payload.patch,
-      counselorPassword: pwValue,
-    });
-
-    const updated = data?.item || null;
-    if (!updated) throw new Error("Update failed.");
-
-    setStudents((prev) => {
-      const idKey = String(payload.userId || "");
-      return (prev || []).map((s) => {
-        const sid = String(s?.userId || s?._id || "");
-        return sid && idKey && sid === idKey ? { ...(s || {}), ...(updated || {}) } : s;
+    try {
+      const data = await updateStudentAccount({
+        userId: payload.userId,
+        patch: payload.patch,
+        counselorPassword: pwValue,
       });
-    });
 
-    // Success modal (copy Confirm Changes style)
-    setSuccessMessage(data?.message || "Student details updated successfully.");
-    setSuccessLines(buildChangeSummary(editDraft, editStudent));
-    setSuccessOpen(true);
+      const updated = data?.item || null;
+      if (!updated) throw new Error("Update failed.");
 
-    // Close password + edit UI
-    setPwOpen(false);
-    closeEdit();
-  } catch (e) {
-    const msg = e?.message || "Update failed. Please try again.";
-    // Keep password modal open and show error there
-    setPwError(msg);
-  } finally {
-    setEditSaving(false);
-  }
-};
+      setStudents((prev) => {
+        const idKey = String(payload.userId || "");
+        return (prev || []).map((s) => {
+          const sid = String(s?.userId || s?._id || "");
+          return sid && idKey && sid === idKey ? { ...(s || {}), ...(updated || {}) } : s;
+        });
+      });
+
+      // Success modal (copy Confirm Changes style)
+      setSuccessMessage(data?.message || "Student details updated successfully.");
+      setSuccessLines(buildChangeSummary(editDraft, editStudent));
+      setSuccessOpen(true);
+
+      // Close password + edit UI
+      setPwOpen(false);
+      closeEdit();
+    } catch (e) {
+      const msg = e?.message || "Update failed. Please try again.";
+      // Keep password modal open and show error there
+      setPwError(msg);
+    } finally {
+      setEditSaving(false);
+    }
+  };
 
   const canSwipeNow = (eventTarget) => {
     if (!isMobile) return false;
@@ -1750,16 +1799,16 @@ const confirmPasswordAndSave = async () => {
         .cc-clickable { transition: transform 140ms ease, background-color 140ms ease, box-shadow 140ms ease; }
       `}</style>
 
-<SuccessModal
-  open={successOpen}
-  message={successMessage}
-  summaryLines={successLines}
-  onClose={() => {
-    setSuccessOpen(false);
-    setSuccessMessage("");
-    setSuccessLines([]);
-  }}
-/>
+      <SuccessModal
+        open={successOpen}
+        message={successMessage}
+        summaryLines={successLines}
+        onClose={() => {
+          setSuccessOpen(false);
+          setSuccessMessage("");
+          setSuccessLines([]);
+        }}
+      />
 
       <ConfirmChangesModal
         open={confirmOpen}
