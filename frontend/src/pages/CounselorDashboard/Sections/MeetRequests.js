@@ -108,6 +108,9 @@ const OFFICE_LOCATIONS = {
   "Annex Campus": "Guidance Office, Annex Building (1st Floor)",
 };
 
+// ✅ App is single-campus (static UI label)
+const STATIC_CAMPUS_LABEL = "Arellano University Andres Bonifacio Campus";
+
 function getOfficeMeta(counselorCampus, studentCampus) {
   const campus = String(counselorCampus || studentCampus || "Main Campus");
   const office = OFFICE_LOCATIONS[campus] || "Guidance Office";
@@ -156,24 +159,41 @@ function nowStamp() {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-function formatStamp12h(stamp) {
-  const s = String(stamp || "").trim();
-  if (!s) return "—";
-  if (/\b(AM|PM)\b/i.test(s)) return s.replace(/\b(am|pm)\b/gi, (x) => x.toUpperCase());
-  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2})$/);
-  if (!m) return s;
+// ✅ Normalize backend timestamps (ISO strings like 2026-02-26T03:06:33.725Z)
+// into a readable local format: "Feb 26, 2026 • 03:06 AM"
+function formatBackendDateTime(value) {
+  if (!value) return "—";
 
-  const yyyy = m[1];
-  const mm = m[2];
-  const dd = m[3];
-  const hh24 = Number(m[4]);
-  const min = m[5];
+  // If it's already a nice string (e.g., "2026-02-26 03:06 AM"), keep it.
+  const raw = String(value).trim();
+  if (!raw) return "—";
+  if (/\b(AM|PM)\b/i.test(raw) && raw.includes("-") && raw.includes(":")) {
+    return raw.replace(/\b(am|pm)\b/gi, (x) => x.toUpperCase());
+  }
 
-  const ap = hh24 >= 12 ? "PM" : "AM";
-  let hh12 = hh24 % 12;
-  if (hh12 === 0) hh12 = 12;
+  // Try parsing ISO / RFC / epoch
+  let d = null;
+  if (typeof value === "number") {
+    d = new Date(value);
+  } else {
+    const parsed = new Date(raw);
+    if (!Number.isNaN(parsed.getTime())) d = parsed;
+  }
+  if (!d || Number.isNaN(d.getTime())) return raw; // fallback to original
 
-  return `${yyyy}-${mm}-${dd} ${String(hh12).padStart(2, "0")}:${min} ${ap}`;
+  const datePart = new Intl.DateTimeFormat(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+  }).format(d);
+
+  const timePart = new Intl.DateTimeFormat(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true,
+  }).format(d);
+
+  return `${datePart} • ${timePart}`;
 }
 
 function parseDateKey(dateStr) {
@@ -1891,6 +1911,7 @@ function addMinutesToTime(timeStr, addMins = 60) {
   const canReschedule = selected?.status !== STATUS.CANCELED && selected?.status !== STATUS.DISAPPROVED;
     const canEditMeetLink = selected?.mode === "Online" && (selected?.status === STATUS.APPROVED || selected?.status === STATUS.RESCHEDULED);
 
+  // Office stays dynamic-ish (for legacy data), but campus label in UI is static.
   const officeMeta = useMemo(() => getOfficeMeta(selected?.counselor?.campus, selected?.student?.campus), [selected]);
 
   const originalRescheduleOk = useMemo(() => {
@@ -2239,8 +2260,7 @@ function addMinutesToTime(timeStr, addMins = 60) {
                       { label: "Reason", value: selected.reason },
                       { label: "Appointment time", value: `${selected.date} • ${selected.time}` },
                       { label: "Counselor", value: selected.counselor?.name || "Counselor" },
-                      { label: "Campus", value: officeMeta.campus },
-                      { label: "Office", value: selected.mode === "In-person" ? officeMeta.office : "Not required (Online)" },
+                      { label: "Campus", value: STATIC_CAMPUS_LABEL },
                       {
                         label: "Online link",
                         value:
@@ -2252,8 +2272,8 @@ function addMinutesToTime(timeStr, addMins = 60) {
                                 ? "Provided."
                                 : "Not yet provided.",
                       },
-                      { label: "Submitted", value: formatStamp12h(selected.createdAt) },
-                      { label: "Last updated", value: formatStamp12h(selected.updatedAt || selected.createdAt) },
+                      { label: "Submitted", value: formatBackendDateTime(selected.createdAt) },
+                      { label: "Last updated", value: formatBackendDateTime(selected.updatedAt || selected.createdAt) },
                     ]}
                   />
                 </Card>
@@ -2264,7 +2284,7 @@ function addMinutesToTime(timeStr, addMins = 60) {
                       { label: "Full name", value: selected.student?.name || "—" },
                       { label: "Student ID", value: selected.student?.studentId || "—" },
                       { label: "Email", value: selected.student?.email || "—" },
-                      { label: "Campus", value: selected.student?.campus || "—" },
+                      { label: "Campus", value: STATIC_CAMPUS_LABEL },
                       { label: "Course", value: selected.student?.courses || "—" },
                     ]}
                   />
@@ -2379,7 +2399,7 @@ function addMinutesToTime(timeStr, addMins = 60) {
 
                 <div className="mt-3 text-xs font-bold text-slate-500">Campus & office</div>
                 <div className="mt-1 text-sm font-extrabold text-slate-900 break-words">
-                  {officeMeta.campus} • {officeMeta.office}
+                  {STATIC_CAMPUS_LABEL} • {officeMeta.office}
                 </div>
               </div>
 

@@ -1767,7 +1767,9 @@ export default function Request({ onClose }) {
                                 </div>
                               ) : null}
                             </div>
-                            <StatusPill status={c._status} accent={LOGIN_PRIMARY} />
+                            {c._status !== "Available" ? (
+                              <StatusPill status={c._status} accent={LOGIN_PRIMARY} />
+                            ) : null}
                           </div>
                         </button>
                       );

@@ -242,20 +242,6 @@ function SeverityPill({ label }) {
   );
 }
 
-function Legend() {
-  const labels = ["Minimal", "Mild", "Moderate", "Moderately High", "High"];
-  return (
-    <div className="flex flex-wrap items-center gap-2 text-[11px] sm:text-xs">
-      {labels.map((x) => (
-        <div key={x} className="inline-flex items-center gap-2">
-          <span className={cn("h-2.5 w-2.5 rounded-full", SEVERITY_STYLES[x]?.dot)} aria-hidden />
-          <span className="font-extrabold text-slate-600">{x}</span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 function Segmented({ value, onChange }) {
   return (
     <div className="w-full sm:w-auto rounded-2xl border bg-white p-1">
@@ -599,16 +585,20 @@ export default function CounselorPHQ9() {
   const calendarResultsRef = useRef(null);
   const modalScrollRef = useRef(null);
 
+  // ✅ Course filter should list ALL courses (not just courses that already have PHQ-9 submissions)
+  // We still include any unknown courses that might exist in the DB.
   const coursesForDropdown = useMemo(() => {
-    const set = new Set();
+    const base = new Set(COURSES);
+    const unknown = new Set();
+
     for (const s of students) {
       const c = (s?.course || "").trim();
-      if (c) set.add(c);
+      if (!c) continue;
+      if (!base.has(c)) unknown.add(c);
     }
-    const ordered = [];
-    for (const c of COURSES) if (set.has(c)) ordered.push(c);
-    const unknown = Array.from(set).filter((c) => !COURSES.includes(c)).sort((a, b) => a.localeCompare(b));
-    return [...ordered, ...unknown];
+
+    const unknownOrdered = Array.from(unknown).sort((a, b) => a.localeCompare(b));
+    return [...COURSES, ...unknownOrdered];
   }, [students]);
 
   // Initial load: students list
@@ -846,12 +836,16 @@ export default function CounselorPHQ9() {
           </div>
         ) : null}
 
+        {/*
+          Header controls row
+          - Legend removed per request, but we keep the original right-side alignment by reserving
+            the left column space on lg+ screens.
+        */}
         <div className="mt-3 sm:mt-4 flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between min-w-0">
-          <div className="hidden sm:flex items-center gap-3 flex-wrap min-w-0">
-            <Legend />
-          </div>
+          {/* spacer (keeps controls aligned to the right on large screens, like the old layout) */}
+          <div className="hidden lg:block flex-1" aria-hidden />
 
-          <div className="flex flex-col sm:flex-row sm:flex-wrap gap-2 w-full lg:w-auto min-w-0">
+          <div className="flex flex-col sm:flex-row sm:flex-wrap gap-2 w-full lg:w-auto min-w-0 lg:justify-end">
             <div className="w-full sm:w-auto shrink-0">
               <Segmented value={view} onChange={setView} />
             </div>
@@ -863,10 +857,6 @@ export default function CounselorPHQ9() {
                 courses={coursesForDropdown.length ? coursesForDropdown : COURSES}
               />
             </div>
-          </div>
-
-          <div className="sm:hidden">
-            <Legend />
           </div>
         </div>
 

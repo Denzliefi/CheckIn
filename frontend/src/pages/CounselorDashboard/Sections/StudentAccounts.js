@@ -59,7 +59,7 @@ const PROFILE_SECTIONS = [
       // ✅ constrained: NN-NNNNN (2 digits + dash + 5 digits)
       { label: "Student ID", key: "studentId", mono: true, breakAll: true, autoComplete: "off", maxLength: 8, inputMode: "numeric", placeholder: "22-00197" },
 
-      { label: "Email", key: "email", breakAll: true, inputType: "email", autoComplete: "email" },
+      { label: "Email", key: "email", breakAll: true, inputType: "email", autoComplete: "email", inputMode: "email", placeholder: "name@domain.com" },
     ],
   },
   {
@@ -89,7 +89,8 @@ function normalizeEmail(value) {
 function isValidEmail(value) {
   const v = String(value || "").trim();
   if (!v) return false;
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
+  // ✅ TLD letters only (prevents .com123)
+  return /^[a-z0-9._+\-]+@[a-z0-9.\-]+\.[a-z]{2,}$/i.test(v);
 }
 
 /**
@@ -117,6 +118,35 @@ function formatStudentId(value) {
   if (digits.length <= 2) return a; // still typing first part
   return `${a}-${b}`;
 }
+
+function sanitizeEmailInput(value) {
+  let v = String(value ?? "").toLowerCase();
+
+  // ✅ allow only normal email characters while typing
+  v = v.replace(/[^a-z0-9@._+\-]/g, "");
+
+  // ✅ keep only the first "@"
+  const at = v.indexOf("@");
+  if (at !== -1) {
+    const before = v.slice(0, at + 1);
+    let after = v.slice(at + 1).replace(/@+/g, "");
+
+    // ✅ If there's a domain dot, keep ONLY letters in the final TLD part
+    const lastDot = after.lastIndexOf(".");
+    if (lastDot !== -1) {
+      const domainMain = after.slice(0, lastDot);
+      let tld = after.slice(lastDot + 1);
+      tld = tld.replace(/[^a-z]/g, ""); // ".com123" -> ".com"
+      after = `${domainMain}.${tld}`;
+    }
+
+    v = before + after;
+  }
+
+  return v;
+}
+
+
 
 function buildFullName(student) {
   const first = String(student?.firstName || "").trim();
@@ -641,16 +671,20 @@ function ProfileSettingsForm({ profile, onChange, onSave, onCancel, saving, erro
 
   // ✅ silent typing restrictions (no visible errors)
   const setField = (key, readOnly) => (e) => {
-    if (readOnly) return;
+  if (readOnly) return;
 
-    const raw = e?.target?.value ?? "";
-    let next = raw;
+  const raw = e?.target?.value ?? "";
+  let next = raw;
 
-    if (key === "firstName" || key === "lastName") next = lettersOnly(raw);
-    if (key === "studentId") next = formatStudentId(raw);
+  // ✅ typing constraints (silent)
+  if (key === "firstName" || key === "lastName") next = lettersOnly(raw);
+  if (key === "studentId") next = formatStudentId(raw);
 
-    onChange?.({ ...data, [key]: next });
-  };
+  // ✅ email constraint (silent)
+  if (key === "email") next = sanitizeEmailInput(raw);
+
+  onChange?.({ ...data, [key]: next });
+};
 
   const primaryBtn = cx(
     "h-11 px-4 rounded-xl text-sm font-medium transition-all disabled:opacity-60",
@@ -1254,58 +1288,10 @@ function mapProfileToPatch(p) {
     // ✅ keep silent constraint even if pasted / autofilled
     firstName: lettersOnly(String(p?.firstName ?? "")).trim(),
     lastName: lettersOnly(String(p?.lastName ?? "")).trim(),
-    email: String(p?.email ?? "").trim(),
+    email: sanitizeEmailInput(p?.email).trim(),
     studentNumber: formatStudentId(p?.studentId),
     course: String(p?.course ?? "").trim(),
   };
-}
-
-/* ===================== DEV SEED ===================== */
-function pad2(n) {
-  return String(n).padStart(2, "0");
-}
-
-function addMonthsToYYYYMM(yyyymm, addMonths) {
-  const [yStr, mStr] = String(yyyymm).split("-");
-  const y0 = Number(yStr);
-  const m0 = Number(mStr);
-  if (!Number.isFinite(y0) || !Number.isFinite(m0) || m0 < 1 || m0 > 12) return "2026-01";
-
-  const base = y0 * 12 + (m0 - 1);
-  const next = base + addMonths;
-  const y = Math.floor(next / 12);
-  const m = (next % 12) + 1;
-  return `${y}-${pad2(m)}`;
-}
-
-function generateDevSeedStudents(count = 20, startMonth = "2026-01") {
-  const out = [];
-  for (let i = 1; i <= count; i += 1) {
-    const createdMonth = addMonthsToYYYYMM(startMonth, i - 1);
-    out.push({
-      email: `seed${i}.student@pup.edu.ph`,
-      studentNumber: `2026-${String(i).padStart(6, "0")}`,
-      createdMonth,
-      firstName: "Seed",
-      lastName: `Student ${i}`,
-      course: COURSE_OPTIONS[(i - 1) % COURSE_OPTIONS.length],
-    });
-  }
-  return out;
-}
-
-const DEV_SEED_STUDENTS = generateDevSeedStudents(20);
-
-function mergeUniqueByEmail(base, extra) {
-  const seen = new Set(base.map((s) => normalizeEmail(s?.email)));
-  const out = [...base];
-  for (const s of extra) {
-    const key = normalizeEmail(s?.email);
-    if (!key || seen.has(key)) continue;
-    seen.add(key);
-    out.push(s);
-  }
-  return out;
 }
 
 /* ===================== CALENDAR-STYLE PAGINATION UI ===================== */
@@ -1418,10 +1404,9 @@ export default function StudentAccounts() {
     try {
       const res = await Promise.resolve(getStudentAccounts());
       const list = Array.isArray(res) ? res : [];
-      const withSeeds = process.env.NODE_ENV !== "production" ? mergeUniqueByEmail(list, DEV_SEED_STUDENTS) : list;
-      setStudents(withSeeds);
+      setStudents(list);
     } catch {
-      setStudents(process.env.NODE_ENV !== "production" ? DEV_SEED_STUDENTS : []);
+      setStudents([]);
     } finally {
       setIsLoadingStudents(false);
     }
