@@ -15,6 +15,7 @@ import {
   connectMessagesSocket,
   onMessageNew,
   onThreadCreated,
+  onThreadClaimed,
   onThreadUpdate,
 } from "../../../api/messagesRealtime";
 import { listCounselorThreadJournalEntries } from "../../../api/journal.api";
@@ -1481,10 +1482,35 @@ export default function Inbox() {
         markThreadRead(threadId).catch(() => {});
         requestAnimationFrame(() => setScrollKey((k) => k + 1));
       } catch (e) {
-        setError(e?.message || "Failed to load thread.");
+        const msg = e?.message || "Failed to load thread.";
+
+        // ✅ PATCH (UX): if thread was claimed by another counselor, remove it immediately
+        // so the counselor doesn't have to refresh and won't keep seeing "Forbidden".
+        if (/forbidden/i.test(msg) || /claimed/i.test(msg)) {
+          let nextSelected = "";
+          setItems((prev) => {
+            const next = (prev || []).filter((x) => String(x.id) !== String(threadId));
+            // pick a sensible next selection if this was the active one
+            if (String(selectedId) === String(threadId)) {
+              nextSelected = String(next?.[0]?.id || "");
+            }
+            return next;
+          });
+
+          if (String(selectedId) === String(threadId)) {
+            setSelectedId(nextSelected);
+            setShowConversation(false);
+          }
+
+          setError("This conversation was claimed by another counselor.");
+          return;
+        }
+
+        setError(msg);
       }
     },
-    [setItems]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [setItems, selectedId]
   );
 
 
@@ -1750,14 +1776,39 @@ export default function Inbox() {
 
     const offUpd = onThreadUpdate(() => refreshThreads());
     const offCreate = onThreadCreated(() => refreshThreads());
+    const offClaim = onThreadClaimed((payload) => {
+      const tid = String(payload?.threadId || "");
+      const claimedBy = String(payload?.counselorId || "");
+      if (!tid) return;
+
+      // ✅ PATCH (UX): if another counselor claimed it, remove it immediately.
+      if (claimedBy && claimedBy !== String(myId)) {
+        let nextSelected = "";
+        setItems((prev) => {
+          const next = (prev || []).filter((x) => String(x.id) !== tid);
+          if (String(selectedId) === tid) {
+            nextSelected = String(next?.[0]?.id || "");
+          }
+          return next;
+        });
+
+        if (String(selectedId) === tid) {
+          setSelectedId(nextSelected);
+          setShowConversation(false);
+        }
+
+        setError("This conversation was claimed by another counselor.");
+      }
+    });
 
     return () => {
       try { offNew?.(); } catch {}
       try { offUpd?.(); } catch {}
       try { offCreate?.(); } catch {}
+      try { offClaim?.(); } catch {}
       // keep socket alive (shared singleton)
     };
-  }, [refreshThreads, selectedId]);
+  }, [refreshThreads, selectedId, myId]);
 
   const InboxList = (
     <section className="rounded-2xl border border-slate-200 bg-white overflow-hidden flex flex-col h-full min-h-0">
