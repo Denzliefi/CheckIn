@@ -5,6 +5,9 @@ export const TOKEN_KEY = "token";
 export const ROLE_KEY = "role";
 export const USER_KEY = "user";
 
+// ✅ PATCH: legacy/alternate token keys used across older builds
+export const LEGACY_TOKEN_KEYS = ["checkin:token", "authToken"];
+
 const AUTH_EVENT = "auth:changed";
 
 function isBrowser() {
@@ -22,7 +25,22 @@ function readItem(key) {
 }
 
 export function getToken() {
-  return readItem(TOKEN_KEY);
+  // ✅ PATCH: match apiFetch token resolution to avoid socket/API mismatch.
+  // Priority: token -> checkin:token -> authToken, across local + session storage.
+  if (!isBrowser()) return null;
+  try {
+    return (
+      window.localStorage.getItem(TOKEN_KEY) ||
+      window.sessionStorage.getItem(TOKEN_KEY) ||
+      window.localStorage.getItem(LEGACY_TOKEN_KEYS[0]) ||
+      window.sessionStorage.getItem(LEGACY_TOKEN_KEYS[0]) ||
+      window.localStorage.getItem(LEGACY_TOKEN_KEYS[1]) ||
+      window.sessionStorage.getItem(LEGACY_TOKEN_KEYS[1]) ||
+      null
+    );
+  } catch {
+    return readItem(TOKEN_KEY);
+  }
 }
 
 export function getRole() {
@@ -51,7 +69,8 @@ let _lastKey = null;
 let _lastSnapshot = { token: null, isAuthed: false, user: null, role: null };
 
 function buildAuthKey() {
-  const token = readItem(TOKEN_KEY) || "";
+  // ✅ PATCH: token key should reflect *resolved* token (supports legacy storage)
+  const token = getToken() || "";
   const role = readItem(ROLE_KEY) || "";
   const userRaw = readItem(USER_KEY) || "";
   // key is a primitive string (stable compare)
@@ -90,7 +109,8 @@ export function subscribeAuth(callback) {
 
   const onStorage = (e) => {
     if (!e) return;
-    if ([TOKEN_KEY, USER_KEY, ROLE_KEY].includes(e.key)) callback();
+    // ✅ PATCH: react to legacy token key updates too (prevents stale UI across tabs)
+    if ([TOKEN_KEY, USER_KEY, ROLE_KEY, ...LEGACY_TOKEN_KEYS].includes(e.key)) callback();
   };
 
   window.addEventListener(AUTH_EVENT, onAuth);
@@ -119,6 +139,11 @@ export function setAuth({ token, user, rememberMe = true }) {
 
   const storage = rememberMe ? window.localStorage : window.sessionStorage;
   storage.setItem(TOKEN_KEY, token);
+
+  // ✅ PATCH: write legacy keys too for backward compatibility
+  storage.setItem(LEGACY_TOKEN_KEYS[0], token);
+  storage.setItem(LEGACY_TOKEN_KEYS[1], token);
+
   storage.setItem(USER_KEY, JSON.stringify(user ?? null));
   storage.setItem(ROLE_KEY, user?.role ?? "");
 
@@ -135,33 +160,32 @@ export function clearAuth({ notify = true } = {}) {
   window.localStorage.removeItem(USER_KEY);
   window.localStorage.removeItem(ROLE_KEY);
 
+  // ✅ PATCH: remove legacy token keys
+  for (const k of LEGACY_TOKEN_KEYS) window.localStorage.removeItem(k);
+
   window.sessionStorage.removeItem(TOKEN_KEY);
   window.sessionStorage.removeItem(USER_KEY);
   window.sessionStorage.removeItem(ROLE_KEY);
 
-  // ✅ PATCH: clear legacy token keys used across the app (prevents stale sessions)
-  try {
-    window.localStorage.removeItem("checkin:token");
-    window.sessionStorage.removeItem("checkin:token");
-    window.localStorage.removeItem("authToken");
-    window.sessionStorage.removeItem("authToken");
-  } catch {}
+  // ✅ PATCH: remove legacy token keys
+  for (const k of LEGACY_TOKEN_KEYS) window.sessionStorage.removeItem(k);
 
-  // ✅ PATCH: clear MessagesDrawer sessions (per-user keys)
+  // ✅ PATCH: also clear any saved chat session keys (prevents "session pickup")
   try {
-    const prefix = "counselor_chat_session_v1";
-    for (let i = window.localStorage.length - 1; i >= 0; i -= 1) {
-      const k = window.localStorage.key(i);
-      if (!k) continue;
-      if (k === prefix || k.startsWith(`${prefix}:`)) {
+    const keys = Object.keys(window.localStorage);
+    for (const k of keys) {
+      if (k === "counselor_chat_session_v1" || k.startsWith("counselor_chat_session_v1:")) {
         window.localStorage.removeItem(k);
       }
     }
   } catch {}
 
-  // ✅ PATCH: disconnect messaging socket on logout (best-effort)
+  // ✅ PATCH: best-effort disconnect of messaging socket (avoid stale realtime)
   try {
-    import("../api/messagesRealtime").then((m) => m.disconnectMessagesSocket?.()).catch(() => {});
+    // dynamic import avoids circular deps
+    import("../api/messagesRealtime")
+      .then((m) => m?.disconnectMessagesSocket?.())
+      .catch(() => {});
   } catch {}
 
   if (notify) emitAuthChanged();
