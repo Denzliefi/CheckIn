@@ -1727,9 +1727,84 @@ export default function Inbox() {
     }
   };
 
-  // realtime: refresh list and append deduped message for active thread
+
+
+  // realtime: refresh list and keep open conversation in sync (no manual refresh)
   useEffect(() => {
     const s = connectMessagesSocket();
+
+    // ✅ PATCH: After reconnect, re-join the currently opened thread so `message:new` arrives
+    const handleConnect = () => {
+      if (!selectedId) return;
+      try {
+        s.emit("thread:join", { threadId: String(selectedId) });
+      } catch {}
+    };
+    try {
+      s.on("connect", handleConnect);
+    } catch {}
+
+    // ✅ PATCH: If we only receive `thread:update` (metadata) but not `message:new`,
+    // sync messages for the active thread (throttled) so the body updates without refresh.
+    let syncing = false;
+    let lastSyncAt = 0;
+
+    const syncActiveThread = async (tid) => {
+      if (!tid) return;
+      const now = Date.now();
+      if (syncing) return;
+      if (now - lastSyncAt < 500) return; // throttle
+      syncing = true;
+      lastSyncAt = now;
+
+      try {
+        const res = await getThreadRaw(tid, { limit: 200 });
+        const t = res?.item;
+        const msgs = Array.isArray(t?.messages) ? t.messages : [];
+
+        const uiThread = msgs.map((m) => ({
+          id: String(m._id),
+          by: String(m.senderId) === String(myId) ? "Counselor" : "Participant",
+          at: formatClock(m.createdAt),
+          text: m.text,
+          _raw: m,
+        }));
+
+        setItems((prev) =>
+          prev.map((x) => {
+            if (String(x.id) !== String(tid)) return x;
+
+            // keep any local optimistic bubbles that haven't come back from API yet
+            const optimistic = safeArray(x.thread).filter((m) => m?._optimistic);
+            const seen = new Set(uiThread.map((m) => String(m.id)));
+            const merged = [...uiThread, ...optimistic.filter((m) => !seen.has(String(m.id)))];
+
+            const lastAt = t?.lastMessageAt || t?.updatedAt || t?.createdAt || x._raw?.lastMessageAt || x._raw?.updatedAt;
+            return {
+              ...x,
+              thread: merged,
+              lastMessage: t?.lastMessageText || t?.lastMessage || x.lastMessage,
+              lastSeen: lastAt ? ymd(new Date(lastAt)) : x.lastSeen,
+              lastActivity: Date.parse(String(lastAt)) || x.lastActivity,
+              _raw: t || x._raw,
+            };
+          })
+        );
+
+        // If the counselor is viewing this thread, mark it read (best effort)
+        try {
+          if (String(tid) === String(selectedId)) {
+            markThreadRead(tid).catch(() => {});
+          }
+        } catch {}
+
+        setScrollKey((k) => k + 1);
+      } catch {
+        // ignore sync errors; list still updates
+      } finally {
+        syncing = false;
+      }
+    };
 
     const offNew = onMessageNew((payload) => {
       const tid = String(payload?.threadId || "");
@@ -1740,7 +1815,6 @@ export default function Inbox() {
         prev.map((x) => {
           if (x.id !== tid) return x;
 
-          // if this thread is currently open, append message deduped
           const isOpen = String(tid) === String(selectedId);
           const thread = safeArray(x.thread);
 
@@ -1764,18 +1838,25 @@ export default function Inbox() {
             ...x,
             thread: nextThread,
             lastMessage: msg.text || x.lastMessage,
-            lastSeen: (lastAt ? ymd(new Date(lastAt)) : x.lastSeen),
+            lastSeen: lastAt ? ymd(new Date(lastAt)) : x.lastSeen,
             lastActivity: Date.parse(String(lastAt)) || x.lastActivity,
           };
         })
       );
 
-      // list metadata will be updated via thread:update events
       setScrollKey((k) => k + 1);
     });
 
-    const offUpd = onThreadUpdate(() => refreshThreads());
+    const offUpd = onThreadUpdate((payload) => {
+      refreshThreads();
+      const tid = String(payload?.threadId || "");
+      if (tid && String(tid) === String(selectedId)) {
+        syncActiveThread(tid);
+      }
+    });
+
     const offCreate = onThreadCreated(() => refreshThreads());
+
     const offClaim = onThreadClaimed((payload) => {
       const tid = String(payload?.threadId || "");
       const claimedBy = String(payload?.counselorId || "");
@@ -1801,14 +1882,29 @@ export default function Inbox() {
       }
     });
 
+    // ✅ PATCH: also try to re-join the room right away (in case socket is already connected)
+    handleConnect();
+
     return () => {
-      try { offNew?.(); } catch {}
-      try { offUpd?.(); } catch {}
-      try { offCreate?.(); } catch {}
-      try { offClaim?.(); } catch {}
+      try {
+        offNew?.();
+      } catch {}
+      try {
+        offUpd?.();
+      } catch {}
+      try {
+        offCreate?.();
+      } catch {}
+      try {
+        offClaim?.();
+      } catch {}
+      try {
+        s.off("connect", handleConnect);
+      } catch {}
       // keep socket alive (shared singleton)
     };
   }, [refreshThreads, selectedId, myId]);
+
 
   const InboxList = (
     <section className="rounded-2xl border border-slate-200 bg-white overflow-hidden flex flex-col h-full min-h-0">
