@@ -1,19 +1,41 @@
 // frontend/src/api/messagesRealtime.js
 import { io } from "socket.io-client";
-import { getSocketBaseUrl, getToken } from "./messages.api";
+import { getApiBaseUrl } from "./apiFetch";
+import { getToken } from "../utils/auth";
 
 let socket = null;
+let lastToken = null;
+
+function getSocketUrl() {
+  const base = getApiBaseUrl();
+  if (base && String(base).trim()) return String(base).replace(/\/+$/, "");
+  // local dev fallback
+  return "http://localhost:5000";
+}
 
 export function connectMessagesSocket() {
+  const token = getToken() || "";
+
+  // If token changed, recreate the socket (prevents stale-user pickup)
+  if (socket && lastToken !== token) {
+    try {
+      socket.disconnect();
+    } catch {}
+    socket = null;
+  }
+
   if (socket) {
     try {
+      // update auth for reconnect attempts
+      socket.auth = { token };
       if (!socket.connected) socket.connect();
     } catch {}
+    lastToken = token;
     return socket;
   }
 
-  const url = getSocketBaseUrl();
-  const token = getToken();
+  const url = getSocketUrl();
+  lastToken = token;
 
   socket = io(url, {
     transports: ["websocket", "polling"],
@@ -37,6 +59,7 @@ export function disconnectMessagesSocket() {
     socket.disconnect();
   } catch {}
   socket = null;
+  lastToken = null;
 }
 
 export function onMessageNew(handler) {
@@ -57,6 +80,11 @@ export function onThreadCreated(handler) {
   return () => s.off("thread:created", handler);
 }
 
+export function onThreadClaimed(handler) {
+  const s = connectMessagesSocket();
+  s.on("thread:claimed", handler);
+  return () => s.off("thread:claimed", handler);
+}
 
 export function joinThread(threadId) {
   if (!threadId) return;

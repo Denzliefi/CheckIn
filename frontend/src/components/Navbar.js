@@ -2,6 +2,7 @@
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { useEffect, useRef, useState } from "react";
 import { clearAuth, useAuth } from "../utils/auth";
+import { disconnectMessagesSocket } from "../api/messagesRealtime";
 
 
 
@@ -162,6 +163,8 @@ export default function Navbar() {
   const doLogout = () => {
     setUserOpen(false);
     setOpen(false);
+
+    try { disconnectMessagesSocket(); } catch {}
 
     clearAuth({ notify: true });
     navigate("/login", { replace: true });

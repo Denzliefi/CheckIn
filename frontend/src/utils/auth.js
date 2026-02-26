@@ -139,6 +139,31 @@ export function clearAuth({ notify = true } = {}) {
   window.sessionStorage.removeItem(USER_KEY);
   window.sessionStorage.removeItem(ROLE_KEY);
 
+  // ✅ PATCH: clear legacy token keys used across the app (prevents stale sessions)
+  try {
+    window.localStorage.removeItem("checkin:token");
+    window.sessionStorage.removeItem("checkin:token");
+    window.localStorage.removeItem("authToken");
+    window.sessionStorage.removeItem("authToken");
+  } catch {}
+
+  // ✅ PATCH: clear MessagesDrawer sessions (per-user keys)
+  try {
+    const prefix = "counselor_chat_session_v1";
+    for (let i = window.localStorage.length - 1; i >= 0; i -= 1) {
+      const k = window.localStorage.key(i);
+      if (!k) continue;
+      if (k === prefix || k.startsWith(`${prefix}:`)) {
+        window.localStorage.removeItem(k);
+      }
+    }
+  } catch {}
+
+  // ✅ PATCH: disconnect messaging socket on logout (best-effort)
+  try {
+    import("../api/messagesRealtime").then((m) => m.disconnectMessagesSocket?.()).catch(() => {});
+  } catch {}
+
   if (notify) emitAuthChanged();
 }
 

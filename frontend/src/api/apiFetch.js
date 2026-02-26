@@ -1,3 +1,5 @@
+import { getToken } from "../utils/auth";
+
 // src/api/apiFetch.js
 // Shared fetch helper: consistent base URL + auth header + JSON/error parsing
 
@@ -27,26 +29,12 @@ function joinUrl(base, path) {
   return `${b}${pp}`;
 }
 
-function getToken() {
-  try {
-    // Supports rememberMe=false (sessionStorage) + common token keys
-    return (
-      localStorage.getItem("token") ||
-      sessionStorage.getItem("token") ||
-      localStorage.getItem("checkin:token") ||
-      sessionStorage.getItem("checkin:token") ||
-      ""
-    );
-  } catch {
-    return "";
-  }
-}
 
 export async function apiFetch(path, options = {}) {
   const base = getApiBaseUrl();
   const url = joinUrl(base, path);
 
-  const token = getToken();
+  const token = getToken() || "";
 
   const headers = { ...(options.headers || {}) };
 

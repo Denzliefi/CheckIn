@@ -1,22 +1,15 @@
 // frontend/src/api/messages.api.js
 import { apiFetch, getApiBaseUrl } from "./apiFetch";
+import { getToken as getTokenFromAuth } from "../utils/auth";
 
 /* =========================================================
    JWT helper (no extra deps)
 ========================================================= */
 export function getToken() {
-  try {
-    return (
-      window.localStorage.getItem("token") ||
-      window.localStorage.getItem("checkin:token") ||
-      window.localStorage.getItem("authToken") ||
-      window.sessionStorage.getItem("token") ||
-      ""
-    );
-  } catch {
-    return "";
-  }
+  // Canonical token source (shared with apiFetch + sockets)
+  return getTokenFromAuth() || "";
 }
+
 
 export function getMyUserId() {
   const token = getToken();

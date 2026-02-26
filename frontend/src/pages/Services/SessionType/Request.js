@@ -657,16 +657,10 @@ export default function Request({ onClose }) {
 
   const handleRefreshThreads = useCallback(
     async (opts = null) => {
-      // ✅ Drawer requests identity BEFORE first message
-      let ensuredThreadId = "";
-
-      if (opts && typeof opts.anonymous === "boolean") {
-        const ensured = await ensureThread({ anonymous: !!opts.anonymous }).catch(() => null);
-        ensuredThreadId = String(ensured?.item?._id || ensured?.item?.id || "");
-      }
-
+      // ✅ PATCH: Do NOT create threads on identity selection.
+      // The session starts ONLY when the student sends the first message.
       await bootChat();
-      return ensuredThreadId;
+      return "";
     },
     [bootChat]
   );
@@ -684,8 +678,25 @@ export default function Request({ onClose }) {
 
   const handleSendMessage = async ({ threadId, text, senderMode }) => {
     const clean = String(text ?? "").trim();
-    const tid = String(threadId || "").trim();
-    if (!tid || !clean) return;
+    let tid = String(threadId || "").trim();
+    if (!clean) return;
+
+    // ✅ PATCH: If no thread yet (brand-new session), create/ensure it now.
+    // This prevents "session started" inbox pings until a real message exists.
+    if (!tid) {
+      const mode = String(senderMode || "student").toLowerCase();
+      const wantsAnonymous = mode === "anonymous";
+
+      const ensured = await ensureThread({ anonymous: wantsAnonymous }).catch(() => null);
+      tid = String(ensured?.item?._id || ensured?.item?.id || "");
+
+      // refresh local threads so optimistic mapping finds the new thread
+      if (tid) {
+        await bootChat();
+      }
+    }
+
+    if (!tid) return;
 
     const localTime = new Intl.DateTimeFormat("en-US", {
       timeZone: PH_TZ,
@@ -777,6 +788,9 @@ export default function Request({ onClose }) {
       setChatError(err?.message || "Failed to send message.");
       throw err;
     }
+
+    // ✅ PATCH: return ensured threadId to MessagesDrawer so it can setActiveId
+    return { threadId: tid };
   };
 
   const close = () => {
@@ -1767,9 +1781,7 @@ export default function Request({ onClose }) {
                                 </div>
                               ) : null}
                             </div>
-                            {c._status !== "Available" ? (
-                              <StatusPill status={c._status} accent={LOGIN_PRIMARY} />
-                            ) : null}
+                            <StatusPill status={c._status} accent={LOGIN_PRIMARY} />
                           </div>
                         </button>
                       );

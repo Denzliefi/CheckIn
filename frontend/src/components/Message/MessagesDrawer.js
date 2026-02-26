@@ -9,6 +9,7 @@ import React, {
 
 const TEXT_MAIN = "#141414";
 const EXPIRE_MS = 24 * 60 * 60 * 1000;
+// ✅ PATCH: per-user session storage prefix (prevents shared-device session pickup)
 const LS_KEY = "counselor_chat_session_v1";
 
 function useMedia(query) {
@@ -193,6 +194,12 @@ export default function MessagesDrawer({open,
     return isValidEmail(email) ? email : "";
   }, [userIdentity]);
 
+  // ✅ PATCH: Session key is per-user (email-based). If email is unavailable, fall back to legacy key.
+  const sessionKey = useMemo(() => {
+    const e = String(loggedInEmail || "").trim().toLowerCase();
+    return e ? `${LS_KEY}:${e}` : LS_KEY;
+  }, [loggedInEmail]);
+
   // views: mode | email | chat
   const [view, setView] = useState("mode");
   const [mode, setMode] = useState(null); // student | anonymous
@@ -361,18 +368,24 @@ export default function MessagesDrawer({open,
 
   const loadSession = useCallback(() => {
     if (typeof window === "undefined") return null;
-    return safeParse(window.localStorage.getItem(LS_KEY), null);
-  }, []);
+    // ✅ PATCH: read per-user session key
+    return safeParse(window.localStorage.getItem(sessionKey), null);
+  }, [sessionKey]);
 
-  const saveSession = useCallback((next) => {
-    if (typeof window === "undefined") return;
-    window.localStorage.setItem(LS_KEY, JSON.stringify(next));
-  }, []);
+  const saveSession = useCallback(
+    (next) => {
+      if (typeof window === "undefined") return;
+      // ✅ PATCH: write per-user session key
+      window.localStorage.setItem(sessionKey, JSON.stringify(next));
+    },
+    [sessionKey],
+  );
 
   const clearSession = useCallback(() => {
     if (typeof window === "undefined") return;
-    window.localStorage.removeItem(LS_KEY);
-  }, []);
+    // ✅ PATCH: clear per-user session key
+    window.localStorage.removeItem(sessionKey);
+  }, [sessionKey]);
 
   const resetToStart = useCallback(() => {
     setView("mode");
@@ -658,18 +671,9 @@ export default function MessagesDrawer({open,
       setMenuOpen(false);
       setVisibleCount(PAGE_SIZE);
 
-      // Ensure there is an open thread, and set its identity mode BEFORE first message
-      let threadId = activeThread?.id || initialThreadId || threads?.[0]?.id || "";
-
-      if (typeof onRefreshThreads === "function") {
-        const ensuredId = await onRefreshThreads({
-          anonymous: wantsAnonymous,
-          reason: wantsAnonymous ? "anonymous_start" : "student_start",
-        });
-        if (ensuredId) threadId = String(ensuredId);
-      }
-
-      threadId = threadId || activeThread?.id || initialThreadId || threads?.[0]?.id || "";
+      // ✅ PATCH: DO NOT create/ensure a thread when selecting identity.
+      // Session should start ONLY when the student sends the first message.
+      const threadId = activeThread?.id || initialThreadId || threads?.[0]?.id || "";
 
       if (wantsAnonymous) {
         startNewChatSession({
@@ -703,14 +707,8 @@ export default function MessagesDrawer({open,
 
     setStartingMode(true);
     try {
-      let threadId = activeThread?.id || initialThreadId || threads?.[0]?.id || "";
-
-      if (typeof onRefreshThreads === "function") {
-        const ensuredId = await onRefreshThreads({ anonymous: false, reason: "student_start" });
-        if (ensuredId) threadId = String(ensuredId);
-      }
-
-      threadId = threadId || activeThread?.id || initialThreadId || threads?.[0]?.id || "";
+      // ✅ PATCH: No thread creation here; first message will create/ensure.
+      const threadId = activeThread?.id || initialThreadId || threads?.[0]?.id || "";
 
       startNewChatSession({
         nextMode: "student",
@@ -807,7 +805,6 @@ export default function MessagesDrawer({open,
     const raw = typeof textOverride === "string" ? textOverride : draft;
     const text = raw.trim();
 
-    if (!activeThread) return;
     if (counselorClosed) return;
     if (!text) return;
 
@@ -828,13 +825,22 @@ export default function MessagesDrawer({open,
     }
 
     const payload = {
-      threadId: activeThread.id,
+      // ✅ PATCH: threadId may be empty for brand-new sessions.
+      // Parent will ensure/create thread on first send.
+      threadId: activeThread?.id || "",
       text,
       senderMode: mode,
     };
 
     try {
-      await onSendMessage?.(payload);
+      const result = await onSendMessage?.(payload);
+
+      // ✅ PATCH: If parent created a thread, attach UI to it.
+      const ensuredId =
+        (result && (result.threadId || result?.item?._id || result?.item?.id)) || "";
+      if (!activeThread && ensuredId) {
+        setActiveId(String(ensuredId));
+      }
     } catch (err) {
       console.error(err);
       setDraft(raw);
@@ -892,7 +898,14 @@ export default function MessagesDrawer({open,
     };
   }, [isMobile]);
 
-  const canSend = draft.trim().length > 0 && !counselorClosed && !!activeThread;
+  // ✅ PATCH: allow composing/sending BEFORE a thread exists.
+  // Thread will be ensured/created on first send.
+  const canSend =
+    view === "chat" &&
+    draft.trim().length > 0 &&
+    !counselorClosed &&
+    !!mode &&
+    !startingMode;
 
   const myAvatarFallback = useMemo(() => {
     const mMode = mode || "student";
@@ -1386,12 +1399,11 @@ export default function MessagesDrawer({open,
                 }
                 style={{
                   ...styles.textarea,
-                  ...(counselorClosed || !activeThread
-                    ? styles.textareaDisabled
-                    : null),
+                  ...(counselorClosed ? styles.textareaDisabled : null),
                 }}
                 rows={1}
-                disabled={counselorClosed || !activeThread}
+                // ✅ PATCH: allow typing even before thread exists
+                disabled={counselorClosed}
               />
 
               <button
