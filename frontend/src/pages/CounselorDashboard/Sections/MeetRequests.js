@@ -1914,11 +1914,7 @@ function addMinutesToTime(timeStr, addMins = 60) {
   // Office stays dynamic-ish (for legacy data), but campus label in UI is static.
   const officeMeta = useMemo(() => getOfficeMeta(selected?.counselor?.campus, selected?.student?.campus), [selected]);
 
-  const originalRescheduleOk = useMemo(() => {
-    if (!selected) return true;
-    return isTwoHoursBeforeSession(selected.date, selected.time);
-  }, [selected]);
-
+  
   const newScheduleOk = useMemo(() => {
     const date = String(reschedDateDraft || "").trim();
     const time = String(reschedTimeDraft || "").trim();
@@ -1928,14 +1924,13 @@ function addMinutesToTime(timeStr, addMins = 60) {
     return Date.now() <= startMs - 2 * 60 * 60 * 1000;
   }, [reschedDateDraft, reschedTimeDraft]);
 
-  const reschedError = useMemo(() => {
+    const reschedError = useMemo(() => {
     if (!selected) return "";
-    if (!originalRescheduleOk) return "Reschedule blocked: you must reschedule at least 2 hours before the current session.";
     if (!reschedDateDraft) return "Please choose a new date.";
     if (!reschedTimeDraft) return "Please choose a new time.";
     if (!newScheduleOk) return "Invalid new schedule: must be at least 2 hours from now.";
     return "";
-  }, [selected, originalRescheduleOk, reschedDateDraft, reschedTimeDraft, newScheduleOk]);
+  }, [selected, reschedDateDraft, reschedTimeDraft, newScheduleOk]);
 
   const saveMeetLink = async () => {
   if (!selected?.id) return;
@@ -2384,7 +2379,7 @@ function addMinutesToTime(timeStr, addMins = 60) {
 
             <div className="px-4 sm:px-6 py-4 border-b border-slate-200">
               <div className="text-base font-black text-slate-900">Reschedule appointment</div>
-              <div className="text-xs font-bold text-slate-500 mt-1">Must be rescheduled at least 2 hours before the session.</div>
+              <div className="text-xs font-bold text-slate-500 mt-1">Must be at least 2 hours from now.</div>
             </div>
 
             <div className="flex-1 min-h-0 overflow-auto p-4 sm:p-6 space-y-3 bg-slate-50">
