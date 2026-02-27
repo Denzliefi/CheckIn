@@ -71,6 +71,20 @@ function formatRelative(isoOrDate) {
   }
 }
 
+
+/* =========================================================
+   Media URL helper (avatars)
+========================================================= */
+function resolveMediaUrl(url) {
+  const u = String(url || "").trim();
+  if (!u) return "";
+  if (/^https?:\/\//i.test(u) || u.startsWith("data:")) return u;
+
+  const base = String(getApiBaseUrl() || "").replace(/\/+$/, "");
+  if (base && u.startsWith("/")) return `${base}${u}`;
+  return u; // best-effort
+}
+
 /* =========================================================
    Raw API
 ========================================================= */
@@ -190,7 +204,7 @@ export function toDrawerThreads(rawThreads = []) {
       id: threadId,
       counselorName: counselor?.fullName || "Counselor",
       counselorUsername: counselor?.fullName || "Counselor",
-      counselorAvatarUrl: "",
+      counselorAvatarUrl: resolveMediaUrl(counselor?.avatarUrl || counselor?.photoURL || counselor?.photoUrl || counselor?.profilePictureUrl || counselor?.profilePicture || ""),
       counselorOnline: false,
       status: t.status || "open",
       anonymous: !!t.anonymous,

@@ -415,6 +415,17 @@ function Sparkline({ values }) {
 ----------------------------- */
 const PH_TZ = "Asia/Manila";
 
+function resolveAvatarUrl(url) {
+  const u = String(url || "").trim();
+  if (!u) return "";
+  if (/^https?:\/\//i.test(u) || u.startsWith("data:")) return u;
+
+  const base = String(process.env.REACT_APP_API_URL || "").replace(/\/+$/, "");
+  if (base && u.startsWith("/")) return `${base}${u}`;
+  return u;
+}
+
+
 function formatClock(iso) {
   try {
     return new Intl.DateTimeFormat("en-US", {
@@ -457,6 +468,8 @@ function mapThreadToParticipant(raw, myId) {
 
   const studentId = (!anonymous && student?.studentNumber) ? `#${student.studentNumber}` : null;
 
+  const avatarUrl = (!anonymous && mine && student?.avatarUrl) ? resolveAvatarUrl(student.avatarUrl) : "";
+
   const lastMessage = raw?.lastMessageText || raw?.lastMessage || "—";
   const lastAtISO = raw?.lastMessageAt || raw?.updatedAt || raw?.createdAt || null;
   const lastSeen = lastAtISO ? String(lastAtISO).slice(0, 10) : "";
@@ -472,6 +485,7 @@ function mapThreadToParticipant(raw, myId) {
     studentId,
     anonymous,
     displayName,
+    avatarUrl,
     read,
     lastSeen,
     lastMessage,
@@ -489,7 +503,7 @@ function makeClientId() {
 /* -----------------------------
   UI primitives
 ----------------------------- */
-function Avatar({ label }) {
+function Avatar({ label, src = "" }) {
   const initials = String(label || "?")
     .replace(/Anonymous (Participant|Student)\s*\([^)]+\)/i, "Anonymous")
     .split(" ")
@@ -497,6 +511,26 @@ function Avatar({ label }) {
     .slice(0, 2)
     .map((w) => w[0]?.toUpperCase())
     .join("");
+
+  const resolved = resolveAvatarUrl(src);
+  const [broken, setBroken] = useState(false);
+
+  useEffect(() => {
+    setBroken(false);
+  }, [resolved]);
+
+  if (resolved && !broken) {
+    return (
+      <div className="w-9 h-9 rounded-full overflow-hidden border border-slate-200 shadow-sm bg-white">
+        <img
+          src={resolved}
+          alt={label || "Avatar"}
+          className="w-full h-full object-cover"
+          onError={() => setBroken(true)}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="w-9 h-9 rounded-full bg-slate-900 text-white flex items-center justify-center text-xs font-black shadow-sm">
@@ -677,7 +711,7 @@ function AnimatedInboxList({
                   ].join(" ")}
                   type="button"
                 >
-                  <Avatar label={x.displayName} />
+                  <Avatar label={x.displayName} src={x.avatarUrl} />
 
                   <div className="min-w-0 flex-1">
                     <div className="flex items-baseline justify-between gap-3">
@@ -725,14 +759,14 @@ function AnimatedInboxList({
 /* -----------------------------
   Messenger-like chat area
 ----------------------------- */
-function ChatBubble({ by, text }) {
+function ChatBubble({ by, text, participantAvatarUrl = "" }) {
   const isCounselor = by === "Counselor";
 
   return (
     <div className={["flex items-start gap-2.5", isCounselor ? "justify-end" : "justify-start"].join(" ")}>
       {!isCounselor ? (
         <div className="shrink-0">
-          <Avatar label="Student" />
+          <Avatar label="Student" src={participantAvatarUrl} />
         </div>
       ) : null}
 
@@ -1049,7 +1083,7 @@ function ConversationPane({
       <div className="shrink-0 sticky top-0 z-30 px-4 py-3 border-b border-slate-200 bg-white space-y-3">
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0">
-            {selected ? <Avatar label={selected.displayName} /> : <Avatar label="—" />}
+            {selected ? <Avatar label={selected.displayName} src={selected.avatarUrl} /> : <Avatar label="—" />}
 
             <div className="min-w-0">
               <div className="text-sm font-black text-slate-900 truncate">{selected?.displayName || "Select a conversation"}</div>
@@ -1166,7 +1200,7 @@ function ConversationPane({
                 </div>
 
                 {safeArray(selected.thread).map((m) => (
-                  <ChatBubble key={m.id} by={m.by} text={m.text} />
+                  <ChatBubble key={m.id} by={m.by} text={m.text} participantAvatarUrl={selected.avatarUrl} />
                 ))}
               </div>
 

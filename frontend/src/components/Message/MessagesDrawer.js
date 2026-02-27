@@ -9,6 +9,17 @@ import React, {
 
 const TEXT_MAIN = "#141414";
 const EXPIRE_MS = 24 * 60 * 60 * 1000;
+
+// Avatar URLs may be stored as relative paths (e.g. /uploads/avatars/..). Resolve against API base.
+function resolveAvatarSrc(src) {
+  const s = String(src || "").trim();
+  if (!s) return "";
+  if (/^https?:\/\//i.test(s) || s.startsWith("data:")) return s;
+  const base = String(process.env.REACT_APP_API_URL || "").replace(/\/+$/, "");
+  if (base && s.startsWith("/")) return `${base}${s}`;
+  return s;
+}
+
 // ✅ PATCH: per-user session storage prefix (prevents shared-device session pickup)
 const LS_KEY = "counselor_chat_session_v1";
 
@@ -125,7 +136,14 @@ function Avatar({
   title = "",
 }) {
   const s = Number(size) || 40;
-  const hasSrc = Boolean(src);
+  const resolved = resolveAvatarSrc(src);
+  const [broken, setBroken] = useState(false);
+
+  useEffect(() => {
+    setBroken(false);
+  }, [resolved]);
+
+  const showImg = Boolean(resolved) && !broken;
 
   return (
     <div
@@ -144,14 +162,12 @@ function Avatar({
         flex: "0 0 auto",
       }}
     >
-      {hasSrc ? (
+      {showImg ? (
         <img
-          src={src}
+          src={resolved}
           alt={label}
           style={{ width: "100%", height: "100%", objectFit: "cover" }}
-          onError={(e) => {
-            e.currentTarget.style.display = "none";
-          }}
+          onError={() => setBroken(true)}
         />
       ) : (
         <span
@@ -169,6 +185,7 @@ function Avatar({
     </div>
   );
 }
+
 
 export default function MessagesDrawer({open,
   onClose,
@@ -258,11 +275,11 @@ export default function MessagesDrawer({open,
 
   const counselorAvatarUrl = useMemo(() => {
     const t = activeThread || threads?.[0] || {};
-    return String(t.counselorAvatarUrl || t.counselorAvatar || "").trim();
+    return resolveAvatarSrc(t.counselorAvatarUrl || t.counselorAvatar || "");
   }, [activeThread, threads]);
 
   const userAvatarUrl = useMemo(() => {
-    return String(userIdentity?.avatarUrl || userIdentity?.avatar || "").trim();
+    return resolveAvatarSrc(userIdentity?.avatarUrl || userIdentity?.avatar || "");
   }, [userIdentity]);
 
   const counselorOnline = useMemo(() => {

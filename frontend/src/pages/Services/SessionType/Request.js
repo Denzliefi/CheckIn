@@ -91,8 +91,26 @@ function pickIdentity(obj) {
     obj.user?.studentNo ||
     "";
 
-  return { email, name, studentNumber };
+
+  const avatarUrl =
+    obj.avatarUrl ||
+    obj.user?.avatarUrl ||
+    obj.profile?.avatarUrl ||
+    obj.account?.avatarUrl ||
+    obj.data?.avatarUrl ||
+    obj.photoURL ||
+    obj.photoUrl ||
+    obj.user?.photoURL ||
+    obj.user?.photoUrl ||
+    obj.profilePictureUrl ||
+    obj.profilePicture ||
+    obj.user?.profilePictureUrl ||
+    obj.user?.profilePicture ||
+    "";
+
+  return { email, name, studentNumber, avatarUrl };
 }
+
 
 function readLoggedInIdentity() {
   if (typeof window === "undefined") return null;
@@ -438,9 +456,17 @@ export default function Request({ onClose }) {
 
   useEffect(() => {
     if (typeof window === "undefined") return undefined;
-    const onStorage = () => setUserIdentity(readLoggedInIdentity());
-    window.addEventListener("storage", onStorage);
-    return () => window.removeEventListener("storage", onStorage);
+
+    const sync = () => setUserIdentity(readLoggedInIdentity());
+
+    window.addEventListener("storage", sync);
+    // ✅ same-tab updates (ProfileSettings -> updateAuthUser emits this)
+    window.addEventListener("auth:changed", sync);
+
+    return () => {
+      window.removeEventListener("storage", sync);
+      window.removeEventListener("auth:changed", sync);
+    };
   }, []);
 
   const [openMessages, setOpenMessages] = useState(false);
@@ -622,6 +648,15 @@ export default function Request({ onClose }) {
           lastTime: "now",
           unread: openMessages ? 0 : unreadNext,
         };
+
+        // If counselor info is included in realtime payload (claim-on-reply), update header/avatar immediately
+        const counselorSnap = payload?.thread?.counselor || null;
+        if (counselorSnap && (counselorSnap.fullName || counselorSnap.avatarUrl)) {
+          updated.counselorName = counselorSnap.fullName || updated.counselorName;
+          updated.counselorUsername = counselorSnap.fullName || updated.counselorUsername;
+          // allow relative /uploads/...; MessagesDrawer will normalize
+          updated.counselorAvatarUrl = counselorSnap.avatarUrl || updated.counselorAvatarUrl;
+        }
 
         const next = [...prev];
         next[i] = updated;
