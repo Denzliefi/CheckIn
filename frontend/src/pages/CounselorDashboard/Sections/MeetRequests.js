@@ -448,6 +448,7 @@ function normalizeApiMeetRequest(raw, counselorDirectory) {
   return {
     id,
     status,
+    disapprovalReason: String(raw.disapprovalReason || "").trim(),
     date,
     time,
     mode,
@@ -1055,6 +1056,12 @@ function ConfirmActionModal({
   summaryLines = [],
   confirmText = "Continue",
   cancelText = "Cancel",
+  reasonRequired = false,
+  reasonLabel = "Counselor reason",
+  reasonPlaceholder = "Write the reason for disapproval…",
+  reasonHint = "This will be shown to the student under “Counselor reason”.",
+  reasonValue = "",
+  onReasonChange,
   error,
   onCancel,
   onConfirm,
@@ -1100,6 +1107,21 @@ function ConfirmActionModal({
             <div className="text-sm font-medium text-slate-700">No details available.</div>
           )}
         </div>
+
+        {reasonRequired ? (
+          <div className="mt-4">
+            <div className="text-xs font-bold text-slate-500">{reasonLabel}</div>
+            <textarea
+              value={reasonValue}
+              onChange={(e) => onReasonChange?.(e.target.value)}
+              rows={4}
+              maxLength={600}
+              placeholder={reasonPlaceholder}
+              className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-800 outline-none focus:ring-4 focus:ring-slate-100 resize-none"
+            />
+            <div className="mt-2 text-[11px] font-bold text-slate-500">{reasonHint}</div>
+          </div>
+        ) : null}
 
         {error ? <div className="mt-3 text-sm font-medium text-red-600">{error}</div> : null}
 
@@ -1212,7 +1234,6 @@ function MeetLinkBeforeApproveModal({
             {emailOpened ? "✅ Email draft opened. Please send it, then continue." : "Open the email draft to send the link."}
           </div>
         </div>
-
         {error ? <div className="mt-3 text-sm font-medium text-red-600">{error}</div> : null}
 
         <div className="mt-6 flex flex-col sm:flex-row justify-end gap-2">
@@ -1415,8 +1436,22 @@ const [confirmMeta, setConfirmMeta] = useState({
   description: "Please confirm you want to apply this action.",
   summaryLines: [],
   confirmText: "Continue",
+  requiresReason: false,
+  reasonLabel: "Counselor reason",
+  reasonPlaceholder: "Write the reason for disapproval…",
+  reasonHint: "This will be shown to the student under “Counselor reason”.",
   action: null,
 });
+
+const [disapproveReasonDraft, setDisapproveReasonDraft] = useState("");
+const disapproveReasonRef = useRef("");
+
+const setDisapproveReason = (v) => {
+  const next = String(v || "");
+  setDisapproveReasonDraft(next);
+  disapproveReasonRef.current = next;
+};
+
 
 const [meetLinkFlowOpen, setMeetLinkFlowOpen] = useState(false);
 const [meetLinkFlowBusy, setMeetLinkFlowBusy] = useState(false);
@@ -1438,7 +1473,8 @@ const closeConfirm = useCallback(() => {
   if (confirmBusy) return;
   setConfirmOpen(false);
   setConfirmError("");
-  setConfirmMeta((prev) => ({ ...prev, action: null }));
+  setDisapproveReason("");
+  setConfirmMeta((prev) => ({ ...prev, action: null, requiresReason: false }));
 }, [confirmBusy]);
 
 const runConfirmed = useCallback(async () => {
@@ -1447,6 +1483,14 @@ const runConfirmed = useCallback(async () => {
     closeConfirm();
     return;
   }
+  if (confirmMeta?.requiresReason) {
+    const reason = String(disapproveReasonRef.current || "").trim();
+    if (!reason) {
+      setConfirmError("Please enter the counselor reason for disapproval.");
+      return;
+    }
+  }
+
   setConfirmBusy(true);
   setConfirmError("");
   try {
@@ -1619,7 +1663,7 @@ useEffect(() => {
       : byTab.filter((r) => {
           const hay = (
             `${r.status} ${r.createdAt} ${r.updatedAt || ""} ${r.date} ${r.time} ${r.mode} ${r.reason} ` +
-            `${r.student?.name || ""} ${r.student?.studentId || ""} ${r.student?.email || ""} ${r.student?.courses || ""}`
+            `${r.student?.name || ""} ${r.student?.studentId || ""} ${r.student?.email || ""} ${r.student?.courses || ""} ${r.disapprovalReason || ""}`
           ).toLowerCase();
           return hay.includes(needle);
         });
@@ -1700,6 +1744,7 @@ const confirmApprove = (r) => {
 const confirmDisapprove = (r) => {
   if (!r?.id) return;
   const b = summarizeRequestBasics(r);
+  setDisapproveReason("");
   openConfirm({
     title: "Are you sure?",
     description: "Please confirm you want to disapprove this counseling request.",
@@ -1711,7 +1756,11 @@ const confirmDisapprove = (r) => {
       `Reason: ${b.reason}`,
     ],
     confirmText: "Continue",
-    action: async () => disapproveRequest(r),
+    requiresReason: true,
+    reasonLabel: "Counselor reason",
+    reasonPlaceholder: "Write the reason for disapproval…",
+    reasonHint: "This will be shown to the student under “Counselor reason”.",
+    action: async () => disapproveRequest(r, disapproveReasonRef.current),
   });
 };
 
@@ -1856,12 +1905,13 @@ const approveRequest = async (r, opts = {}) => {
   }
 };
 
-const disapproveRequest = async (r) => {
+const disapproveRequest = async (r, reasonText) => {
   if (!r?.id) return;
+  const reason = String(reasonText || "").trim();
   try {
     await apiFetch(`/api/counseling/admin/requests/${r.id}/disapprove`, {
       method: "PATCH",
-      body: JSON.stringify({ reason: "Disapproved." }),
+      body: JSON.stringify({ reason: reason || "Disapproved." }),
     });
     await refreshAfterAction();
   } catch (e) {
@@ -2035,6 +2085,12 @@ function addMinutesToTime(timeStr, addMins = 60) {
         description={confirmMeta.description}
         summaryLines={confirmMeta.summaryLines}
         confirmText={confirmMeta.confirmText}
+        reasonRequired={!!confirmMeta.requiresReason}
+        reasonLabel={confirmMeta.reasonLabel}
+        reasonPlaceholder={confirmMeta.reasonPlaceholder}
+        reasonHint={confirmMeta.reasonHint}
+        reasonValue={disapproveReasonDraft}
+        onReasonChange={setDisapproveReason}
         error={confirmError}
         onCancel={closeConfirm}
         onConfirm={runConfirmed}

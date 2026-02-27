@@ -84,6 +84,7 @@ function normalizeRequest(raw) {
     date: raw.date || "",
     time: raw.time || "",
     notes: raw.notes || "",
+    disapprovalReason: raw.disapprovalReason || "",
     counselorId: raw.counselorId?._id ? String(raw.counselorId._id) : String(raw.counselorId || ""),
     counselorName:
       raw.counselorName ||
@@ -302,6 +303,7 @@ export default function ViewRequest() {
         r.counselorId,
         r.message,
         r.counselorReply,
+        r.disapprovalReason,
       ]
         .filter(Boolean)
         .join(" ")
@@ -400,15 +402,6 @@ export default function ViewRequest() {
               >
                 + New Request
               </button>
-
-              <button
-                type="button"
-                onClick={fetchRequests}
-                className="cc-focus cc-clickable rounded-full font-extrabold shadow-sm border border-gray-300 bg-white/80 px-4 py-2 hover:bg-white transition"
-                aria-label="Refresh requests"
-              >
-                Refresh
-              </button>
             </div>
 
             {error && (
@@ -456,8 +449,6 @@ export default function ViewRequest() {
             <DetailsCard
               item={selected}
               counselorName={selected.counselorName || counselorMap[selected.counselorId] || "Any"}
-              onCancel={() => cancelRequest(selected.id)}
-              cancelDisabled={busyId === selected.id}
             />
           </CenterModal>
         )}
@@ -468,7 +459,7 @@ export default function ViewRequest() {
 
 /* ===================== TABS ===================== */
 function Tabs({ items, active, counts, onChange }) {
-  const isCompact = useMediaQuery("(max-width: 1024px)");
+  const isCompact = useMediaQuery("(max-width: 480px)");
   const containerRef = useRef(null);
   const btnRefs = useRef(new Map());
   const [indicator, setIndicator] = useState({ left: 0, width: 0 });
@@ -501,6 +492,7 @@ function Tabs({ items, active, counts, onChange }) {
 
     const fontsReady = document.fonts?.ready;
     if (fontsReady && typeof fontsReady.then === "function") {
+      // fonts can change button widths after load
       fontsReady.then(() => requestAnimationFrame(updateIndicator)).catch(() => {});
     } else {
       requestAnimationFrame(updateIndicator);
@@ -535,7 +527,7 @@ function Tabs({ items, active, counts, onChange }) {
   }
 
   return (
-    <div ref={containerRef} className="w-full max-w-3xl">
+    <div ref={containerRef} className="w-full max-w-4xl">
       <div className="inline-flex items-center gap-1 rounded-2xl bg-white/80 border border-gray-200 p-1 relative mx-auto shadow-sm backdrop-blur">
         <div
           className="cc-tab-indicator absolute top-1 bottom-1 rounded-xl transition-all duration-200"
@@ -549,10 +541,7 @@ function Tabs({ items, active, counts, onChange }) {
           <button
             key={t}
             type="button"
-            ref={(el) => {
-              if (el) btnRefs.current.set(t, el);
-              else btnRefs.current.delete(t);
-            }}
+            ref={(el) => el && btnRefs.current.set(t, el)}
             onClick={() => onChange(t)}
             className={`cc-focus cc-clickable relative rounded-xl font-extrabold ${
               active === t ? "text-gray-900 cc-tab-active" : "text-gray-600 hover:text-gray-900"
@@ -769,7 +758,7 @@ function Pagination({ page, totalPages, onChange }) {
 }
 
 /* ===================== DETAILS ===================== */
-function DetailsCard({ item, counselorName, onCancel, cancelDisabled }) {
+function DetailsCard({ item, counselorName }) {
   const isMeet = item.type === "MEET";
   const badge = statusBadge(item.status || "Pending");
   const [toast, setToast] = useState("");
@@ -784,8 +773,6 @@ function DetailsCard({ item, counselorName, onCancel, cancelDisabled }) {
     toastTimerRef.current = setTimeout(() => setToast(""), 1200);
   }, []);
 
-  const canCancel = item.status === "Pending" || item.status === "Approved";
-
   return (
     <div className="rounded-2xl border border-gray-200 bg-white/90 cc-fade-up shadow-sm backdrop-blur">
       <div className="p-3.5 border-b border-gray-200 flex items-center justify-between gap-3">
@@ -798,16 +785,6 @@ function DetailsCard({ item, counselorName, onCancel, cancelDisabled }) {
             {badge.label}
           </span>
         </div>
-        {canCancel && (
-          <button
-            type="button"
-            onClick={onCancel}
-            disabled={cancelDisabled}
-            className="cc-focus cc-clickable px-4 py-2 rounded-xl border border-gray-300 text-sm font-extrabold bg-white hover:bg-gray-50 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {cancelDisabled ? "Cancelling…" : "Cancel"}
-          </button>
-        )}
       </div>
 
       <div className="p-3.5 space-y-4">
@@ -826,6 +803,11 @@ function DetailsCard({ item, counselorName, onCancel, cancelDisabled }) {
               <KeyValue label="Reason" value={item.reason || "—"} />
               <KeyValue label="Date & time" value={`${formatDate(item.date)} • ${item.time || "—"}`} />
               <KeyValue label="Counselor" value={counselorName || "Any"} />
+
+              {item.status === "Disapproved" ? (
+                <KeyValue label="Counselor reason" value={item.disapprovalReason || "—"} />
+              ) : null}
+
 
               {canShowMeetingLink(item) ? (
                 <div className="mt-2 rounded-xl border border-gray-200 bg-white p-3">
@@ -927,7 +909,7 @@ function EmptyState() {
     <div className="rounded-2xl border border-gray-200 bg-white/90 p-10 text-center cc-fade-in shadow-sm backdrop-blur">
       <div className="text-5xl mb-3 cc-bounce">🌼</div>
       <div className="text-base font-extrabold text-gray-900">No requests yet</div>
-      <div className="text-sm text-gray-500 mt-2">Create one, then refresh.</div>
+      <div className="text-sm text-gray-500 mt-2">Create one to get started.</div>
     </div>
   );
 }
