@@ -84,7 +84,6 @@ function normalizeRequest(raw) {
     date: raw.date || "",
     time: raw.time || "",
     notes: raw.notes || "",
-    disapprovalReason: raw.disapprovalReason || "",
     counselorId: raw.counselorId?._id ? String(raw.counselorId._id) : String(raw.counselorId || ""),
     counselorName:
       raw.counselorName ||
@@ -96,6 +95,7 @@ function normalizeRequest(raw) {
     topic: raw.topic || "",
     message: raw.message || "",
     counselorReply: raw.counselorReply || "",
+    disapprovalReason: raw.disapprovalReason || "",
     meetingLink: raw.meetingLink || raw.meetingUrl || raw.onlineMeetingLink || raw.meetLink || "",
     repliedAt: raw.repliedAt || "",
     readByStudentAt: raw.readByStudentAt || "",
@@ -145,6 +145,36 @@ function isPastMeeting(item) {
   const now = new Date();
   const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   return dt < startOfToday;
+}
+
+
+/* ===================== CANCEL RULES (Option B) ===================== */
+const PH_OFFSET = "+08:00";
+const CANCEL_CUTOFF_MS = 24 * 60 * 60 * 1000;
+
+function buildPHSessionISO(date, time) {
+  const d = String(date || "").trim();
+  const tRaw = String(time || "").trim();
+  if (!d || !tRaw) return "";
+  const t = /^\d{1,2}:\d{2}$/.test(tRaw) ? tRaw.padStart(5, "0") : tRaw;
+  if (!/^\d{2}:\d{2}$/.test(t)) return "";
+  return `${d}T${t}:00${PH_OFFSET}`;
+}
+
+function cancelGate(item) {
+  const status = String(item?.status || "");
+  if (status === "Pending") return { ok: true, reason: "" };
+  if (status !== "Approved" && status !== "Rescheduled") return { ok: false, reason: "" };
+
+  const iso = buildPHSessionISO(item?.date, item?.time);
+  if (!iso) return { ok: false, reason: "Invalid schedule." };
+
+  const sessionMs = new Date(iso).getTime();
+  if (Number.isNaN(sessionMs)) return { ok: false, reason: "Invalid schedule." };
+
+  const diff = sessionMs - Date.now();
+  if (diff >= CANCEL_CUTOFF_MS) return { ok: true, reason: "" };
+  return { ok: false, reason: "Locked (within 24 hours)." };
 }
 
 /* ===================== UI HELPERS ===================== */
@@ -663,7 +693,9 @@ function ListView({
 
 function RequestRow({ request, onClick, selected, onCancel, cancelDisabled }) {
   const badge = statusBadge(request.status || "Pending");
-  const canCancel = request.status === "Pending" || request.status === "Approved";
+  const showCancel = request.status === "Pending" || request.status === "Approved" || request.status === "Rescheduled";
+  const gate = cancelGate(request);
+  const canCancel = gate.ok;
 
   return (
     <div
@@ -695,15 +727,16 @@ function RequestRow({ request, onClick, selected, onCancel, cancelDisabled }) {
         </div>
       </button>
 
-      {canCancel && (
+      {showCancel && (
         <div className="mt-3">
           <button
             type="button"
             onClick={onCancel}
-            disabled={cancelDisabled}
+            disabled={cancelDisabled || !canCancel}
+            title={!canCancel ? gate.reason : ""}
             className="cc-focus cc-clickable px-4 py-2 rounded-xl border border-gray-300 text-sm font-extrabold bg-white hover:bg-gray-50 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {cancelDisabled ? "Cancelling…" : "Cancel"}
+            {cancelDisabled ? "Cancelling…" : !canCancel ? "Cancel (locked)" : "Cancel"}
           </button>
         </div>
       )}
@@ -804,11 +837,10 @@ function DetailsCard({ item, counselorName }) {
               <KeyValue label="Date & time" value={`${formatDate(item.date)} • ${item.time || "—"}`} />
               <KeyValue label="Counselor" value={counselorName || "Any"} />
 
-              {item.status === "Disapproved" ? (
+
+              {item.status === "Disapproved" && (
                 <KeyValue label="Counselor reason" value={item.disapprovalReason || "—"} />
-              ) : null}
-
-
+              )}
               {canShowMeetingLink(item) ? (
                 <div className="mt-2 rounded-xl border border-gray-200 bg-white p-3">
                   <div className="text-sm font-extrabold text-gray-700">Online link</div>
@@ -846,6 +878,10 @@ function DetailsCard({ item, counselorName }) {
                 label="Counselor"
                 value={item.counselorReply ? counselorName || "Assigned" : "Assigned when replied"}
               />
+
+              {item.status === "Disapproved" && (
+                <KeyValue label="Counselor reason" value={item.disapprovalReason || "—"} />
+              )}
             </>
           )}
 

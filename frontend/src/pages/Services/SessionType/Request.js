@@ -91,26 +91,8 @@ function pickIdentity(obj) {
     obj.user?.studentNo ||
     "";
 
-
-  const avatarUrl =
-    obj.avatarUrl ||
-    obj.user?.avatarUrl ||
-    obj.profile?.avatarUrl ||
-    obj.account?.avatarUrl ||
-    obj.data?.avatarUrl ||
-    obj.photoURL ||
-    obj.photoUrl ||
-    obj.user?.photoURL ||
-    obj.user?.photoUrl ||
-    obj.profilePictureUrl ||
-    obj.profilePicture ||
-    obj.user?.profilePictureUrl ||
-    obj.user?.profilePicture ||
-    "";
-
-  return { email, name, studentNumber, avatarUrl };
+  return { email, name, studentNumber };
 }
-
 
 function readLoggedInIdentity() {
   if (typeof window === "undefined") return null;
@@ -299,6 +281,33 @@ function formatTime12(input) {
   return `${hour12}:${mm} ${suffix}`;
 }
 
+
+/* ===================== CANCEL RULES (Option B) ===================== */
+const CANCEL_CUTOFF_MS = 24 * 60 * 60 * 1000;
+function buildPHSessionISO(date, time) {
+  const d = String(date || "").trim();
+  const tRaw = String(time || "").trim();
+  if (!d || !tRaw) return "";
+  const t = /^\d{1,2}:\d{2}$/.test(tRaw) ? tRaw.padStart(5, "0") : tRaw;
+  if (!/^\d{2}:\d{2}$/.test(t)) return "";
+  return `${d}T${t}:00+08:00`;
+}
+function cancelGateSuccess(req) {
+  const status = String(req?.status || "");
+  if (status === "Pending") return { ok: true, reason: "" };
+  if (status !== "Approved" && status !== "Rescheduled") return { ok: false, reason: "" };
+
+  const iso = buildPHSessionISO(req?.date, req?.time);
+  if (!iso) return { ok: false, reason: "Invalid schedule." };
+
+  const sessionMs = new Date(iso).getTime();
+  if (Number.isNaN(sessionMs)) return { ok: false, reason: "Invalid schedule." };
+
+  const diff = sessionMs - Date.now();
+  if (diff >= CANCEL_CUTOFF_MS) return { ok: true, reason: "" };
+  return { ok: false, reason: "Locked (within 24 hours)." };
+}
+
 function normalizeTo24h(input) {
   const v = String(input || "").trim();
   if (!v) return "";
@@ -456,17 +465,9 @@ export default function Request({ onClose }) {
 
   useEffect(() => {
     if (typeof window === "undefined") return undefined;
-
-    const sync = () => setUserIdentity(readLoggedInIdentity());
-
-    window.addEventListener("storage", sync);
-    // ✅ same-tab updates (ProfileSettings -> updateAuthUser emits this)
-    window.addEventListener("auth:changed", sync);
-
-    return () => {
-      window.removeEventListener("storage", sync);
-      window.removeEventListener("auth:changed", sync);
-    };
+    const onStorage = () => setUserIdentity(readLoggedInIdentity());
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
   }, []);
 
   const [openMessages, setOpenMessages] = useState(false);
@@ -522,7 +523,7 @@ export default function Request({ onClose }) {
         const type = String(r.type || "");
         if (type !== "MEET") return false;
         const status = String(r.status || "");
-        const isActive = status === "Pending" || status === "Approved";
+        const isActive = status === "Pending" || status === "Approved" || status === "Rescheduled";
         const notCompleted = !r.completedAt;
         return isActive && notCompleted;
       });
@@ -648,15 +649,6 @@ export default function Request({ onClose }) {
           lastTime: "now",
           unread: openMessages ? 0 : unreadNext,
         };
-
-        // If counselor info is included in realtime payload (claim-on-reply), update header/avatar immediately
-        const counselorSnap = payload?.thread?.counselor || null;
-        if (counselorSnap && (counselorSnap.fullName || counselorSnap.avatarUrl)) {
-          updated.counselorName = counselorSnap.fullName || updated.counselorName;
-          updated.counselorUsername = counselorSnap.fullName || updated.counselorUsername;
-          // allow relative /uploads/...; MessagesDrawer will normalize
-          updated.counselorAvatarUrl = counselorSnap.avatarUrl || updated.counselorAvatarUrl;
-        }
 
         const next = [...prev];
         next[i] = updated;
@@ -1354,6 +1346,8 @@ export default function Request({ onClose }) {
     (pillUnlocked && termsAccepted ? "pb-24" : "pb-8");
 
   const displayReq = currentRequest || null;
+  const cancelGateMemo = useMemo(() => cancelGateSuccess(displayReq), [displayReq?.status, displayReq?.date, displayReq?.time]);
+
   const isOverlayOpen = showTerms || showCancelConfirm;
 
   return (
@@ -2049,12 +2043,13 @@ export default function Request({ onClose }) {
 
                         <button
                           type="button"
-                          disabled={!currentRequest || String(currentRequest.status) !== "Pending"}
+                          disabled={!currentRequest || !cancelGateMemo.ok}
                           onClick={() => setShowCancelConfirm(true)}
+                          title={!cancelGateMemo.ok ? cancelGateMemo.reason : ""}
                           className={[
                             ghostBtn,
                             tapClass,
-                            !currentRequest || String(currentRequest.status) !== "Pending"
+                            !currentRequest || !cancelGateMemo.ok
                               ? "opacity-60 cursor-not-allowed"
                               : "",
                           ].join(" ")}
