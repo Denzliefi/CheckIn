@@ -15,6 +15,23 @@ import journalImg from "../assets/Journal.png";
 import phqImg from "../assets/Phq9.png";
 import hotlineImg from "../assets/Hotline.png";
 
+// Avatar URL helper: ensures '/uploads/...' loads from backend origin
+const NAV_API_BASE = (process.env.REACT_APP_API_URL || "").replace(/\/+$/, "");
+const NAV_UPLOADS_ORIGIN = (process.env.REACT_APP_UPLOADS_URL || NAV_API_BASE || "http://localhost:5000").replace(/\/+$/, "");
+function navNormalizeAvatarSrc(rawUrl) {
+  const raw = String(rawUrl || '').trim();
+  if (!raw) return '';
+  const s = raw.toLowerCase();
+  const abs = s.startsWith('http://') || s.startsWith('https://') || s.startsWith('data:') || s.startsWith('blob:');
+  if (abs) return raw;
+  const looksUploads = raw.startsWith('/uploads') || raw.startsWith('uploads/');
+  if (!looksUploads) return raw;
+  const o = NAV_UPLOADS_ORIGIN.replace(/\/+$/, '');
+  if (!o) return raw;
+  return raw.startsWith('/') ? `${o}${raw}` : `${o}/${raw}`;
+}
+
+
 /** Simple Phone SVG (no emoji) */
 function PhoneIcon({ className = "" }) {
   return (

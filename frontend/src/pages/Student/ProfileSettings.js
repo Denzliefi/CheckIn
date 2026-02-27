@@ -25,38 +25,6 @@ const EMPTY_PROFILE = {
   roleLabel: "",
 };
 
-const SECTIONS = [
-  {
-    title: "Student Details",
-    subtitle: "Personal information",
-    items: [
-      { label: "First Name", key: "firstName" },
-      { label: "Last Name", key: "lastName" },
-      {
-        label: "Student Number",
-        key: "studentNumber",
-        mono: true,
-        breakAll: true,
-      },
-      { label: "Email", key: "email", breakAll: true },
-      {
-        label: "Account Creation",
-        key: "accountCreation",
-        mono: true,
-        breakAll: true,
-      },
-    ],
-  },
-  {
-    title: "Academic Info",
-    subtitle: "Campus & program",
-    items: [
-      { label: "Campus", key: "campus" },
-      { label: "Course", key: "course", multiline: true, clampOnSmall: true },
-    ],
-  },
-];
-
 function safeText(value) {
   if (value === null || value === undefined || value === "") return "—";
   return String(value);
@@ -73,10 +41,8 @@ function splitName(fullName = "") {
 function getInitials(firstName = "", lastName = "") {
   const f = String(firstName || "").trim();
   const l = String(lastName || "").trim();
-
   const first = f ? f[0] : "";
   const last = l ? l[0] : "";
-
   const initials = (first + last).toUpperCase();
   return initials || "U";
 }
@@ -125,10 +91,52 @@ function Spinner({ size = 18 }) {
 
 /* ======================
    API BASE (Local + Render)
-   - Uses REACT_APP_API_URL (ex: http://localhost:5000 or https://checkin-backend-4xic.onrender.com)
-   - Falls back to relative /api/* for local CRA proxy setups
+   - Uses REACT_APP_API_URL (ex: http://localhost:5000 or https://<render-app>.onrender.com)
 ====================== */
 const API_BASE = (process.env.REACT_APP_API_URL || "").replace(/\/+$/, "");
+
+// If backend returns "/uploads/avatars/xxx.jpg", the browser MUST load it from backend origin.
+const UPLOADS_ORIGIN = (process.env.REACT_APP_UPLOADS_URL || API_BASE || "http://localhost:5000").replace(
+  /\/+$/,
+  "",
+);
+
+function isAbsoluteUrl(u = "") {
+  const s = String(u || "").trim().toLowerCase();
+  return s.startsWith("http://") || s.startsWith("https://") || s.startsWith("data:") || s.startsWith("blob:");
+}
+
+function joinOrigin(origin, path) {
+  const o = String(origin || "").replace(/\/+$/, "");
+  const p = String(path || "").trim();
+  if (!o) return p;
+  if (!p) return "";
+  if (p.startsWith("/")) return `${o}${p}`;
+  return `${o}/${p}`;
+}
+
+function withCacheBust(url, bustValue) {
+  if (!url || !bustValue) return url;
+  if (url.startsWith("blob:") || url.startsWith("data:")) return url;
+  try {
+    const u = new URL(url, window.location.origin);
+    u.searchParams.set("v", String(bustValue));
+    return u.toString();
+  } catch {
+    const glue = url.includes("?") ? "&" : "?";
+    return `${url}${glue}v=${encodeURIComponent(String(bustValue))}`;
+  }
+}
+
+function normalizeAvatarSrc(rawUrl, bustValue) {
+  const raw = String(rawUrl || "").trim();
+  if (!raw) return "";
+  if (isAbsoluteUrl(raw)) return withCacheBust(raw, bustValue);
+
+  const looksUploads = raw.startsWith("/uploads") || raw.startsWith("uploads/");
+  const full = looksUploads ? joinOrigin(UPLOADS_ORIGIN, raw) : raw;
+  return withCacheBust(full, bustValue);
+}
 
 async function fetchJsonSafe(url, options) {
   const res = await fetch(url, options);
@@ -144,7 +152,6 @@ async function fetchJsonSafe(url, options) {
   return { res, data, raw };
 }
 
-/** Fetch the current user's profile from backend (JWT in Authorization header) */
 async function fetchMyProfile() {
   const token = getToken();
   if (!token) throw new Error("Not authorized");
@@ -174,15 +181,10 @@ async function fetchMyProfile() {
       }
 
       if (!res.ok) {
-        const msg = (
-          data?.message ||
-          raw ||
-          "Failed to load profile."
-        ).toString();
+        const msg = (data?.message || raw || "Failed to load profile.").toString();
         throw new Error(msg);
       }
 
-      // Some APIs return { user: {...} } — unwrap safely
       return data?.user ?? data;
     } catch (err) {
       lastErr = err;
@@ -197,19 +199,11 @@ function looksLikeHandle(name, username, email) {
   if (!n) return false;
 
   const nLower = n.toLowerCase();
-  const uLower = String(username || "")
-    .trim()
-    .toLowerCase();
-  const emailPrefix = String(email || "")
-    .split("@")[0]
-    ?.trim()
-    .toLowerCase();
+  const uLower = String(username || "").trim().toLowerCase();
+  const emailPrefix = String(email || "").split("@")[0]?.trim().toLowerCase();
 
-  // Exact match with username or email prefix = likely handle
   if (uLower && nLower === uLower) return true;
   if (emailPrefix && nLower === emailPrefix) return true;
-
-  // No spaces + has digits = likely not a real first name
   if (!/\s/.test(n) && /\d/.test(n)) return true;
 
   return false;
@@ -229,8 +223,12 @@ export default function ProfileSettings() {
   const [avatarError, setAvatarError] = useState("");
   const [avatarSuccess, setAvatarSuccess] = useState("");
 
+  // keeps the avatar stable even with caching / render wake hiccups
+  const [avatarBust, setAvatarBust] = useState(0);
+  const [avatarLoadFailed, setAvatarLoadFailed] = useState(false);
+  const [avatarRetry, setAvatarRetry] = useState(0);
+
   useEffect(() => {
-    // Cleanup preview object URL
     return () => {
       if (avatarPreviewUrl) URL.revokeObjectURL(avatarPreviewUrl);
     };
@@ -239,6 +237,8 @@ export default function ProfileSettings() {
   const pickAvatarFile = () => {
     setAvatarError("");
     setAvatarSuccess("");
+    setAvatarLoadFailed(false);
+    setAvatarRetry(0);
     fileInputRef.current?.click();
   };
 
@@ -248,13 +248,15 @@ export default function ProfileSettings() {
 
     setAvatarError("");
     setAvatarSuccess("");
+    setAvatarLoadFailed(false);
+    setAvatarRetry(0);
 
     if (!file.type?.startsWith("image/")) {
       setAvatarError("Please select an image file (JPG/PNG/WebP).");
       return;
     }
 
-    const maxBytes = 5 * 1024 * 1024; // 5MB
+    const maxBytes = 5 * 1024 * 1024;
     if (file.size > maxBytes) {
       setAvatarError("Image is too large. Please choose a file under 5MB.");
       return;
@@ -271,12 +273,15 @@ export default function ProfileSettings() {
     setAvatarError("");
     setAvatarSuccess("");
     setPendingAvatarFile(null);
+    setAvatarLoadFailed(false);
+    setAvatarRetry(0);
+
     if (avatarPreviewUrl) URL.revokeObjectURL(avatarPreviewUrl);
     setAvatarPreviewUrl("");
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
-    const uploadAvatar = async () => {
+  const uploadAvatar = async () => {
     if (!pendingAvatarFile) return;
 
     const token = getToken();
@@ -288,9 +293,10 @@ export default function ProfileSettings() {
     setAvatarUploading(true);
     setAvatarError("");
     setAvatarSuccess("");
+    setAvatarLoadFailed(false);
+    setAvatarRetry(0);
 
     const form = new FormData();
-    // Backend expects "avatar"
     form.append("avatar", pendingAvatarFile);
 
     const url = API_BASE ? `${API_BASE}/api/users/me/avatar` : "/api/users/me/avatar";
@@ -327,23 +333,24 @@ export default function ProfileSettings() {
         "";
 
       const cleaned = String(newAvatar || "").trim();
-      if (!cleaned) {
-        throw new Error("Upload succeeded but no avatar URL was returned.");
-      }
+      if (!cleaned) throw new Error("Upload succeeded but no avatar URL was returned.");
 
       setProfile((prev) => ({ ...prev, avatarUrl: cleaned }));
 
-      // ✅ update global auth user so Navbar updates immediately
       try {
         updateAuthUser({ avatarUrl: cleaned });
       } catch {}
+
+      // bust caches so the new image shows immediately
+      setAvatarBust(Date.now());
+      setAvatarLoadFailed(false);
+      setAvatarRetry(0);
 
       setAvatarSuccess("Profile photo updated.");
       setPendingAvatarFile(null);
 
       if (avatarPreviewUrl) URL.revokeObjectURL(avatarPreviewUrl);
       setAvatarPreviewUrl("");
-
       if (fileInputRef.current) fileInputRef.current.value = "";
     } catch (err) {
       setAvatarError(err?.message || "Failed to upload photo.");
@@ -353,7 +360,6 @@ export default function ProfileSettings() {
   };
 
   useEffect(() => {
-    // If token missing, redirect
     if (!getToken()) {
       navigate("/login", { replace: true });
       return;
@@ -375,33 +381,19 @@ export default function ProfileSettings() {
         const backendUsername = (p?.username || "").trim();
         const backendEmail = (p?.email || "").trim();
 
-        // Fallback from fullName only when it looks like a real "First Last"
         const split = splitName(backendFull);
         let firstName = backendFirst || split.firstName || "";
         let lastName = backendLast || split.lastName || "";
 
-        // If the backend sends an email-handle/username as "firstName" (common with older records),
-        // don't show it as a real name.
-        const firstLooksHandle = looksLikeHandle(
-          firstName,
-          backendUsername,
-          backendEmail,
-        );
-        const fullLooksHandle = looksLikeHandle(
-          backendFull,
-          backendUsername,
-          backendEmail,
-        );
+        const firstLooksHandle = looksLikeHandle(firstName, backendUsername, backendEmail);
+        const fullLooksHandle = looksLikeHandle(backendFull, backendUsername, backendEmail);
 
-        // Case A: first/last missing and computed from fullName, but fullName is a handle
         if (!backendFirst && !backendLast && firstLooksHandle && !lastName) {
           firstName = "";
           lastName = "";
         }
 
-        // Case B: backendFirst exists but is actually a handle and last name is missing
         if (backendFirst && firstLooksHandle && !backendLast) {
-          // If fullName is a proper spaced name, split it instead
           if (backendFull && backendFull.includes(" ") && !fullLooksHandle) {
             const s2 = splitName(backendFull);
             firstName = s2.firstName;
@@ -426,12 +418,7 @@ export default function ProfileSettings() {
         ).trim();
 
         const roleLabel = String(
-          p?.roleLabel ||
-            p?.role ||
-            p?.userRole ||
-            p?.accountType ||
-            p?.type ||
-            "Student",
+          p?.roleLabel || p?.role || p?.userRole || p?.accountType || p?.type || "Student",
         )
           .replace(/_/g, " ")
           .trim();
@@ -443,18 +430,20 @@ export default function ProfileSettings() {
           email: backendEmail || "",
           campus,
           course: (p?.course || "").trim(),
-          accountCreation: formatDate(
-            p?.accountCreation || p?.createdAt || p?.created_on || "",
-          ),
+          accountCreation: formatDate(p?.accountCreation || p?.createdAt || p?.created_on || ""),
           avatarUrl,
           roleLabel,
         });
+
+        // Refresh cached avatar in case it failed earlier
+        setAvatarBust(Date.now());
+        setAvatarLoadFailed(false);
+        setAvatarRetry(0);
       } catch (e) {
         if (!alive) return;
 
         const msg = e?.message || "Failed to load profile";
 
-        // If auth error, push to login
         if (String(msg).toLowerCase().includes("not authorized")) {
           navigate("/login", { replace: true });
           return;
@@ -471,43 +460,52 @@ export default function ProfileSettings() {
     };
   }, [navigate]);
 
-  const resolved = useMemo(() => {
-    const data = profile || EMPTY_PROFILE;
-    return SECTIONS.map((section) => ({
-      ...section,
-      items: section.items.map((it) => ({
-        ...it,
-        value: safeText(data[it.key]),
-      })),
-    }));
-  }, [profile]);
-
   const displayName = useMemo(() => {
-    const full = [profile.firstName, profile.lastName]
-      .filter(Boolean)
-      .join(" ")
-      .trim();
+    const full = [profile.firstName, profile.lastName].filter(Boolean).join(" ").trim();
     return full || "—";
   }, [profile.firstName, profile.lastName]);
 
   const uiFields = useMemo(() => {
     return [
       { label: "Full Name", value: displayName },
-      {
-        label: "Student Number",
-        value: safeText(profile.studentNumber),
-        mono: true,
-      },
+      { label: "Student Number", value: safeText(profile.studentNumber), mono: true },
       { label: "Email", value: safeText(profile.email), breakAll: true },
       { label: "Campus", value: safeText(profile.campus) },
       { label: "Course", value: safeText(profile.course), multiline: true },
-      {
-        label: "Account Creation",
-        value: safeText(profile.accountCreation),
-        mono: true,
-      },
+      { label: "Account Creation", value: safeText(profile.accountCreation), mono: true },
     ];
   }, [displayName, profile]);
+
+  const avatarSrc = useMemo(() => {
+    const raw = avatarPreviewUrl || profile.avatarUrl;
+    return normalizeAvatarSrc(raw, avatarBust);
+  }, [avatarPreviewUrl, profile.avatarUrl, avatarBust]);
+
+  const handleAvatarError = () => {
+    // preview failures should just fallback
+    if (avatarPreviewUrl) {
+      setAvatarLoadFailed(true);
+      return;
+    }
+
+    // quick retries (helps when Render just woke up)
+    if (avatarRetry < 2) {
+      const next = avatarRetry + 1;
+      setAvatarRetry(next);
+      setTimeout(() => setAvatarBust(Date.now()), 650 * next);
+      return;
+    }
+
+    setAvatarLoadFailed(true);
+  };
+
+  const handleAvatarLoad = () => {
+    setAvatarLoadFailed(false);
+    setAvatarRetry(0);
+  };
+
+  const showAvatarImage = Boolean(avatarSrc) && !avatarLoadFailed;
+
   return (
     <div
       className={[
@@ -543,10 +541,8 @@ export default function ProfileSettings() {
                 className="mt-2.5 text-sm sm:text-base text-gray-600 break-words leading-relaxed"
                 style={{ fontFamily: "Lora, serif", color: TEXT_MUTED }}
               >
-                This information is{" "}
-                <strong style={{ color: TEXT_MAIN }}>read-only</strong>.
-                Corrections must be requested via the{" "}
-                <strong style={{ color: TEXT_MAIN }}>Guidance Office</strong>.
+                This information is <strong style={{ color: TEXT_MAIN }}>read-only</strong>. Corrections must be
+                requested via the <strong style={{ color: TEXT_MAIN }}>Guidance Office</strong>.
               </p>
 
               <div className="mt-4 flex flex-wrap items-center gap-3 justify-center sm:justify-start">
@@ -576,11 +572,7 @@ export default function ProfileSettings() {
                     boxShadow: `0 0 0 2px ${GREEN_GLOW}`,
                   }}
                 >
-                  <span
-                    className="h-2 w-2 rounded-full"
-                    style={{ backgroundColor: PRIMARY_GREEN }}
-                    aria-hidden="true"
-                  />
+                  <span className="h-2 w-2 rounded-full" style={{ backgroundColor: PRIMARY_GREEN }} aria-hidden="true" />
                   System Locked
                 </span>
               </div>
@@ -597,7 +589,6 @@ export default function ProfileSettings() {
                 />
 
                 <div className="px-3 sm:px-5 lg:px-6 py-5 sm:py-6">
-                  {/* Profile header (avatar + name/email + edit button) */}
                   <div
                     className="rounded-xl border border-gray-200/70 overflow-hidden"
                     style={{
@@ -607,95 +598,66 @@ export default function ProfileSettings() {
                     <div className="px-4 sm:px-5 py-4 sm:py-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                       <div className="flex items-center gap-3 sm:gap-4 min-w-0">
                         <div
-                          className="relative h-14 w-14 rounded-full border border-gray-200 bg-slate-100 flex items-center justify-center shrink-0"
+                          className="relative h-14 w-14 rounded-full border border-gray-200 bg-slate-100 flex items-center justify-center shrink-0 overflow-hidden"
                           style={{ boxShadow: `0 0 0 3px ${GREEN_GLOW}` }}
                           aria-label="Profile avatar"
                         >
-                          {avatarPreviewUrl || profile.avatarUrl ? (
+                          {showAvatarImage ? (
                             <img
-                              src={avatarPreviewUrl || profile.avatarUrl}
+                              key={avatarSrc}
+                              src={avatarSrc}
                               alt={`${displayName} profile`}
                               className="h-full w-full rounded-full object-cover"
                               loading="lazy"
+                              onError={handleAvatarError}
+                              onLoad={handleAvatarLoad}
                             />
                           ) : (
                             <span
                               className="text-base font-extrabold"
-                              style={{
-                                fontFamily: "Nunito, sans-serif",
-                                color: TEXT_MAIN,
-                              }}
+                              style={{ fontFamily: "Nunito, sans-serif", color: TEXT_MAIN }}
                             >
                               {getInitials(profile.firstName, profile.lastName)}
                             </span>
                           )}
 
-                          {/* small camera button */}
                           <button
                             type="button"
                             onClick={pickAvatarFile}
                             className="absolute -bottom-1 -right-1 h-8 w-8 rounded-full border border-gray-200 bg-white shadow-sm flex items-center justify-center hover:bg-slate-50 active:scale-[0.98]"
                             aria-label="Change profile photo"
                           >
-                            <svg
-                              width="15"
-                              height="15"
-                              viewBox="0 0 24 24"
-                              fill="none"
-                              aria-hidden="true"
-                            >
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                               <path
                                 d="M12 5l1.6 2H18a3 3 0 013 3v7a3 3 0 01-3 3H6a3 3 0 01-3-3v-7a3 3 0 013-3h4.4L12 5z"
                                 stroke="currentColor"
                                 strokeWidth="2"
                                 strokeLinejoin="round"
                               />
-                              <path
-                                d="M12 18a4 4 0 100-8 4 4 0 000 8z"
-                                stroke="currentColor"
-                                strokeWidth="2"
-                              />
+                              <path d="M12 18a4 4 0 100-8 4 4 0 000 8z" stroke="currentColor" strokeWidth="2" />
                             </svg>
                           </button>
 
-                          <input
-                            ref={fileInputRef}
-                            type="file"
-                            accept="image/*"
-                            className="hidden"
-                            onChange={onAvatarFileChange}
-                          />
+                          <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={onAvatarFileChange} />
                         </div>
 
                         <div className="min-w-0">
                           <div
                             className="font-extrabold text-[15px] sm:text-base break-words leading-snug"
-                            style={{
-                              fontFamily: "Nunito, sans-serif",
-                              color: TEXT_MAIN,
-                            }}
+                            style={{ fontFamily: "Nunito, sans-serif", color: TEXT_MAIN }}
                           >
                             {displayName}
                           </div>
 
                           <div
                             className="mt-0.5 text-xs sm:text-sm break-all leading-relaxed"
-                            style={{
-                              fontFamily: "Lora, serif",
-                              color: TEXT_MUTED,
-                            }}
+                            style={{ fontFamily: "Lora, serif", color: TEXT_MUTED }}
                           >
                             {safeText(profile.email)}
                           </div>
 
                           {(profile.roleLabel || profile.campus) && (
-                            <div
-                              className="mt-1 text-[12px] break-words leading-relaxed"
-                              style={{
-                                fontFamily: "Lora, serif",
-                                color: TEXT_SOFT,
-                              }}
-                            >
+                            <div className="mt-1 text-[12px] break-words leading-relaxed" style={{ fontFamily: "Lora, serif", color: TEXT_SOFT }}>
                               {(profile.roleLabel || "Student").toString()}
                               {profile.campus ? ` • ${profile.campus}` : ""}
                             </div>
@@ -732,42 +694,29 @@ export default function ProfileSettings() {
                     </div>
 
                     {(avatarError || avatarSuccess) && (
-                      <div
-                        className="px-4 sm:px-5 pb-4"
-                        style={{ fontFamily: "Nunito, sans-serif" }}
-                        role={avatarError ? "alert" : "status"}
-                      >
+                      <div className="px-4 sm:px-5 pb-4" style={{ fontFamily: "Nunito, sans-serif" }} role={avatarError ? "alert" : "status"}>
                         {avatarError ? (
                           <div className="rounded-[14px] border-2 border-black bg-red-50 px-4 py-3 text-[13px] text-black">
-                            <span className="font-extrabold">Photo:</span>{" "}
-                            {avatarError}
+                            <span className="font-extrabold">Photo:</span> {avatarError}
                           </div>
                         ) : (
                           <div className="rounded-[14px] border border-green-200/70 bg-green-50/60 px-4 py-3 text-[13px] text-gray-800">
-                            <span className="font-extrabold">Photo:</span>{" "}
-                            {avatarSuccess}
+                            <span className="font-extrabold">Photo:</span> {avatarSuccess}
                           </div>
                         )}
                       </div>
                     )}
                   </div>
 
-                  {/* Form-like read-only fields */}
                   <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-5">
                     {uiFields.map((field) => (
                       <div key={field.label} className="min-w-0">
-                        <div
-                          className="text-xs font-extrabold uppercase tracking-wide text-gray-500"
-                          style={{ fontFamily: "Nunito, sans-serif" }}
-                        >
+                        <div className="text-xs font-extrabold uppercase tracking-wide text-gray-500" style={{ fontFamily: "Nunito, sans-serif" }}>
                           {field.label}
                         </div>
 
                         <div
-                          className={[
-                            "mt-1.5 rounded-lg border border-gray-200/70 bg-white px-3.5 py-3",
-                            "shadow-sm min-w-0",
-                          ].join(" ")}
+                          className={["mt-1.5 rounded-lg border border-gray-200/70 bg-white px-3.5 py-3", "shadow-sm min-w-0"].join(" ")}
                           style={{
                             background: GREEN_SOFT,
                             boxShadow: `0 0 0 2px rgba(15, 23, 42, 0.02)`,
@@ -778,14 +727,9 @@ export default function ProfileSettings() {
                               "text-sm sm:text-[15px] font-extrabold",
                               field.mono ? "font-mono tracking-tight" : "",
                               field.breakAll ? "break-all" : "break-words",
-                              field.multiline
-                                ? "whitespace-normal"
-                                : "truncate",
+                              field.multiline ? "whitespace-normal" : "truncate",
                             ].join(" ")}
-                            style={{
-                              fontFamily: "Nunito, sans-serif",
-                              color: TEXT_MAIN,
-                            }}
+                            style={{ fontFamily: "Nunito, sans-serif", color: TEXT_MAIN }}
                             title={String(field.value || "")}
                           >
                             {field.value}
@@ -794,9 +738,6 @@ export default function ProfileSettings() {
                       </div>
                     ))}
                   </div>
-
-                  {/* Keep your original section view as fallback if you want later:
-                      - removed to match the requested "form-like" UI */}
                 </div>
               </div>
             </main>
@@ -812,18 +753,8 @@ export default function ProfileSettings() {
                   style={{ boxShadow: `0 0 0 3px ${GREEN_GLOW}` }}
                   aria-hidden="true"
                 >
-                  <svg
-                    width="18"
-                    height="18"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke={TEXT_MAIN}
-                    strokeWidth="2"
-                  >
-                    <path
-                      d="M7 11V9C7 6.23858 9.23858 4 12 4C14.7614 4 17 6.23858 17 9V11"
-                      strokeLinecap="round"
-                    />
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={TEXT_MAIN} strokeWidth="2">
+                    <path d="M7 11V9C7 6.23858 9.23858 4 12 4C14.7614 4 17 6.23858 17 9V11" strokeLinecap="round" />
                     <path
                       d="M6.8 11H17.2C18.1193 11 18.8 11.6807 18.8 12.6V18.4C18.8 19.3193 18.1193 20 17.2 20H6.8C5.88067 20 5.2 19.3193 5.2 18.4V12.6C5.2 11.6807 5.88067 11 6.8 11Z"
                       strokeLinejoin="round"
@@ -832,24 +763,11 @@ export default function ProfileSettings() {
                 </div>
 
                 <div className="flex-1 text-center sm:text-left min-w-0">
-                  <h3
-                    className="font-extrabold text-base sm:text-lg break-words leading-tight"
-                    style={{
-                      fontFamily: "Nunito, sans-serif",
-                      color: TEXT_MAIN,
-                    }}
-                  >
+                  <h3 className="font-extrabold text-base sm:text-lg break-words leading-tight" style={{ fontFamily: "Nunito, sans-serif", color: TEXT_MAIN }}>
                     Guidance Office Only
                   </h3>
-                  <p
-                    className="mt-1.5 text-sm break-words leading-relaxed"
-                    style={{ fontFamily: "Lora, serif", color: TEXT_MUTED }}
-                  >
-                    Report any incorrect information directly to the{" "}
-                    <strong style={{ color: TEXT_MAIN }}>
-                      Guidance Office
-                    </strong>
-                    .
+                  <p className="mt-1.5 text-sm break-words leading-relaxed" style={{ fontFamily: "Lora, serif", color: TEXT_MUTED }}>
+                    Report any incorrect information directly to the <strong style={{ color: TEXT_MAIN }}>Guidance Office</strong>.
                   </p>
                 </div>
               </div>
