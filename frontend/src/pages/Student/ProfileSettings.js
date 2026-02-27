@@ -1,7 +1,7 @@
 // frontend/src/pages/Student/ProfileSettings.js
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { getToken } from "../../utils/auth";
+import { getToken, updateAuthUser } from "../../utils/auth";
 
 const PRIMARY_GREEN = "#B9FF66";
 const GREEN_GLOW = "rgba(185, 255, 102, 0.22)";
@@ -276,7 +276,7 @@ export default function ProfileSettings() {
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
-  const uploadAvatar = async () => {
+    const uploadAvatar = async () => {
     if (!pendingAvatarFile) return;
 
     const token = getToken();
@@ -290,85 +290,66 @@ export default function ProfileSettings() {
     setAvatarSuccess("");
 
     const form = new FormData();
-    // Support common backend field names
+    // Backend expects "avatar"
     form.append("avatar", pendingAvatarFile);
-    form.append("file", pendingAvatarFile);
 
-    const urls = [
-      API_BASE ? `${API_BASE}/api/users/me/avatar` : "/api/users/me/avatar",
-      API_BASE ? `${API_BASE}/api/users/avatar` : "/api/users/avatar",
-      API_BASE ? `${API_BASE}/api/profile/avatar` : "/api/profile/avatar",
-      API_BASE ? `${API_BASE}/api/auth/avatar` : "/api/auth/avatar",
-    ];
+    const url = API_BASE ? `${API_BASE}/api/users/me/avatar` : "/api/users/me/avatar";
 
-    let lastErr = null;
+    try {
+      const { res, data, raw } = await fetchJsonSafe(url, {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/json",
+        },
+        body: form,
+      });
 
-    for (const url of urls) {
-      for (const method of ["PUT", "POST"]) {
-        try {
-          const { res, data, raw } = await fetchJsonSafe(url, {
-            method,
-            headers: {
-              Authorization: `Bearer ${token}`,
-              Accept: "application/json",
-            },
-            body: form,
-          });
-
-          if (res.status === 404) continue;
-
-          if (res.status === 401 || res.status === 403) {
-            navigate("/login", { replace: true });
-            return;
-          }
-
-          if (!res.ok) {
-            const msg = (
-              data?.message ||
-              raw ||
-              "Failed to upload photo."
-            ).toString();
-            throw new Error(msg);
-          }
-
-          const newAvatar =
-            data?.avatarUrl ||
-            data?.photoURL ||
-            data?.photoUrl ||
-            data?.profilePictureUrl ||
-            data?.profilePicture ||
-            data?.user?.avatarUrl ||
-            data?.user?.photoURL ||
-            data?.user?.profilePictureUrl ||
-            "";
-
-          setProfile((prev) => ({
-            ...prev,
-            avatarUrl: String(
-              newAvatar || prev.avatarUrl || avatarPreviewUrl,
-            ).trim(),
-          }));
-
-          setAvatarSuccess("Profile photo updated.");
-          setPendingAvatarFile(null);
-
-          // Keep preview if backend doesn't return a URL, else clear it.
-          if (newAvatar) {
-            if (avatarPreviewUrl) URL.revokeObjectURL(avatarPreviewUrl);
-            setAvatarPreviewUrl("");
-          }
-
-          if (fileInputRef.current) fileInputRef.current.value = "";
-          setAvatarUploading(false);
-          return;
-        } catch (err) {
-          lastErr = err;
-        }
+      if (res.status === 401 || res.status === 403) {
+        navigate("/login", { replace: true });
+        return;
       }
-    }
 
-    setAvatarUploading(false);
-    setAvatarError(lastErr?.message || "Failed to upload photo.");
+      if (!res.ok) {
+        const msg = (data?.message || raw || "Failed to upload photo.").toString();
+        throw new Error(msg);
+      }
+
+      const newAvatar =
+        data?.avatarUrl ||
+        data?.photoURL ||
+        data?.photoUrl ||
+        data?.profilePictureUrl ||
+        data?.profilePicture ||
+        data?.user?.avatarUrl ||
+        data?.user?.photoURL ||
+        data?.user?.profilePictureUrl ||
+        "";
+
+      const cleaned = String(newAvatar || "").trim();
+      if (!cleaned) {
+        throw new Error("Upload succeeded but no avatar URL was returned.");
+      }
+
+      setProfile((prev) => ({ ...prev, avatarUrl: cleaned }));
+
+      // ✅ update global auth user so Navbar updates immediately
+      try {
+        updateAuthUser({ avatarUrl: cleaned });
+      } catch {}
+
+      setAvatarSuccess("Profile photo updated.");
+      setPendingAvatarFile(null);
+
+      if (avatarPreviewUrl) URL.revokeObjectURL(avatarPreviewUrl);
+      setAvatarPreviewUrl("");
+
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    } catch (err) {
+      setAvatarError(err?.message || "Failed to upload photo.");
+    } finally {
+      setAvatarUploading(false);
+    }
   };
 
   useEffect(() => {

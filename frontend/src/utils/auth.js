@@ -150,6 +150,43 @@ export function setAuth({ token, user, rememberMe = true }) {
   emitAuthChanged();
 }
 
+
+/**
+ * ✅ Update current auth user (without changing token)
+ * Used for profile edits like avatar updates.
+ */
+export function updateAuthUser(patch = {}) {
+  if (!isBrowser()) return;
+
+  // Decide where the current auth lives (local vs session)
+  const hasLocal =
+    !!window.localStorage.getItem(TOKEN_KEY) ||
+    LEGACY_TOKEN_KEYS.some((k) => !!window.localStorage.getItem(k)) ||
+    !!window.localStorage.getItem(USER_KEY);
+
+  const hasSession =
+    !!window.sessionStorage.getItem(TOKEN_KEY) ||
+    LEGACY_TOKEN_KEYS.some((k) => !!window.sessionStorage.getItem(k)) ||
+    !!window.sessionStorage.getItem(USER_KEY);
+
+  const storage = hasLocal ? window.localStorage : hasSession ? window.sessionStorage : window.localStorage;
+
+  let current = null;
+  try {
+    const raw = storage.getItem(USER_KEY) ?? readItem(USER_KEY);
+    current = raw ? JSON.parse(raw) : null;
+  } catch {
+    current = null;
+  }
+
+  const next = { ...(current || {}), ...(patch || {}) };
+
+  storage.setItem(USER_KEY, JSON.stringify(next));
+  storage.setItem(ROLE_KEY, next?.role ?? readItem(ROLE_KEY) ?? "");
+
+  emitAuthChanged();
+}
+
 /**
  * ✅ The ONLY way to sign out
  */

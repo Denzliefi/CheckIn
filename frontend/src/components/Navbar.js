@@ -83,6 +83,7 @@ export default function Navbar() {
   const { pathname } = useLocation();
   const navigate = useNavigate();
   const isSignup = pathname.startsWith("/sign-up");
+  const API_BASE = (process.env.REACT_APP_API_URL || "").replace(/\/+$/, "");
 
   const [open, setOpen] = useState(false); // mobile menu
   const [servicesOpen, setServicesOpen] = useState(false); // desktop dropdown
@@ -93,6 +94,7 @@ export default function Navbar() {
 
   // ✅ avatar dropdown
   const [userOpen, setUserOpen] = useState(false);
+  const [avatarBroken, setAvatarBroken] = useState(false);
   const userRef = useRef(null);
   useOnClickOutside(userRef, () => setUserOpen(false));
 
@@ -102,7 +104,7 @@ export default function Navbar() {
 
   const userInfo = (() => {
     const u = user;
-    if (!u) return DEFAULT_USER;
+    if (!u) return { ...DEFAULT_USER, avatarUrl: "" };
 
     const name =
       u?.name ||
@@ -111,8 +113,27 @@ export default function Navbar() {
       u?.username ||
       "Student";
 
-    return { name };
+    const rawAvatar =
+      u?.avatarUrl ||
+      u?.photoURL ||
+      u?.photoUrl ||
+      u?.profilePictureUrl ||
+      u?.profilePicture ||
+      "";
+
+    let avatarUrl = String(rawAvatar || "").trim();
+
+    // If backend returns a relative path (e.g. /uploads/avatars/xxx.webp), prefix API base
+    if (avatarUrl && !/^https?:\/\//i.test(avatarUrl) && !avatarUrl.startsWith("data:")) {
+      if (API_BASE && avatarUrl.startsWith("/")) avatarUrl = `${API_BASE}${avatarUrl}`;
+    }
+
+    return { name, avatarUrl };
   })();
+  useEffect(() => {
+    setAvatarBroken(false);
+  }, [userInfo.avatarUrl]);
+
 
   useEffect(() => {
     setOpen(false);
@@ -385,7 +406,16 @@ export default function Navbar() {
                       title="Account"
                     >
                       <div className="h-10 w-10 rounded-full overflow-hidden border-2 border-black/15 shrink-0">
-                        <AvatarFallback name={userInfo.name} />
+                        {userInfo.avatarUrl && !avatarBroken ? (
+                          <img
+                            src={userInfo.avatarUrl}
+                            alt={userInfo.name}
+                            className="h-full w-full object-cover"
+                            onError={() => setAvatarBroken(true)}
+                          />
+                        ) : (
+                          <AvatarFallback name={userInfo.name} />
+                        )}
                       </div>
 
                       <div className="min-w-0 text-left leading-[1.15]">
