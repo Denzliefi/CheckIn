@@ -2,7 +2,7 @@
 import { useMemo, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { apiFetch } from "../api/apiFetch";
-import signImg from "../assets/Sign.png";
+import signImg from "../assets/Sign.png"; // make sure filename matches exactly
 
 function Spinner({ size = 16 }) {
   return (
@@ -73,13 +73,14 @@ export default function ResetPassword() {
 
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
+
   const [loading, setLoading] = useState(false);
   // view states: form | success | expired
   const [view, setView] = useState(() => (!token ? "expired" : "form"));
-  const [expiredMsg, setExpiredMsg] = useState(() =>
+  const [note, setNote] = useState(() =>
     !token
       ? "Reset link is missing or invalid. Please request a new one."
-      : "This reset link is invalid or expired. Please request a new one."
+      : ""
   );
   const [error, setError] = useState("");
 
@@ -87,12 +88,13 @@ export default function ResetPassword() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setError("");
-
     if (view !== "form") return;
 
+    setError("");
+
     if (!token) {
-      setError("Reset link is missing or invalid. Please request a new one.");
+      setView("expired");
+      setNote("Reset link is missing or invalid. Please request a new one.");
       return;
     }
     if (password.length < 8) {
@@ -112,14 +114,15 @@ export default function ResetPassword() {
       });
 
       setView("success");
+      setNote("Password updated. Redirecting to login…");
       setTimeout(() => navigate("/login"), 1200);
     } catch (err) {
       const msg = err?.message || "Reset link is invalid or expired.";
 
-      // If token is invalid/expired/used, lock the UI to a dedicated state.
+      // Treat token issues as an "expired/invalid link" UX state.
       if (/expired|invalid|token/i.test(msg)) {
-        setExpiredMsg(msg);
         setView("expired");
+        setNote(msg);
         setPassword("");
         setConfirm("");
         return;
@@ -178,66 +181,18 @@ export default function ResetPassword() {
             />
 
             <p className="text-[13px] sm:text-[14px] text-black/60 mt-3">
-              Set a new password for your account (at least 8 characters).
+              {view === "form"
+                ? "Enter a new password for your account."
+                : "This reset link can only be used for a short time."}
             </p>
 
             {/* Card */}
             <div className="mt-6 rounded-[18px] bg-white border border-black/10 p-5 sm:p-7 shadow-[0_14px_28px_rgba(0,0,0,0.08)]">
-              {view === "success" ? (
-                <div className="flex flex-col gap-4">
-                  <div className="rounded-[14px] border border-black/10 bg-[#F4FFE7] px-4 py-3 text-[13px]">
-                    <span className="font-extrabold">Success!</span> Your password
-                    was updated. Redirecting to login…
-                  </div>
-
-                  <div className="flex items-center justify-between text-[13px]">
-                    <Link
-                      to="/login"
-                      className="font-bold underline underline-offset-4"
-                    >
-                      Back to login
-                    </Link>
-
-                    <Link
-                      to="/forgotpassword"
-                      className="font-bold underline underline-offset-4"
-                    >
-                      Request new link
-                    </Link>
-                  </div>
-                </div>
-              ) : view === "expired" ? (
-                <div className="flex flex-col gap-4">
-                  <div className="rounded-[14px] border border-black/10 bg-[#FFF1F1] px-4 py-3 text-[13px]">
-                    <span className="font-extrabold">Link expired.</span> {expiredMsg}
-                  </div>
-
-                  <div className="text-[12px] text-black/55">
-                    For your security, reset links can only be used once and may
-                    expire after a short time.
-                  </div>
-
-                  <div className="flex items-center justify-between text-[13px]">
-                    <Link
-                      to="/login"
-                      className="font-bold underline underline-offset-4"
-                    >
-                      Back to login
-                    </Link>
-
-                    <Link
-                      to="/forgotpassword"
-                      className="font-bold underline underline-offset-4"
-                    >
-                      Request new link
-                    </Link>
-                  </div>
-                </div>
-              ) : (
+              {view === "form" ? (
                 <form onSubmit={handleSubmit} className="flex flex-col gap-4">
                   {error ? (
-                    <div className="rounded-[14px] border border-black/10 bg-[#FFF1F1] px-4 py-3 text-[13px]">
-                      <span className="font-extrabold">Oops.</span> {error}
+                    <div className="rounded-[14px] border border-black/10 bg-[#FFECEC] px-4 py-3 text-[13px]">
+                      <span className="font-extrabold">Error:</span> {error}
                     </div>
                   ) : null}
 
@@ -270,7 +225,7 @@ export default function ResetPassword() {
                     <input
                       type="password"
                       required
-                      placeholder="Confirm new password"
+                      placeholder="Confirm password"
                       value={confirm}
                       onChange={(e) => setConfirm(e.target.value)}
                       autoComplete="new-password"
@@ -322,9 +277,59 @@ export default function ResetPassword() {
                   </div>
 
                   <div className="text-[12px] text-black/50">
-                    Tip: Use at least 8 characters.
+                    Tip: Choose a strong password you haven’t used before.
                   </div>
                 </form>
+              ) : view === "success" ? (
+                <div className="flex flex-col gap-4">
+                  <div className="rounded-[14px] border border-black/10 bg-[#F4FFE7] px-4 py-3 text-[13px]">
+                    <span className="font-extrabold">Updated!</span> {note}
+                  </div>
+
+                  <div className="flex items-center justify-between text-[13px]">
+                    <Link
+                      to="/login"
+                      className="font-bold underline underline-offset-4"
+                    >
+                      Back to login
+                    </Link>
+
+                    <span className="text-black/60 font-bold">
+                      Redirecting…
+                    </span>
+                  </div>
+
+                  <div className="text-[12px] text-black/50">
+                    Tip: If you don’t get redirected, go back to login manually.
+                  </div>
+                </div>
+              ) : (
+                // EXPIRED / INVALID LINK (matches the "Sent!" UX from ForgotPassword)
+                <div className="flex flex-col gap-4">
+                  <div className="rounded-[14px] border border-black/10 bg-[#FFF1E7] px-4 py-3 text-[13px]">
+                    <span className="font-extrabold">Expired!</span> {note || "This reset link is invalid or expired. Please request a new one."}
+                  </div>
+
+                  <div className="flex items-center justify-between text-[13px]">
+                    <Link
+                      to="/login"
+                      className="font-bold underline underline-offset-4"
+                    >
+                      Back to login
+                    </Link>
+
+                    <Link
+                      to="/forgotpassword"
+                      className="font-bold underline underline-offset-4"
+                    >
+                      Send again
+                    </Link>
+                  </div>
+
+                  <div className="text-[12px] text-black/50">
+                    Tip: Request a new link and open the most recent email.
+                  </div>
+                </div>
               )}
             </div>
           </div>
