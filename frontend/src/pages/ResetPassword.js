@@ -1,5 +1,5 @@
 // src/pages/ResetPassword.js
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { apiFetch } from "../api/apiFetch";
 import signImg from "../assets/Sign.png"; // make sure filename matches exactly
@@ -75,8 +75,8 @@ export default function ResetPassword() {
   const [confirm, setConfirm] = useState("");
 
   const [loading, setLoading] = useState(false);
-  // view states: form | success | expired
-  const [view, setView] = useState(() => (!token ? "expired" : "form"));
+  // view states: checking | form | success | expired
+  const [view, setView] = useState(() => (!token ? "expired" : "checking"));
   const [note, setNote] = useState(() =>
     !token
       ? "Reset link is missing or invalid. Please request a new one."
@@ -84,7 +84,53 @@ export default function ResetPassword() {
   );
   const [error, setError] = useState("");
 
-  const canSubmit = !!token && password.length >= 8 && password === confirm;
+  // Validate token on page load to avoid showing the form for used/expired links.
+  useEffect(() => {
+    let cancelled = false;
+
+    async function run() {
+      if (!token) {
+        setView("expired");
+        setNote("Reset link is missing or invalid. Please request a new one.");
+        return;
+      }
+
+      setView("checking");
+      setError("");
+      setNote("Checking your reset link…");
+
+      try {
+        const data = await apiFetch(
+          `/api/auth/reset-password/validate?token=${encodeURIComponent(token)}`
+        );
+
+        if (cancelled) return;
+
+        if (data && data.valid) {
+          setView("form");
+          setNote("");
+          return;
+        }
+
+        setView("expired");
+        setNote(
+          (data && data.message) ||
+            "Expired! Reset link is invalid or has already been used. Please request a new one."
+        );
+      } catch (err) {
+        if (cancelled) return;
+        setView("expired");
+        setNote("Expired! Reset link is invalid or expired. Please request a new one.");
+      }
+    }
+
+    run();
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
+
+  const canSubmit = view === "form" && !!token && password.length >= 8 && password === confirm;
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -307,7 +353,11 @@ export default function ResetPassword() {
                 // EXPIRED / INVALID LINK (matches the "Sent!" UX from ForgotPassword)
                 <div className="flex flex-col gap-4">
                   <div className="rounded-[14px] border border-black/10 bg-[#FFF1E7] px-4 py-3 text-[13px]">
-                    <span className="font-extrabold">Expired!</span> {note || "This reset link is invalid or expired. Please request a new one."}
+                    {view === "checking" ? (
+                      <span className="font-extrabold">Checking…</span>
+                    ) : (
+                      <span className="font-extrabold">Expired!</span>
+                    )}{" "}{note || "This reset link is invalid or expired. Please request a new one."}
                   </div>
 
                   <div className="flex items-center justify-between text-[13px]">
