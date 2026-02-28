@@ -91,7 +91,18 @@ function pickIdentity(obj) {
     obj.user?.studentNo ||
     "";
 
-  return { email, name, studentNumber };
+  const avatarUrl =
+    obj.avatarUrl ||
+    obj.user?.avatarUrl ||
+    obj.profile?.avatarUrl ||
+    obj.user?.profile?.avatarUrl ||
+    obj.photoURL ||
+    obj.photoUrl ||
+    obj.avatar ||
+    obj.user?.avatar ||
+    "";
+
+  return { email, name, studentNumber, avatarUrl };
 }
 
 function readLoggedInIdentity() {
@@ -281,33 +292,6 @@ function formatTime12(input) {
   return `${hour12}:${mm} ${suffix}`;
 }
 
-
-/* ===================== CANCEL RULES (Option B) ===================== */
-const CANCEL_CUTOFF_MS = 24 * 60 * 60 * 1000;
-function buildPHSessionISO(date, time) {
-  const d = String(date || "").trim();
-  const tRaw = String(time || "").trim();
-  if (!d || !tRaw) return "";
-  const t = /^\d{1,2}:\d{2}$/.test(tRaw) ? tRaw.padStart(5, "0") : tRaw;
-  if (!/^\d{2}:\d{2}$/.test(t)) return "";
-  return `${d}T${t}:00+08:00`;
-}
-function cancelGateSuccess(req) {
-  const status = String(req?.status || "");
-  if (status === "Pending") return { ok: true, reason: "" };
-  if (status !== "Approved" && status !== "Rescheduled") return { ok: false, reason: "" };
-
-  const iso = buildPHSessionISO(req?.date, req?.time);
-  if (!iso) return { ok: false, reason: "Invalid schedule." };
-
-  const sessionMs = new Date(iso).getTime();
-  if (Number.isNaN(sessionMs)) return { ok: false, reason: "Invalid schedule." };
-
-  const diff = sessionMs - Date.now();
-  if (diff >= CANCEL_CUTOFF_MS) return { ok: true, reason: "" };
-  return { ok: false, reason: "Locked (within 24 hours)." };
-}
-
 function normalizeTo24h(input) {
   const v = String(input || "").trim();
   if (!v) return "";
@@ -465,9 +449,13 @@ export default function Request({ onClose }) {
 
   useEffect(() => {
     if (typeof window === "undefined") return undefined;
-    const onStorage = () => setUserIdentity(readLoggedInIdentity());
-    window.addEventListener("storage", onStorage);
-    return () => window.removeEventListener("storage", onStorage);
+    const sync = () => setUserIdentity(readLoggedInIdentity());
+    window.addEventListener("storage", sync);
+    window.addEventListener("auth:changed", sync);
+    return () => {
+      window.removeEventListener("storage", sync);
+      window.removeEventListener("auth:changed", sync);
+    };
   }, []);
 
   const [openMessages, setOpenMessages] = useState(false);
@@ -523,7 +511,7 @@ export default function Request({ onClose }) {
         const type = String(r.type || "");
         if (type !== "MEET") return false;
         const status = String(r.status || "");
-        const isActive = status === "Pending" || status === "Approved" || status === "Rescheduled";
+        const isActive = status === "Pending" || status === "Approved";
         const notCompleted = !r.completedAt;
         return isActive && notCompleted;
       });
@@ -1346,8 +1334,6 @@ export default function Request({ onClose }) {
     (pillUnlocked && termsAccepted ? "pb-24" : "pb-8");
 
   const displayReq = currentRequest || null;
-  const cancelGateMemo = useMemo(() => cancelGateSuccess(displayReq), [displayReq?.status, displayReq?.date, displayReq?.time]);
-
   const isOverlayOpen = showTerms || showCancelConfirm;
 
   return (
@@ -2043,13 +2029,12 @@ export default function Request({ onClose }) {
 
                         <button
                           type="button"
-                          disabled={!currentRequest || !cancelGateMemo.ok}
+                          disabled={!currentRequest || String(currentRequest.status) !== "Pending"}
                           onClick={() => setShowCancelConfirm(true)}
-                          title={!cancelGateMemo.ok ? cancelGateMemo.reason : ""}
                           className={[
                             ghostBtn,
                             tapClass,
-                            !currentRequest || !cancelGateMemo.ok
+                            !currentRequest || String(currentRequest.status) !== "Pending"
                               ? "opacity-60 cursor-not-allowed"
                               : "",
                           ].join(" ")}

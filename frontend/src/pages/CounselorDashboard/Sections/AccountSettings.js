@@ -1,21 +1,15 @@
 // src/pages/CounselorDashboard/Sections/AccountSettings.js
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
-import { getUser } from "../../../utils/auth";
+import { getUser, updateAuthUser } from "../../../utils/auth";
+import { apiFetch, getApiBaseUrl } from "../../../api/apiFetch";
 
 const STORAGE_USER_KEY = "user";
 
-/* ===================== OPTIONS ===================== */
-const CAMPUS_OPTIONS = [
-  "Legarda Campus",
-  "Pasay Campus",
-  "Jose Abad Santos Campus",
-  "Andres Bonifacio Campus",
-  "Apolinario Mabini Campus",
-  "Elisa Esquerra Campus",
-];
+/* ===================== STATIC CAMPUS ===================== */
+/** ✅ Campus is fixed (non-editable) */
+const STATIC_CAMPUS = "Andres Bonifacio Campus";
 
-const MAX_AVATAR_BYTES = 2 * 1024 * 1024; // 2MB
+const MAX_AVATAR_BYTES = 5 * 1024 * 1024; // 5MB (match backend limit)
 const AVATAR_SIZE_PX = 256;
 const AVATAR_QUALITY = 0.9;
 
@@ -45,6 +39,7 @@ function writeUser(value) {
 function validate(profile) {
   const errors = {};
   if (!String(profile.fullName || "").trim()) errors.fullName = "Required";
+  // Campus is fixed, but keep validation guard in case storage/user object is malformed.
   if (!String(profile.campus || "").trim()) errors.campus = "Required";
   return errors;
 }
@@ -59,6 +54,22 @@ function getInitials(fullName) {
   const b = parts.length > 1 ? parts[parts.length - 1]?.[0] || "" : "";
   return (a + b).toUpperCase();
 }
+
+function resolveAvatarSrc(src) {
+  const s = String(src || "").trim();
+  if (!s) return "";
+  if (s.startsWith("data:")) return s;
+  if (s.startsWith("http://") || s.startsWith("https://")) return s;
+
+  // If backend returns /uploads/..., prefix it with API base (works on Vercel + Render + localhost)
+  if (s.startsWith("/uploads/")) {
+    const base = getApiBaseUrl();
+    return base ? `${base}${s}` : s;
+  }
+
+  return s;
+}
+
 
 function validateImageFile(file) {
   if (!file) return "No file selected.";
@@ -297,7 +308,8 @@ export default function AccountSettings() {
       fullName: localUser?.fullName || localUser?.name || storedUser?.fullName || storedUser?.name || "",
       email: localUser?.email || storedUser?.email || "",
       counselorId: localUser?.counselorId || storedUser?.counselorId || "",
-      campus: localUser?.campus || storedUser?.campus || "",
+      // ✅ Campus is forced to static (user cannot edit)
+      campus: STATIC_CAMPUS,
       avatarDataUrl,
     };
   }, [localUser, storedUser]);
@@ -311,6 +323,7 @@ export default function AccountSettings() {
   const [errors, setErrors] = useState({});
 
   const [avatarBusy, setAvatarBusy] = useState(false);
+  const [avatarFile, setAvatarFile] = useState(null); // selected file for upload
   const [avatarError, setAvatarError] = useState("");
 
   const isXxs = useMediaQuery("(max-width: 360px)");
@@ -326,9 +339,9 @@ export default function AccountSettings() {
     };
   }, []);
 
+  // ✅ Campus is not editable; don't include it in dirty-check
   const isDirty =
     String(draft.fullName || "").trim() !== String(savedProfile.fullName || "").trim() ||
-    String(draft.campus || "").trim() !== String(savedProfile.campus || "").trim() ||
     String(draft.avatarDataUrl || "") !== String(savedProfile.avatarDataUrl || "");
 
   const showMsg = (text) => {
@@ -348,6 +361,7 @@ export default function AccountSettings() {
     setAvatarBusy(true);
     try {
       const dataUrl = await fileToAvatarDataUrl(file, AVATAR_SIZE_PX, AVATAR_QUALITY);
+      setAvatarFile(file);
       setDraft((p) => ({ ...p, avatarDataUrl: dataUrl }));
     } catch {
       setAvatarError("Failed to process image.");
@@ -360,7 +374,10 @@ export default function AccountSettings() {
     e.preventDefault();
     setSavedMsg("");
 
-    const nextErrors = validate(draft);
+    // ✅ Ensure campus always stays the static value
+    const safeDraft = { ...draft, campus: STATIC_CAMPUS };
+
+    const nextErrors = validate(safeDraft);
     setErrors(nextErrors);
 
     if (Object.keys(nextErrors).length) {
@@ -373,17 +390,57 @@ export default function AccountSettings() {
       return;
     }
 
+    const role = String(localUser?.role || storedUser?.role || "");
+    const isCounselor = /^counselor$/i.test(role);
+
     setSaving(true);
     try {
+      let uploadedAvatarUrl = "";
+
+      // ✅ Upload avatar to backend ONLY if a new file was selected
+      if (avatarFile) {
+        if (!isCounselor) {
+          setAvatarError("Only counselors can upload a profile picture here.");
+          throw new Error("Upload not allowed.");
+        }
+
+        const fd = new FormData();
+        fd.append("avatar", avatarFile);
+
+        const resp = await apiFetch("/api/users/me/counselor/avatar", {
+          method: "PUT",
+          body: fd,
+        });
+
+        uploadedAvatarUrl = resp?.avatarUrl || resp?.user?.avatarUrl || "";
+        if (!uploadedAvatarUrl) {
+          throw new Error("Upload succeeded but no avatar URL was returned.");
+        }
+
+        // Store the server path (e.g. /uploads/avatars/...)
+        safeDraft.avatarDataUrl = uploadedAvatarUrl;
+      }
+
       const existing = readUser();
-      const nextSaved = { ...existing, ...draft };
+      const nextSaved = { ...existing, ...safeDraft };
+
+      // Keep both keys for compatibility with other UI parts
+      if (uploadedAvatarUrl) {
+        nextSaved.avatarUrl = uploadedAvatarUrl;
+        nextSaved.avatarDataUrl = uploadedAvatarUrl;
+
+        // Update global auth user so Navbar/other UI updates instantly
+        updateAuthUser({ avatarUrl: uploadedAvatarUrl });
+      }
 
       writeUser(nextSaved);
-      setSavedProfile(draft);
+      setSavedProfile(safeDraft);
+      setDraft(safeDraft);
+      setAvatarFile(null);
 
       showMsg("Saved.");
-    } catch {
-      showMsg("Save failed. Try again.");
+    } catch (err) {
+      showMsg(err?.message || "Save failed. Try again.");
     } finally {
       setSaving(false);
     }
@@ -422,12 +479,13 @@ export default function AccountSettings() {
 
         <div className="mt-4 sm:mt-5">
           <AvatarCompact
-            fullName={savedProfile.fullName}
-            campus={savedProfile.campus}
-            avatarDataUrl={savedProfile.avatarDataUrl}
+            fullName={draft.fullName}
+            campus={draft.campus}
+            avatarDataUrl={resolveAvatarSrc(draft.avatarDataUrl)}
             busy={avatarBusy}
             error={avatarError}
             onPick={onPickAvatar}
+            canEdit={/^counselor$/i.test(String((localUser?.role || storedUser?.role || "") || ""))}
           />
         </div>
 
@@ -445,18 +503,15 @@ export default function AccountSettings() {
             icon={<IconUser className="text-slate-500" />}
           />
 
-          <SelectField
+          {/* ✅ Campus is STATIC (no dropdown, no editing) */}
+          <Field
             label="Campus"
-            value={draft.campus}
-            onChange={(v) => {
-              setDraft((p) => ({ ...p, campus: v }));
-              setErrors((er) => ({ ...er, campus: "" }));
-            }}
-            placeholder="Select campus"
-            helper="Used for routing and assignments."
+            value={STATIC_CAMPUS}
+            placeholder={STATIC_CAMPUS}
+            readOnly
+            helper=""
             error={errors.campus}
             icon={<IconBuilding className="text-slate-500" />}
-            options={CAMPUS_OPTIONS}
           />
         </div>
 
@@ -575,7 +630,7 @@ export default function AccountSettings() {
 }
 
 /* ===================== AVATAR (shows SAVED only) ===================== */
-function AvatarCompact({ fullName, campus, avatarDataUrl, busy, error, onPick }) {
+function AvatarCompact({ fullName, campus, avatarDataUrl, busy, error, onPick, canEdit = true }) {
   const inputRef = useRef(null);
   const [dragOver, setDragOver] = useState(false);
 
@@ -584,12 +639,12 @@ function AvatarCompact({ fullName, campus, avatarDataUrl, busy, error, onPick })
   const campusText = String(campus || "").trim() || "—";
 
   const openPicker = () => {
-    if (busy) return;
+    if (busy || !canEdit) return;
     inputRef.current?.click?.();
   };
 
   const handleFile = (file) => {
-    if (!file || busy) return;
+    if (!file || busy || !canEdit) return;
     onPick?.(file);
   };
 
@@ -605,6 +660,7 @@ function AvatarCompact({ fullName, campus, avatarDataUrl, busy, error, onPick })
           type="file"
           accept="image/*"
           className="hidden"
+          disabled={!canEdit}
           onChange={(e) => {
             const file = e.target.files?.[0] || null;
             handleFile(file);
@@ -651,7 +707,12 @@ function AvatarCompact({ fullName, campus, avatarDataUrl, busy, error, onPick })
             <div className="h-full w-full rounded-full bg-white p-[2px]">
               <div className="relative h-full w-full rounded-full overflow-hidden bg-slate-50">
                 {avatarDataUrl ? (
-                  <img src={avatarDataUrl} alt="Profile" className="h-full w-full object-cover rounded-full" draggable={false} />
+                  <img
+                    src={avatarDataUrl}
+                    alt="Profile"
+                    className="h-full w-full object-cover rounded-full"
+                    draggable={false}
+                  />
                 ) : (
                   <div className="h-full w-full flex items-center justify-center">
                     <div className="text-2xl font-black text-slate-800">{initials}</div>
@@ -664,7 +725,7 @@ function AvatarCompact({ fullName, campus, avatarDataUrl, busy, error, onPick })
 
             <button
               type="button"
-              disabled={busy}
+              disabled={busy || !canEdit}
               onClick={openPicker}
               className={[
                 "absolute bottom-1 right-1",
@@ -696,6 +757,11 @@ function AvatarCompact({ fullName, campus, avatarDataUrl, busy, error, onPick })
             <div className="mt-1 text-sm font-semibold text-slate-600">Guidance Counselor</div>
             <div className="mt-1 text-sm font-semibold text-slate-600 break-words">{campusText}</div>
             {error ? <div className="mt-2 text-sm font-extrabold text-red-700">{error}</div> : null}
+            {!canEdit ? (
+              <div className="mt-2 text-xs font-extrabold text-slate-600">
+                Only counselors can change the profile picture here.
+              </div>
+            ) : null}
           </div>
         </div>
       </div>
@@ -742,265 +808,6 @@ function Field({ label, value, onChange, placeholder, type = "text", readOnly = 
             "placeholder:text-slate-500",
           ].join(" ")}
         />
-      </div>
-
-      {helper ? (
-        <div id={helperId} className="mt-2 text-xs font-semibold text-slate-600">
-          {helper}
-        </div>
-      ) : null}
-    </label>
-  );
-}
-
-/**
- * Same dropdown design on ALL devices (portal popover), no bottom sheets.
- */
-function SelectField({ label, value, onChange, placeholder, helper, error, icon, options = [] }) {
-  const hasError = Boolean(error);
-  const helperId = helper ? `${label.replace(/\s+/g, "-").toLowerCase()}-help` : undefined;
-
-  const rootRef = useRef(null);
-  const buttonRef = useRef(null);
-  const listRef = useRef(null);
-  const idRef = useRef(`sf-${Math.random().toString(36).slice(2, 10)}`);
-  const listboxId = `${idRef.current}-listbox`;
-
-  const [open, setOpen] = useState(false);
-  const [activeIndex, setActiveIndex] = useState(-1);
-  const [pos, setPos] = useState({ left: 0, top: 0, width: 0, maxHeight: 280 });
-
-  const selectedIndex = useMemo(() => options.findIndex((opt) => opt === value), [options, value]);
-  const displayText = String(value || "").trim();
-
-  const close = () => setOpen(false);
-
-  const computePos = () => {
-    const el = rootRef.current;
-    if (!el || typeof window === "undefined") return;
-
-    const rect = el.getBoundingClientRect();
-    const vw = window.innerWidth || 0;
-    const vh = window.innerHeight || 0;
-
-    const sidePad = 12;
-    const margin = 8;
-    const minVisible = 200;
-
-    const width = Math.min(rect.width, vw - sidePad * 2);
-    const left = Math.max(sidePad, Math.min(rect.left, vw - width - sidePad));
-
-    let top = rect.bottom + margin;
-    top = Math.min(top, Math.max(margin, vh - margin - minVisible));
-
-    const maxHeight = Math.min(320, Math.floor(vh * 0.55), Math.max(140, vh - top - margin));
-    setPos({ left, top, width, maxHeight });
-  };
-
-  useEffect(() => {
-    if (!open) return;
-
-    setActiveIndex(selectedIndex >= 0 ? selectedIndex : 0);
-    computePos();
-
-    let raf = 0;
-    const schedule = () => {
-      window.cancelAnimationFrame(raf);
-      raf = window.requestAnimationFrame(computePos);
-    };
-
-    window.addEventListener("resize", schedule);
-    window.addEventListener("scroll", schedule, true);
-
-    return () => {
-      window.cancelAnimationFrame(raf);
-      window.removeEventListener("resize", schedule);
-      window.removeEventListener("scroll", schedule, true);
-    };
-  }, [open, selectedIndex]);
-
-  useEffect(() => {
-    if (!open) return;
-    const item = listRef.current?.querySelector?.(`[data-idx="${activeIndex}"]`);
-    item?.scrollIntoView?.({ block: "nearest" });
-  }, [open, activeIndex]);
-
-  const selectAt = (idx) => {
-    const opt = options[idx];
-    if (!opt) return;
-    onChange?.(opt);
-    close();
-    buttonRef.current?.focus?.();
-  };
-
-  const onButtonKeyDown = (e) => {
-    if (e.key === "ArrowDown") {
-      e.preventDefault();
-      if (!open) setOpen(true);
-      setActiveIndex((i) =>
-        Math.min((i < 0 ? (selectedIndex >= 0 ? selectedIndex : 0) : i) + 1, options.length - 1)
-      );
-      return;
-    }
-    if (e.key === "ArrowUp") {
-      e.preventDefault();
-      if (!open) setOpen(true);
-      setActiveIndex((i) =>
-        Math.max((i < 0 ? (selectedIndex >= 0 ? selectedIndex : options.length - 1) : i) - 1, 0)
-      );
-      return;
-    }
-    if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      if (!open) setOpen(true);
-      else if (activeIndex >= 0) selectAt(activeIndex);
-      return;
-    }
-    if (e.key === "Escape") {
-      e.preventDefault();
-      close();
-    }
-  };
-
-  const onListKeyDown = (e) => {
-    if (e.key === "ArrowDown") {
-      e.preventDefault();
-      setActiveIndex((i) => Math.min((i < 0 ? 0 : i + 1), options.length - 1));
-      return;
-    }
-    if (e.key === "ArrowUp") {
-      e.preventDefault();
-      setActiveIndex((i) => Math.max((i < 0 ? 0 : i - 1), 0));
-      return;
-    }
-    if (e.key === "Enter") {
-      e.preventDefault();
-      if (activeIndex >= 0) selectAt(activeIndex);
-      return;
-    }
-    if (e.key === "Escape") {
-      e.preventDefault();
-      close();
-      buttonRef.current?.focus?.();
-    }
-  };
-
-  const portal =
-    open && typeof document !== "undefined"
-      ? createPortal(
-          <>
-            <div
-              className="fixed inset-0 z-[9998] bg-transparent"
-              role="presentation"
-              onMouseDown={close}
-              onTouchStart={close}
-            />
-            <div style={{ position: "fixed", left: pos.left, top: pos.top, width: pos.width, zIndex: 9999 }}>
-              <div className="rounded-2xl border border-slate-200 bg-white shadow-[0_18px_50px_rgba(15,23,42,0.20)] p-2 max-[360px]:p-1.5">
-                <div
-                  id={listboxId}
-                  ref={listRef}
-                  role="listbox"
-                  tabIndex={-1}
-                  onKeyDown={onListKeyDown}
-                  style={{ maxHeight: pos.maxHeight }}
-                  className="overflow-auto outline-none [-webkit-overflow-scrolling:touch]"
-                >
-                  <div className="space-y-1">
-                    {options.map((opt, idx) => {
-                      const isSelectedOpt = opt === value;
-                      const isActive = idx === activeIndex;
-
-                      return (
-                        <button
-                          key={opt}
-                          type="button"
-                          role="option"
-                          aria-selected={isSelectedOpt}
-                          data-idx={idx}
-                          onMouseEnter={() => setActiveIndex(idx)}
-                          onClick={() => selectAt(idx)}
-                          className={[
-                            "w-full text-left rounded-xl",
-                            "px-4 py-2 max-[360px]:px-3",
-                            "text-[15px] sm:text-base leading-snug",
-                            "transition",
-                            isActive ? "bg-slate-100" : "hover:bg-slate-50",
-                            isSelectedOpt ? "font-extrabold text-slate-900" : "font-semibold text-slate-800",
-                          ].join(" ")}
-                        >
-                          <span className="block whitespace-normal break-words">{opt}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </>,
-          document.body
-        )
-      : null;
-
-  return (
-    <label className="block">
-      <div className="flex items-end justify-between gap-3">
-        <div className="text-sm font-extrabold text-slate-800">{label}</div>
-        {hasError ? <div className="text-xs font-black text-red-700">{error}</div> : null}
-      </div>
-
-      {/* ✅ Back to SAME base design as Field() */}
-      <div
-        ref={rootRef}
-        className={[
-          "mt-2 flex items-center gap-2 rounded-xl border px-3 max-[360px]:px-2",
-          "h-12 max-[360px]:h-auto max-[360px]:py-2 max-[360px]:items-start",
-          "bg-white",
-          hasError
-            ? "border-red-200 focus-within:ring-4 focus-within:ring-red-50"
-            : "border-slate-200 focus-within:ring-4 focus-within:ring-slate-900/10",
-        ].join(" ")}
-      >
-        {/* ✅ Icon = fixed 18px like your other fields */}
-        {icon ? (
-          <span className="shrink-0 h-[18px] w-[18px] flex items-center justify-center text-slate-500 max-[360px]:mt-[2px]">
-            {icon}
-          </span>
-        ) : null}
-
-        <button
-          ref={buttonRef}
-          type="button"
-          onClick={() => {
-            setOpen((v) => !v);
-            window.requestAnimationFrame(computePos);
-          }}
-          onKeyDown={onButtonKeyDown}
-          aria-haspopup="listbox"
-          aria-expanded={open}
-          aria-controls={listboxId}
-          aria-invalid={hasError}
-          aria-describedby={helperId}
-          className={[
-            "w-full bg-transparent outline-none",
-            "flex items-center justify-between gap-3",
-            "text-[15px] sm:text-base font-semibold leading-snug",
-            "max-[360px]:items-start",
-            displayText ? "text-slate-900" : "text-slate-500",
-          ].join(" ")}
-        >
-          {/* ✅ Desktop = truncate, Fold = wraps */}
-          <span className="truncate max-[360px]:whitespace-normal max-[360px]:break-words">
-            {displayText || placeholder}
-          </span>
-
-          {/* ✅ Chevron fixed 18px to match icons */}
-          <span className="shrink-0 h-[18px] w-[18px] flex items-center justify-center text-slate-700 max-[360px]:mt-[2px]">
-            <IconChevronDown className={["transition-transform", open ? "rotate-180" : ""].join(" ")} />
-          </span>
-        </button>
-
-        {portal}
       </div>
 
       {helper ? (

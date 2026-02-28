@@ -95,16 +95,24 @@ function isValidEmail(value) {
 
 /**
  * ✅ Silent input constraints (NO red errors while typing)
- * - firstName/lastName: letters only
+ * - firstName/lastName: letters + spaces + apostrophes + hyphens
  * - studentId: NN-NNNNN (2 digits + dash + 5 digits), max length 8 incl. dash
  */
 function lettersOnly(value) {
   const v = String(value ?? "");
   // Prefer unicode letters (supports names beyond A-Z), fallback to ASCII if unsupported.
+  // Allow common name separators: spaces, apostrophes, hyphens.
+  // Also keep combining marks (accents) where supported.
   try {
-    return v.replace(/[^\p{L}]/gu, "");
+    const normalized = v.replace(/[’`]/g, "'");
+    let cleaned = normalized.replace(/[^\p{L}\p{M} \-']/gu, "");
+    cleaned = cleaned.replace(/\s+/g, " ");
+    return cleaned;
   } catch {
-    return v.replace(/[^a-zA-Z]/g, "");
+    const normalized = v.replace(/[’`]/g, "'");
+    let cleaned = normalized.replace(/[^a-zA-Z \-']/g, "");
+    cleaned = cleaned.replace(/\s+/g, " ");
+    return cleaned;
   }
 }
 

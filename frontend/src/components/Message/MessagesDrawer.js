@@ -7,19 +7,22 @@ import React, {
   useState,
 } from "react";
 
+
+import { getApiBaseUrl } from "../../api/apiFetch";
 const TEXT_MAIN = "#141414";
 const EXPIRE_MS = 24 * 60 * 60 * 1000;
+
 
 // Avatar URLs may be stored as relative paths (e.g. /uploads/avatars/..). Resolve against API base.
 function resolveAvatarSrc(src) {
   const s = String(src || "").trim();
   if (!s) return "";
   if (/^https?:\/\//i.test(s) || s.startsWith("data:")) return s;
-  const base = String(process.env.REACT_APP_API_URL || "").replace(/\/+$/, "");
+
+  const base = String(getApiBaseUrl() || "").replace(/\/+$/, "");
   if (base && s.startsWith("/")) return `${base}${s}`;
   return s;
 }
-
 // ✅ PATCH: per-user session storage prefix (prevents shared-device session pickup)
 const LS_KEY = "counselor_chat_session_v1";
 
@@ -185,7 +188,6 @@ function Avatar({
     </div>
   );
 }
-
 
 export default function MessagesDrawer({open,
   onClose,
@@ -925,13 +927,19 @@ export default function MessagesDrawer({open,
     !startingMode;
 
   const myAvatarFallback = useMemo(() => {
-    const mMode = mode || "student";
-    return mMode === "anonymous" ? "🕵️" : "🎓";
-  }, [mode, loggedInEmail]);
+    if (mode === "anonymous") return "A";
+
+    const name = String(userIdentity?.name || userIdentity?.fullName || "").trim();
+    const n = initials(name);
+    if (n) return n;
+
+    const em = String(loggedInEmail || userIdentity?.email || "").trim();
+    return em ? em[0].toUpperCase() : "S";
+  }, [mode, userIdentity, loggedInEmail]);
 
     const counselorAvatarFallback = useMemo(() => {
     const n = initials(counselorDisplayName);
-    return n || "🧑‍⚕️";
+    return n || "C";
   }, [counselorDisplayName]);
 
   // Identity chooser UI state:
@@ -1309,7 +1317,7 @@ export default function MessagesDrawer({open,
                           {showAvatar ? (
                             <Avatar
                               size={40}
-                              src={userAvatarUrl}
+                              src={mode === "anonymous" ? "" : userAvatarUrl}
                               fallback={myAvatarFallback}
                               label="You"
                               title={mode === "anonymous" ? "Anonymous" : "You"}

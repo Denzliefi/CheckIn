@@ -45,6 +45,73 @@ function normalizeTel(input) {
   return hasPlus ? `+${digits}` : digits;
 }
 
+/**
+ * Behavior:
+ * - Phone/tablet => open dialer (tel:)
+ * - "PC" (desktop-sized, fine pointer) => copy number (no extra UI)
+ */
+function shouldCopyOnPC() {
+  if (typeof window === "undefined") return false;
+
+  const nav = window.navigator;
+  const ua = String(nav?.userAgent || "").toLowerCase();
+
+  // Mobile heuristics
+  const isMobile =
+    Boolean(nav?.userAgentData?.mobile) ||
+    /android|iphone|ipod|ipad|mobile|windows phone/.test(ua);
+
+  if (isMobile) return false;
+
+  // Treat coarse pointer / touch devices as "can dial" (keeps phone/tablet behavior)
+  const isCoarse =
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(pointer: coarse)").matches;
+
+  const hasTouch = typeof nav?.maxTouchPoints === "number" && nav.maxTouchPoints > 0;
+
+  if (isCoarse || hasTouch) return false;
+
+  // Desktop-ish (what the user calls "PC"): big viewport + fine pointer
+  const isFinePointer =
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(hover: hover) and (pointer: fine)").matches;
+
+  const bigScreen = window.innerWidth >= 1440; // favors laptops dialing; big desktops copy
+  return Boolean(isFinePointer && bigScreen);
+}
+
+async function copyTextToClipboard(text) {
+  const t = String(text || "");
+  if (!t) return;
+
+  try {
+    // Modern async clipboard API
+    if (navigator?.clipboard?.writeText) {
+      await navigator.clipboard.writeText(t);
+      return;
+    }
+  } catch {
+    // fall through to legacy method
+  }
+
+  try {
+    // Legacy fallback (no UI)
+    const ta = document.createElement("textarea");
+    ta.value = t;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.left = "-9999px";
+    ta.style.top = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand("copy");
+    document.body.removeChild(ta);
+  } catch {
+    // silently ignore (no UI)
+  }
+}
+
 /** --- Minimal doodles --- */
 function DoodleSpark({ className = "" }) {
   return (
@@ -157,7 +224,10 @@ function SchoolIcon({ className = "" }) {
         strokeWidth="2"
         strokeLinejoin="round"
       />
-      <path d="M22 8v6" stroke="#141414" strokeWidth="2" strokeLinecap="round" />
+      <path d="M22 8v6" stroke="#141414"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
     </svg>
   );
 }
@@ -208,6 +278,17 @@ function EmergencyCard({ item, delay = 0, variant = "default" }) {
       ? "overflow-visible"
       : "overflow-hidden"
     : "overflow-hidden";
+
+  const onPrimaryClick = async (e) => {
+    if (item.mode !== "call") return;
+
+    // On PC -> copy number only (no UI)
+    if (shouldCopyOnPC()) {
+      e.preventDefault();
+      await copyTextToClipboard(safeTel);
+    }
+    // else: allow default tel: behavior
+  };
 
   return (
     <div
@@ -277,6 +358,7 @@ function EmergencyCard({ item, delay = 0, variant = "default" }) {
                 <div className="mt-6 md:mt-auto pt-2 md:pt-6">
                   <a
                     href={href}
+                    onClick={onPrimaryClick}
                     aria-label={item.mode === "call" ? `Call ${item.title}` : item.primaryLabel}
                     className={[
                       "w-full sm:w-auto sm:min-w-[240px]",
@@ -381,6 +463,7 @@ function EmergencyCard({ item, delay = 0, variant = "default" }) {
             <div className="mt-4">
               <a
                 href={href}
+                onClick={onPrimaryClick}
                 aria-label={item.mode === "call" ? `Call ${item.title}` : item.primaryLabel}
                 className={[
                   "w-full",
@@ -410,6 +493,13 @@ function EmergencyCard({ item, delay = 0, variant = "default" }) {
 
 export default function Emergency() {
   const [heroRef, heroInView] = useInView({ threshold: 0.2 });
+
+  const onHeroCallClick = async (e) => {
+    if (shouldCopyOnPC()) {
+      e.preventDefault();
+      await copyTextToClipboard("911");
+    }
+  };
 
   const sections = useMemo(
     () => [
@@ -557,6 +647,7 @@ export default function Emergency() {
             <div className="mt-5 sm:mt-6">
               <a
                 href="tel:911"
+                onClick={onHeroCallClick}
                 className={[
                   "w-full sm:w-auto",
                   "inline-flex items-center justify-center gap-2 rounded-full border border-black/15 bg-[#B9FF66]",
@@ -606,12 +697,7 @@ export default function Emergency() {
                 {isFeaturedSection ? (
                   <div className="mt-4 sm:mt-5">
                     {sec.items.map((item, i) => (
-                      <EmergencyCard
-                        key={`${sIdx}-${i}`}
-                        item={item}
-                        delay={i * 110}
-                        variant="featured"
-                      />
+                      <EmergencyCard key={`${sIdx}-${i}`} item={item} delay={i * 110} variant="featured" />
                     ))}
                   </div>
                 ) : (

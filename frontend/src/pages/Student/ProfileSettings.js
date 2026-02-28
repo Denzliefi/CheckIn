@@ -11,11 +11,12 @@ const TEXT_MAIN = "#0F172A";
 const TEXT_MUTED = "#475569";
 const TEXT_SOFT = "#64748B";
 
-const DEFAULT_CAMPUS = "Arellano University Andres Bonifacio Campus";
+const DEFAULT_CAMPUS = "Arellano University Andres Bonifacio Campus=";
 
 const EMPTY_PROFILE = {
   firstName: "",
   lastName: "",
+  username: "",
   studentNumber: "",
   email: "",
   campus: "",
@@ -64,42 +65,38 @@ function formatDate(value) {
 
 function Spinner({ size = 18 }) {
   return (
+    <svg className="animate-spin" width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+    </svg>
+  );
+}
+
+function IconCamera({ className = "" }) {
+  return (
     <svg
-      className="animate-spin"
-      width={size}
-      height={size}
       viewBox="0 0 24 24"
-      fill="none"
+      width="18"
+      height="18"
       aria-hidden="true"
+      className={className}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
     >
-      <circle
-        className="opacity-25"
-        cx="12"
-        cy="12"
-        r="10"
-        stroke="currentColor"
-        strokeWidth="4"
-      />
-      <path
-        className="opacity-75"
-        fill="currentColor"
-        d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"
-      />
+      <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+      <circle cx="12" cy="13" r="4" />
     </svg>
   );
 }
 
 /* ======================
    API BASE (Local + Render)
-   - Uses REACT_APP_API_URL (ex: http://localhost:5000 or https://<render-app>.onrender.com)
 ====================== */
 const API_BASE = (process.env.REACT_APP_API_URL || "").replace(/\/+$/, "");
-
-// If backend returns "/uploads/avatars/xxx.jpg", the browser MUST load it from backend origin.
-const UPLOADS_ORIGIN = (process.env.REACT_APP_UPLOADS_URL || API_BASE || "http://localhost:5000").replace(
-  /\/+$/,
-  "",
-);
+const UPLOADS_ORIGIN = (process.env.REACT_APP_UPLOADS_URL || API_BASE || "http://localhost:5000").replace(/\/+$/, "");
 
 function isAbsoluteUrl(u = "") {
   const s = String(u || "").trim().toLowerCase();
@@ -176,9 +173,7 @@ async function fetchMyProfile() {
 
       if (res.status === 404) continue;
 
-      if (res.status === 401 || res.status === 403) {
-        throw new Error("Not authorized");
-      }
+      if (res.status === 401 || res.status === 403) throw new Error("Not authorized");
 
       if (!res.ok) {
         const msg = (data?.message || raw || "Failed to load profile.").toString();
@@ -209,6 +204,53 @@ function looksLikeHandle(name, username, email) {
   return false;
 }
 
+function AvatarFeedback({ avatarError, avatarSuccess }) {
+  if (!avatarError && !avatarSuccess) return null;
+
+  return (
+    <div className="w-full" style={{ fontFamily: "Nunito, sans-serif" }} role={avatarError ? "alert" : "status"}>
+      {avatarError ? (
+        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[13px] text-red-800">
+          <span className="font-black">Photo:</span> {avatarError}
+        </div>
+      ) : (
+        <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-[13px] text-green-800">
+          <span className="font-black">Photo:</span> {avatarSuccess}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AvatarActions({ pending, uploading, onUpload, onCancel }) {
+  if (!pending) return null;
+
+  return (
+    <div className="flex items-center justify-center sm:justify-end gap-2">
+      <button
+        type="button"
+        onClick={onUpload}
+        className="rounded-xl border border-slate-900 bg-slate-900 px-5 py-2 text-sm font-black text-white hover:bg-slate-800 disabled:opacity-60 disabled:cursor-not-allowed inline-flex items-center gap-2"
+        style={{ fontFamily: "Nunito, sans-serif" }}
+        disabled={uploading}
+      >
+        {uploading ? <Spinner size={14} /> : null}
+        Upload
+      </button>
+
+      <button
+        type="button"
+        onClick={onCancel}
+        className="rounded-xl border border-slate-200 bg-white px-5 py-2 text-sm font-black text-slate-800 hover:bg-slate-50 disabled:opacity-60 disabled:cursor-not-allowed"
+        style={{ fontFamily: "Nunito, sans-serif" }}
+        disabled={uploading}
+      >
+        Cancel
+      </button>
+    </div>
+  );
+}
+
 export default function ProfileSettings() {
   const navigate = useNavigate();
 
@@ -223,7 +265,6 @@ export default function ProfileSettings() {
   const [avatarError, setAvatarError] = useState("");
   const [avatarSuccess, setAvatarSuccess] = useState("");
 
-  // keeps the avatar stable even with caching / render wake hiccups
   const [avatarBust, setAvatarBust] = useState(0);
   const [avatarLoadFailed, setAvatarLoadFailed] = useState(false);
   const [avatarRetry, setAvatarRetry] = useState(0);
@@ -341,7 +382,6 @@ export default function ProfileSettings() {
         updateAuthUser({ avatarUrl: cleaned });
       } catch {}
 
-      // bust caches so the new image shows immediately
       setAvatarBust(Date.now());
       setAvatarLoadFailed(false);
       setAvatarRetry(0);
@@ -417,15 +457,14 @@ export default function ProfileSettings() {
             "",
         ).trim();
 
-        const roleLabel = String(
-          p?.roleLabel || p?.role || p?.userRole || p?.accountType || p?.type || "Student",
-        )
+        const roleLabel = String(p?.roleLabel || p?.role || p?.userRole || p?.accountType || p?.type || "Student")
           .replace(/_/g, " ")
           .trim();
 
         setProfile({
           firstName,
           lastName,
+          username: backendUsername || "",
           studentNumber: p?.studentNumber || "",
           email: backendEmail || "",
           campus,
@@ -435,7 +474,6 @@ export default function ProfileSettings() {
           roleLabel,
         });
 
-        // Refresh cached avatar in case it failed earlier
         setAvatarBust(Date.now());
         setAvatarLoadFailed(false);
         setAvatarRetry(0);
@@ -465,6 +503,11 @@ export default function ProfileSettings() {
     return full || "—";
   }, [profile.firstName, profile.lastName]);
 
+  const mobilePrimaryLabel = useMemo(() => {
+    const u = String(profile.username || "").trim();
+    return u || displayName;
+  }, [profile.username, displayName]);
+
   const uiFields = useMemo(() => {
     return [
       { label: "Full Name", value: displayName },
@@ -482,13 +525,11 @@ export default function ProfileSettings() {
   }, [avatarPreviewUrl, profile.avatarUrl, avatarBust]);
 
   const handleAvatarError = () => {
-    // preview failures should just fallback
     if (avatarPreviewUrl) {
       setAvatarLoadFailed(true);
       return;
     }
 
-    // quick retries (helps when Render just woke up)
     if (avatarRetry < 2) {
       const next = avatarRetry + 1;
       setAvatarRetry(next);
@@ -516,16 +557,8 @@ export default function ProfileSettings() {
       ].join(" ")}
     >
       <div className="w-full max-w-4xl xl:max-w-5xl">
-        <div
-          className="relative overflow-hidden rounded-2xl border border-gray-200/70 bg-white shadow-xl"
-          role="region"
-          aria-labelledby="profile-settings-title"
-        >
-          <div
-            className="absolute inset-0 pointer-events-none"
-            style={{ boxShadow: `0 0 0 6px ${GREEN_GLOW}` }}
-            aria-hidden="true"
-          />
+        <div className="relative overflow-hidden rounded-2xl border border-gray-200/70 bg-white shadow-xl" role="region" aria-labelledby="profile-settings-title">
+          <div className="absolute inset-0 pointer-events-none" style={{ boxShadow: `0 0 0 6px ${GREEN_GLOW}` }} aria-hidden="true" />
 
           <div className="relative px-4 sm:px-7 lg:px-9 py-7 sm:py-9">
             <header className="max-w-3xl mx-auto sm:mx-0 text-center sm:text-left">
@@ -537,22 +570,16 @@ export default function ProfileSettings() {
                 Profile Settings
               </h1>
 
-              <p
-                className="mt-2.5 text-sm sm:text-base text-gray-600 break-words leading-relaxed"
-                style={{ fontFamily: "Lora, serif", color: TEXT_MUTED }}
-              >
-                This information is <strong style={{ color: TEXT_MAIN }}>read-only</strong>. Corrections must be
-                requested via the <strong style={{ color: TEXT_MAIN }}>Guidance Office</strong>.
+              <p className="mt-2.5 text-sm sm:text-base break-words leading-relaxed" style={{ fontFamily: "Lora, serif", color: TEXT_MUTED }}>
+                This information is <strong style={{ color: TEXT_MAIN }}>read-only</strong>. Corrections must be requested via the{" "}
+                <strong style={{ color: TEXT_MAIN }}>Guidance Office</strong>.
               </p>
 
               <div className="mt-4 flex flex-wrap items-center gap-3 justify-center sm:justify-start">
                 {loading && (
                   <div
                     className="inline-flex items-center gap-2 rounded-full border border-green-200/70 bg-green-50/60 px-3.5 py-1.5 text-xs sm:text-sm font-extrabold text-gray-700 whitespace-nowrap"
-                    style={{
-                      fontFamily: "Nunito, sans-serif",
-                      boxShadow: `0 0 0 2px ${GREEN_GLOW}`,
-                    }}
+                    style={{ fontFamily: "Nunito, sans-serif", boxShadow: `0 0 0 2px ${GREEN_GLOW}` }}
                   >
                     <Spinner size={16} />
                     Loading profile…
@@ -567,10 +594,7 @@ export default function ProfileSettings() {
 
                 <span
                   className="inline-flex items-center gap-2 rounded-full border border-green-200/70 bg-green-50/60 px-3.5 py-1.5 text-xs sm:text-sm font-extrabold text-gray-700 whitespace-nowrap"
-                  style={{
-                    fontFamily: "Nunito, sans-serif",
-                    boxShadow: `0 0 0 2px ${GREEN_GLOW}`,
-                  }}
+                  style={{ fontFamily: "Nunito, sans-serif", boxShadow: `0 0 0 2px ${GREEN_GLOW}` }}
                 >
                   <span className="h-2 w-2 rounded-full" style={{ backgroundColor: PRIMARY_GREEN }} aria-hidden="true" />
                   System Locked
@@ -580,26 +604,111 @@ export default function ProfileSettings() {
 
             <main className="mt-8 sm:mt-9">
               <div className="rounded-xl border border-gray-200/70 bg-white overflow-hidden shadow-md">
-                <div
-                  className="h-1.5"
-                  style={{
-                    background: `linear-gradient(90deg, ${PRIMARY_GREEN} 0%, #84CC16 100%)`,
-                  }}
-                  aria-hidden="true"
-                />
+                <div className="h-1.5" style={{ background: `linear-gradient(90deg, ${PRIMARY_GREEN} 0%, #84CC16 100%)` }} aria-hidden="true" />
 
                 <div className="px-3 sm:px-5 lg:px-6 py-5 sm:py-6">
+                  <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={onAvatarFileChange} />
+
+                  {/* ✅ PHONE ONLY: matches your screenshot, clean alignment */}
+                  <div className="sm:hidden max-w-sm mx-auto rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm">
+                    <div className="px-4 py-4 bg-slate-50 border-b border-slate-200">
+                      <div className="text-base font-black text-slate-900" style={{ fontFamily: "Nunito, sans-serif" }}>
+                        Profile picture
+                      </div>
+                    </div>
+
+                    <div className="p-5 flex flex-col items-center text-center gap-3">
+                      <div
+                        className={[
+                          "group relative",
+                          "h-[112px] w-[112px]",
+                          "rounded-full p-[2px]",
+                          "bg-gradient-to-br from-slate-900 via-slate-700 to-slate-300",
+                          "shadow-[0_10px_28px_rgba(15,23,42,0.16)]",
+                        ].join(" ")}
+                      >
+                        <div className="h-full w-full rounded-full bg-white p-[2px]">
+                          <div className="relative h-full w-full rounded-full overflow-hidden bg-slate-50">
+                            {showAvatarImage ? (
+                              <img
+                                key={avatarSrc}
+                                src={avatarSrc}
+                                alt={`${mobilePrimaryLabel} profile`}
+                                className="h-full w-full object-cover rounded-full"
+                                loading="lazy"
+                                onError={handleAvatarError}
+                                onLoad={handleAvatarLoad}
+                                draggable={false}
+                              />
+                            ) : (
+                              <div className="h-full w-full flex items-center justify-center">
+                                <div className="text-2xl font-black text-slate-800" style={{ fontFamily: "Nunito, sans-serif" }}>
+                                  {getInitials(profile.firstName, profile.lastName)}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* phone: always visible */}
+                        <button
+                          type="button"
+                          onClick={pickAvatarFile}
+                          className={[
+                            "absolute bottom-1 right-1",
+                            "h-9 w-9 rounded-full",
+                            "bg-white border border-slate-200",
+                            "shadow-[0_8px_20px_rgba(15,23,42,0.15)]",
+                            "flex items-center justify-center",
+                            "transition-all duration-200 ease-out",
+                            "active:scale-[0.98]",
+                            "focus:outline-none focus-visible:ring-4 focus-visible:ring-slate-900/10",
+                          ].join(" ")}
+                          aria-label="Change profile photo"
+                          title="Change profile photo"
+                        >
+                          <IconCamera className="text-slate-900" />
+                        </button>
+                      </div>
+
+                      <div className="pt-1">
+                        <div className="text-base font-black text-slate-900 break-words" style={{ fontFamily: "Nunito, sans-serif" }}>
+                          {mobilePrimaryLabel}
+                        </div>
+                        <div className="mt-1 text-sm font-semibold text-slate-600" style={{ fontFamily: "Nunito, sans-serif" }}>
+                          {profile.roleLabel || "Student"}
+                        </div>
+                        <div className="mt-1 text-sm font-semibold text-slate-600 break-words" style={{ fontFamily: "Nunito, sans-serif" }}>
+                          {safeText(profile.campus)}
+                        </div>
+                      </div>
+
+                      <div className="w-full pt-2">
+                        <AvatarActions pending={Boolean(pendingAvatarFile)} uploading={avatarUploading} onUpload={uploadAvatar} onCancel={cancelAvatarChange} />
+                      </div>
+
+                      <div className="w-full pt-1">
+                        <AvatarFeedback avatarError={avatarError} avatarSuccess={avatarSuccess} />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* ✅ DESKTOP/LAPTOP: keep your original layout */}
                   <div
-                    className="rounded-xl border border-gray-200/70 overflow-hidden"
+                    className="hidden sm:block rounded-xl border border-gray-200/70 overflow-hidden"
                     style={{
                       background: `linear-gradient(90deg, ${GREEN_SOFT} 0%, rgba(248,250,252,0.9) 55%, #FFFFFF 100%)`,
                     }}
                   >
-                    <div className="px-4 sm:px-5 py-4 sm:py-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-                      <div className="flex items-center gap-3 sm:gap-4 min-w-0">
+                    <div className="px-4 sm:px-5 py-4 sm:py-5 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                      <div className="flex items-center gap-4 min-w-0">
                         <div
-                          className="relative h-14 w-14 rounded-full border border-gray-200 bg-slate-100 flex items-center justify-center shrink-0 overflow-hidden"
-                          style={{ boxShadow: `0 0 0 3px ${GREEN_GLOW}` }}
+                          className={[
+                            "group relative rounded-full border border-gray-200 bg-slate-100",
+                            "flex items-center justify-center shrink-0 overflow-hidden",
+                            "h-24 w-24 lg:h-28 lg:w-28",
+                          ].join(" ")}
+                          style={{ boxShadow: `0 0 0 4px ${GREEN_GLOW}` }}
                           aria-label="Profile avatar"
                         >
                           {showAvatarImage ? (
@@ -613,46 +722,43 @@ export default function ProfileSettings() {
                               onLoad={handleAvatarLoad}
                             />
                           ) : (
-                            <span
-                              className="text-base font-extrabold"
-                              style={{ fontFamily: "Nunito, sans-serif", color: TEXT_MAIN }}
-                            >
+                            <span className="font-extrabold text-xl" style={{ fontFamily: "Nunito, sans-serif", color: TEXT_MAIN }}>
                               {getInitials(profile.firstName, profile.lastName)}
                             </span>
                           )}
 
+                          <div className="absolute inset-0 rounded-full bg-slate-900/10 opacity-0 transition-opacity group-hover:opacity-100" aria-hidden="true" />
+
+                          {/* desktop: hover-only */}
                           <button
                             type="button"
                             onClick={pickAvatarFile}
-                            className="absolute -bottom-1 -right-1 h-8 w-8 rounded-full border border-gray-200 bg-white shadow-sm flex items-center justify-center hover:bg-slate-50 active:scale-[0.98]"
+                            className={[
+                              "absolute bottom-2 right-2",
+                              "h-10 w-10 rounded-full",
+                              "bg-white border border-slate-200",
+                              "shadow-[0_8px_20px_rgba(15,23,42,0.15)]",
+                              "flex items-center justify-center",
+                              "transition-all duration-200 ease-out",
+                              "hover:bg-slate-50 active:scale-[0.98]",
+                              "focus:outline-none focus-visible:ring-4 focus-visible:ring-slate-900/10",
+                              "opacity-0 scale-95 translate-y-1 pointer-events-none",
+                              "group-hover:opacity-100 group-hover:scale-100 group-hover:translate-y-0 group-hover:pointer-events-auto",
+                              "focus-visible:opacity-100 focus-visible:scale-100 focus-visible:translate-y-0 focus-visible:pointer-events-auto",
+                            ].join(" ")}
                             aria-label="Change profile photo"
+                            title="Change profile photo"
                           >
-                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                              <path
-                                d="M12 5l1.6 2H18a3 3 0 013 3v7a3 3 0 01-3 3H6a3 3 0 01-3-3v-7a3 3 0 013-3h4.4L12 5z"
-                                stroke="currentColor"
-                                strokeWidth="2"
-                                strokeLinejoin="round"
-                              />
-                              <path d="M12 18a4 4 0 100-8 4 4 0 000 8z" stroke="currentColor" strokeWidth="2" />
-                            </svg>
+                            <IconCamera className="text-slate-900" />
                           </button>
-
-                          <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={onAvatarFileChange} />
                         </div>
 
                         <div className="min-w-0">
-                          <div
-                            className="font-extrabold text-[15px] sm:text-base break-words leading-snug"
-                            style={{ fontFamily: "Nunito, sans-serif", color: TEXT_MAIN }}
-                          >
+                          <div className="font-extrabold text-base break-words leading-snug" style={{ fontFamily: "Nunito, sans-serif", color: TEXT_MAIN }}>
                             {displayName}
                           </div>
 
-                          <div
-                            className="mt-0.5 text-xs sm:text-sm break-all leading-relaxed"
-                            style={{ fontFamily: "Lora, serif", color: TEXT_MUTED }}
-                          >
+                          <div className="mt-0.5 text-sm break-all leading-relaxed" style={{ fontFamily: "Lora, serif", color: TEXT_MUTED }}>
                             {safeText(profile.email)}
                           </div>
 
@@ -665,47 +771,13 @@ export default function ProfileSettings() {
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-2 sm:justify-end">
-                        {pendingAvatarFile && (
-                          <>
-                            <button
-                              type="button"
-                              onClick={uploadAvatar}
-                              className="rounded-lg border border-gray-900 bg-gray-900 px-4 py-2 text-xs sm:text-sm font-extrabold text-white hover:opacity-95 disabled:opacity-60 disabled:cursor-not-allowed inline-flex items-center gap-2"
-                              style={{ fontFamily: "Nunito, sans-serif" }}
-                              disabled={avatarUploading}
-                            >
-                              {avatarUploading ? <Spinner size={14} /> : null}
-                              Upload
-                            </button>
-
-                            <button
-                              type="button"
-                              onClick={cancelAvatarChange}
-                              className="rounded-lg border border-gray-200 bg-white px-4 py-2 text-xs sm:text-sm font-extrabold text-gray-700 hover:bg-slate-50"
-                              style={{ fontFamily: "Nunito, sans-serif" }}
-                              disabled={avatarUploading}
-                            >
-                              Cancel
-                            </button>
-                          </>
-                        )}
+                      <div className="flex flex-col items-end gap-2">
+                        <AvatarActions pending={Boolean(pendingAvatarFile)} uploading={avatarUploading} onUpload={uploadAvatar} onCancel={cancelAvatarChange} />
+                        <div className="w-full max-w-[420px]">
+                          <AvatarFeedback avatarError={avatarError} avatarSuccess={avatarSuccess} />
+                        </div>
                       </div>
                     </div>
-
-                    {(avatarError || avatarSuccess) && (
-                      <div className="px-4 sm:px-5 pb-4" style={{ fontFamily: "Nunito, sans-serif" }} role={avatarError ? "alert" : "status"}>
-                        {avatarError ? (
-                          <div className="rounded-[14px] border-2 border-black bg-red-50 px-4 py-3 text-[13px] text-black">
-                            <span className="font-extrabold">Photo:</span> {avatarError}
-                          </div>
-                        ) : (
-                          <div className="rounded-[14px] border border-green-200/70 bg-green-50/60 px-4 py-3 text-[13px] text-gray-800">
-                            <span className="font-extrabold">Photo:</span> {avatarSuccess}
-                          </div>
-                        )}
-                      </div>
-                    )}
                   </div>
 
                   <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-5">
@@ -717,10 +789,7 @@ export default function ProfileSettings() {
 
                         <div
                           className={["mt-1.5 rounded-lg border border-gray-200/70 bg-white px-3.5 py-3", "shadow-sm min-w-0"].join(" ")}
-                          style={{
-                            background: GREEN_SOFT,
-                            boxShadow: `0 0 0 2px rgba(15, 23, 42, 0.02)`,
-                          }}
+                          style={{ background: GREEN_SOFT, boxShadow: `0 0 0 2px rgba(15, 23, 42, 0.02)` }}
                         >
                           <div
                             className={[

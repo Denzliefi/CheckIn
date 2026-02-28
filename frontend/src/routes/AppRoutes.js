@@ -24,6 +24,7 @@ import Unauthorized from "../pages/Unauthorized";
 
 import ProfileSettings from "../pages/Student/ProfileSettings";
 import CounselorDashboard from "../pages/CounselorDashboard/CounselorDashboard";
+import AdminDashboard from "../pages/AdminDashboard/AdminDashboard";
 
 export default function AppRoutes() {
   return (
@@ -41,6 +42,9 @@ export default function AppRoutes() {
           <Route path="/reset-password" element={<ResetPassword />} />
           <Route path="/unauthorized" element={<Unauthorized />} />
         </Route>
+
+        {/* ✅ ADMIN DASHBOARD (TEMP: PUBLIC FOR DEV/TESTING) */}
+        <Route path="/admin/dashboard" element={<AdminDashboard />} />
 
         {/* APP */}
         <Route element={<MainLayout />}>

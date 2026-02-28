@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { getToken } from "../../utils/auth";
 import mentalImg from "../../assets/let.png";
 import parallaxImg from "../../assets/Parallax-2-final.jpg";
 
@@ -8,9 +9,31 @@ export default function LandingHero() {
 
   const [bgOffset, setBgOffset] = useState(0);
   const [visible, setVisible] = useState(false);
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
 
   const rafRef = useRef(null);
   const heroRef = useRef(null);
+
+  /* ================= AUTH CHECK (HIDE CTA WHEN LOGGED IN) ================= */
+  useEffect(() => {
+    const readAuth = () => {
+      try {
+        setIsLoggedIn(Boolean(getToken?.()));
+      } catch {
+        setIsLoggedIn(false);
+      }
+    };
+
+    readAuth();
+
+    // updates across tabs
+    const onStorage = (e) => {
+      if (!e || ["token", "user", "accessToken"].includes(e.key)) readAuth();
+    };
+
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
 
   /* ================= FADE-IN ON VIEW ================= */
   useEffect(() => {
@@ -86,23 +109,25 @@ export default function LandingHero() {
             </p>
 
             {/* ACTION BUTTONS */}
-            <div className="mt-10 sm:mt-12 flex flex-col sm:flex-row items-stretch sm:items-center justify-center lg:justify-start gap-4 sm:gap-5">
-              <button
-                type="button"
-                onClick={() => navigate("/sign-up")}
-                className="h-[46px] px-10 rounded-[12px] bg-[#B9FF66] text-[15px] font-extrabold text-black border-2 border-black/70 hover:brightness-95 transition"
-              >
-                Register Now!
-              </button>
+            {!isLoggedIn && (
+              <div className="mt-10 sm:mt-12 flex flex-col sm:flex-row items-stretch sm:items-center justify-center lg:justify-start gap-4 sm:gap-5">
+                <button
+                  type="button"
+                  onClick={() => navigate("/sign-up")}
+                  className="h-[46px] px-10 rounded-[12px] bg-[#B9FF66] text-[15px] font-extrabold text-black border-2 border-black/70 hover:brightness-95 transition"
+                >
+                  Register Now!
+                </button>
 
-              <button
-                type="button"
-                onClick={() => navigate("/login")}
-                className="h-[46px] px-12 rounded-[12px] bg-white text-[15px] font-extrabold text-black border-2 border-black/70 hover:bg-black/5 transition"
-              >
-                Login
-              </button>
-            </div>
+                <button
+                  type="button"
+                  onClick={() => navigate("/login")}
+                  className="h-[46px] px-12 rounded-[12px] bg-white text-[15px] font-extrabold text-black border-2 border-black/70 hover:bg-black/5 transition"
+                >
+                  Login
+                </button>
+              </div>
+            )}
           </div>
 
           {/* RIGHT IMAGE — redesigned with gradient */}
