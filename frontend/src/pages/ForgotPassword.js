@@ -1,6 +1,7 @@
 // src/pages/ForgotPassword.js
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
+import { apiFetch } from "../api/apiFetch";
 import signImg from "../assets/Sign.png"; // make sure filename matches exactly
 
 function Spinner({ size = 16 }) {
@@ -66,16 +67,30 @@ export default function ForgotPassword() {
   const [loading, setLoading] = useState(false);
   const [sent, setSent] = useState(false);
 
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    if (!email) return;
+  
+const handleSubmit = async (e) => {
+  e.preventDefault();
+  const v = (email || "").trim();
+  if (!v) return;
 
-    setLoading(true);
-    setTimeout(() => {
-      setLoading(false);
-      setSent(true);
-    }, 800);
-  };
+  setLoading(true);
+  setSent(false);
+
+  try {
+    await apiFetch("/api/auth/forgot-password", {
+      method: "POST",
+      body: JSON.stringify({ email: v }),
+    });
+
+    setSent(true);
+  } catch (err) {
+    // Keep message generic (security), but still show a readable UI note.
+    console.error("FORGOT_PASSWORD_UI_ERROR:", err);
+    setSent(true);
+  } finally {
+    setLoading(false);
+  }
+};
 
   return (
     <div className="w-full">
