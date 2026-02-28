@@ -4,6 +4,14 @@ import { Link } from "react-router-dom";
 import { apiFetch } from "../api/apiFetch";
 import signImg from "../assets/Sign.png"; // make sure filename matches exactly
 
+// Prevent "illegal" characters from being typed into email fields.
+// Allows common email characters only.
+function sanitizeEmailInput(value) {
+  return String(value || "")
+    .replace(/\s+/g, "")
+    .replace(/[^a-zA-Z0-9@._+\-]/g, "");
+}
+
 function Spinner({ size = 16 }) {
   return (
     <svg
@@ -70,7 +78,7 @@ export default function ForgotPassword() {
   
 const handleSubmit = async (e) => {
   e.preventDefault();
-  const v = (email || "").trim();
+  const v = sanitizeEmailInput((email || "").trim());
   if (!v) return;
 
   setLoading(true);
@@ -155,7 +163,11 @@ const handleSubmit = async (e) => {
                       required
                       placeholder="Email address"
                       value={email}
-                      onChange={(e) => setEmail(e.target.value)}
+                      onChange={(e) => setEmail(sanitizeEmailInput(e.target.value))}
+                      inputMode="email"
+                      autoCapitalize="none"
+                      autoCorrect="off"
+                      spellCheck={false}
                       className="
                         w-full rounded-[12px]
                         bg-[#EEF5FF]
