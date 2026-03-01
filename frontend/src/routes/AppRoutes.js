@@ -10,6 +10,7 @@ import AboutUs from "../pages/AboutUs";
 import PrivacyPolicy from "../pages/PrivacyPolicy";
 
 import RequireLoginModal from "./RequireLoginModal";
+import RequireRole from "./RequireRole";
 
 import GuidanceCounseling from "../pages/Services/GuidanceCounseling";
 import Request from "../pages/Services/SessionType/Request";
@@ -32,7 +33,7 @@ export default function AppRoutes() {
       <ScrollToTop />
 
       <Routes>
-        {/* PUBLIC */}
+        {/* PUBLIC (outside MainLayout) */}
         <Route path="/counselor/dashboard" element={<CounselorDashboard />} />
 
         <Route element={<MainLayout />}>
@@ -43,16 +44,20 @@ export default function AppRoutes() {
           <Route path="/unauthorized" element={<Unauthorized />} />
         </Route>
 
-        {/* ✅ ADMIN DASHBOARD (TEMP: PUBLIC FOR DEV/TESTING) */}
-        <Route path="/admin/dashboard" element={<AdminDashboard />} />
+        {/* ✅ ADMIN DASHBOARD (protected) */}
+        <Route element={<RequireRole allowedRoles={["Admin"]} />}>
+          <Route path="/admin/dashboard" element={<AdminDashboard />} />
+        </Route>
 
-        {/* APP */}
+        {/* APP (MainLayout pages) */}
         <Route element={<MainLayout />}>
+          {/* ✅ Allowed for everyone (including pending/terminated) */}
           <Route path="/" element={<LandingPage />} />
           <Route path="/about-us" element={<AboutUs />} />
           <Route path="/privacy-policy" element={<PrivacyPolicy />} />
+          <Route path="/services/emergency" element={<Emergency />} />
 
-          {/* 🔒 Login required — shows modal */}
+          {/* 🔒 Services: login required + status gate */}
           <Route element={<RequireLoginModal featureName="Guidance Counseling" />}>
             <Route path="/services/counseling" element={<GuidanceCounseling />} />
             <Route path="/services/counseling/request" element={<Request />} />
@@ -67,10 +72,10 @@ export default function AppRoutes() {
             <Route path="/services/assessment" element={<Assessment />} />
           </Route>
 
-          {/* Public service */}
-          <Route path="/services/emergency" element={<Emergency />} />
-
-          <Route path="/profile-settings" element={<ProfileSettings />} />
+          {/* 🔒 Profile settings must be blocked for pending/terminated */}
+          <Route element={<RequireLoginModal featureName="Profile Settings" />}>
+            <Route path="/profile-settings" element={<ProfileSettings />} />
+          </Route>
         </Route>
       </Routes>
     </>

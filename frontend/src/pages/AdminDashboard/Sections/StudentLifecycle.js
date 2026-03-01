@@ -1,8 +1,10 @@
 // File: src/pages/AdminDashboard/Sections/StudentLifecycle.jsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { apiFetch } from "../../../api/apiFetch";
 
 const STATUS = {
+  PENDING: "pending",
   ACTIVE: "active",
   TERMINATED: "terminated",
 };
@@ -55,97 +57,80 @@ function sleep(ms) {
 }
 
 /* =========================
-   Fake API (replace later)
+   API (real)
    ========================= */
+
+function normalizeStudentFromApi(u) {
+  const id = u?.userId || u?._id || u?.id || "";
+  const name =
+    u?.fullName ||
+    u?.name ||
+    [u?.firstName, u?.lastName].filter(Boolean).join(" ").trim() ||
+    "—";
+
+  const createdAt = u?.createdAt || u?.accountCreation || null;
+
+  return {
+    id: String(id),
+    studentId: u?.studentNumber || u?.studentId || "",
+    name,
+    course: u?.course || "",
+    campus: u?.campus || "",
+    status: String(u?.status || "active").toLowerCase(),
+    createdAt,
+    updatedAt: u?.updatedAt || null,
+  };
+}
+
 const api = {
   async listStudents() {
-    await sleep(150);
-    return seedStudents();
+    // small delay keeps UI smooth (optional)
+    await sleep(80);
+    const data = await apiFetch("/api/users/students");
+    const items = Array.isArray(data?.items) ? data.items : Array.isArray(data) ? data : [];
+    return items.map(normalizeStudentFromApi).filter((s) => s.id);
   },
-  async setStatus({ studentId, nextStatus, adminPassword }) {
-    await sleep(180);
-    if (adminPassword !== "admin123") throw new Error("Invalid admin password.");
-    if (Math.random() < 0.02) throw new Error("Random API failure. Try again.");
-    return { id: studentId, status: nextStatus, updatedAt: new Date().toISOString() };
+
+  async setStatus({ userId, nextStatus, adminPassword }) {
+    const data = await apiFetch(`/api/users/students/${userId}/status`, {
+      method: "PATCH",
+      body: JSON.stringify({ status: nextStatus, adminPassword }),
+    });
+
+    return {
+      id: String(data?.id || userId),
+      status: String(data?.status || nextStatus).toLowerCase(),
+      updatedAt: data?.updatedAt || new Date().toISOString(),
+    };
   },
-  async bulkSetStatus({ studentIds, nextStatus, adminPassword }) {
-    await sleep(240);
-    if (adminPassword !== "admin123") throw new Error("Invalid admin password.");
-    if (Math.random() < 0.02) throw new Error("Random API failure. Try again.");
+
+  async bulkSetStatus({ userIds, nextStatus, adminPassword }) {
+    const data = await apiFetch(`/api/users/students/status/bulk`, {
+      method: "PATCH",
+      body: JSON.stringify({ userIds, status: nextStatus, adminPassword }),
+    });
+
+    const items = Array.isArray(data?.items) ? data.items : [];
     const updatedAt = new Date().toISOString();
-    return studentIds.map((id) => ({ id, status: nextStatus, updatedAt }));
+
+    if (items.length) {
+      return items.map((x) => ({
+        id: String(x?.id),
+        status: String(x?.status || nextStatus).toLowerCase(),
+        updatedAt: x?.updatedAt || updatedAt,
+      }));
+    }
+
+    // fallback
+    return userIds.map((id) => ({ id: String(id), status: nextStatus, updatedAt }));
   },
 };
-
-function seedStudents() {
-  const now = new Date().toISOString();
-  return [
-    {
-      id: "S-001",
-      studentId: "2021-0001",
-      name: "Alyssa Cruz",
-      course: "Bachelor of Science in Information Technology",
-      campus: "Legarda Campus",
-      status: STATUS.ACTIVE,
-      createdAt: "2024-08-15T10:30:00.000Z",
-      updatedAt: now,
-    },
-    {
-      id: "S-002",
-      studentId: "2020-0321",
-      name: "John Dela Rosa",
-      course: "Bachelor of Science in Business Administration (BSBA)",
-      campus: "Pasay Campus",
-      status: STATUS.TERMINATED,
-      createdAt: "2023-06-10T09:00:00.000Z",
-      updatedAt: now,
-    },
-    {
-      id: "S-003",
-      studentId: "2019-0788",
-      name: "Maria Santos",
-      course: "Bachelor of Arts in Psychology",
-      campus: "Jose Abad Santos Campus",
-      status: STATUS.ACTIVE,
-      createdAt: "2022-01-20T13:45:00.000Z",
-      updatedAt: now,
-    },
-    {
-      id: "S-004",
-      studentId: "2018-0101",
-      name: "Paolo Reyes",
-      course: "Bachelor of Science in Computer Science",
-      campus: "Andres Bonifacio Campus",
-      status: STATUS.ACTIVE,
-      createdAt: "2021-03-11T09:15:00.000Z",
-      updatedAt: now,
-    },
-    {
-      id: "S-005",
-      studentId: "2017-0202",
-      name: "Anne Villanueva",
-      course: "Bachelor of Science in Tourism Management (BSTM)",
-      campus: "Apolinario Mabini Campus",
-      status: STATUS.TERMINATED,
-      createdAt: "2020-07-02T12:00:00.000Z",
-      updatedAt: now,
-    },
-    {
-      id: "S-006",
-      studentId: "2016-0303",
-      name: "Kyle Mendoza",
-      course: "Bachelor of Arts in Political Science",
-      campus: "Elisa Esquerra Campus",
-      status: STATUS.ACTIVE,
-      createdAt: "2019-10-18T10:00:00.000Z",
-      updatedAt: now,
-    },
-  ];
-}
 
 /* =========================
    Hooks
    ========================= */
+
+  
 function useMediaQuery(query) {
   const [matches, setMatches] = useState(() => {
     if (typeof window === "undefined") return false;
@@ -205,7 +190,9 @@ function Pill({ children, tone = "slate" }) {
       ? "bg-emerald-50 text-emerald-700 border-emerald-200"
       : tone === "amber"
         ? "bg-amber-50 text-amber-800 border-amber-200"
-        : "bg-slate-50 text-slate-700 border-slate-200";
+        : tone === "rose"
+          ? "bg-rose-50 text-rose-700 border-rose-200"
+          : "bg-slate-50 text-slate-700 border-slate-200";
 
   return (
     <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-extrabold border ${toneClass}`}>
@@ -234,7 +221,17 @@ function Button({ children, variant = "solid", className = "", type = "button", 
 }
 
 function StatusPillButton({ status, onClick, disabled }) {
-  const isActive = status === STATUS.ACTIVE;
+  const s = String(status || "active").toLowerCase();
+
+  const pill =
+    s === STATUS.ACTIVE ? (
+      <Pill tone="green">Active</Pill>
+    ) : s === STATUS.PENDING ? (
+      <Pill tone="amber">Pending</Pill>
+    ) : (
+      <Pill tone="rose">Terminated</Pill>
+    );
+
   return (
     <button
       type="button"
@@ -245,10 +242,10 @@ function StatusPillButton({ status, onClick, disabled }) {
         onClick?.();
       }}
       className="rounded-full focus:outline-none focus:ring-2 focus:ring-slate-200 disabled:opacity-60 disabled:cursor-not-allowed"
-      aria-label={isActive ? "Change status: Terminate" : "Change status: Activate"}
-      title={isActive ? "Click to terminate" : "Click to activate"}
+      aria-label="Change student status"
+      title="Change status"
     >
-      {isActive ? <Pill tone="green">Active</Pill> : <Pill tone="amber">Terminated</Pill>}
+      {pill}
     </button>
   );
 }
@@ -314,6 +311,9 @@ function ConfirmModal({
   title,
   description,
   tone = "slate",
+  notice,
+  statusValue,
+  onStatusChange,
   onCancel,
   onConfirm,
   confirmLabel,
@@ -328,7 +328,7 @@ function ConfirmModal({
 
   const border = tone === "danger" ? "border-rose-200" : "border-slate-200";
   const bg = tone === "danger" ? "bg-rose-50" : "bg-white";
-  const canConfirm = Boolean((password || "").trim()) && !loading;
+  const canConfirm = Boolean((password || "").trim()) && Boolean(statusValue) && !loading;
 
   return (
     <Portal>
@@ -349,6 +349,31 @@ function ConfirmModal({
               <div className="text-base font-black text-slate-900">{title}</div>
               <div className="mt-2 text-sm font-bold text-slate-700 whitespace-pre-line break-words leading-snug">
                 {description}
+              </div>
+
+              <div className="mt-4">
+                <div className="text-[10px] font-black uppercase tracking-wider text-slate-500">Set Status</div>
+                <div className="mt-1 grid grid-cols-3 gap-2">
+                  {[
+                    { value: STATUS.PENDING, label: "Pending" },
+                    { value: STATUS.ACTIVE, label: "Active" },
+                    { value: STATUS.TERMINATED, label: "Terminated" },
+                  ].map((opt) => (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      disabled={loading}
+                      onClick={() => onStatusChange?.(opt.value)}
+                      className={`h-10 rounded-2xl border px-2 text-sm font-black transition disabled:opacity-60 disabled:cursor-not-allowed ${
+                        String(statusValue || "") === opt.value
+                          ? "border-slate-900 bg-slate-900 text-white"
+                          : "border-slate-200 bg-white text-slate-900 hover:bg-slate-50"
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
               </div>
 
               <div className="mt-4">
@@ -375,6 +400,21 @@ function ConfirmModal({
                 {passwordError ? <div className="mt-2 text-sm font-extrabold text-rose-700">{passwordError}</div> : null}
               </div>
 
+                {notice?.open ? (
+                  <div
+                    className={`mt-3 rounded-2xl border px-3 py-2 text-sm font-extrabold ${
+                      notice.tone === "danger"
+                        ? "border-rose-200 bg-rose-100 text-rose-800"
+                        : notice.tone === "success"
+                          ? "border-emerald-200 bg-emerald-100 text-emerald-800"
+                          : "border-slate-200 bg-slate-100 text-slate-800"
+                    }`}
+                  >
+                    {notice.message}
+                  </div>
+                ) : null}
+
+
               <div className="mt-4 flex items-center justify-end gap-2">
                 <Button variant="soft" onClick={onCancel} disabled={loading}>
                   Cancel
@@ -386,25 +426,6 @@ function ConfirmModal({
             </form>
           </div>
         </div>
-      </div>
-    </Portal>
-  );
-}
-
-function Toast({ open, message, tone = "slate" }) {
-  if (!open) return null;
-
-  const cls =
-    tone === "danger"
-      ? "bg-rose-600 text-white"
-      : tone === "success"
-        ? "bg-emerald-600 text-white"
-        : "bg-slate-900 text-white";
-
-  return (
-    <Portal>
-      <div className="fixed inset-x-0 bottom-4 z-[75] flex justify-center px-2" style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
-        <div className={`toast-up px-4 py-3 rounded-2xl text-sm font-extrabold shadow-2xl ${cls}`}>{message}</div>
       </div>
     </Portal>
   );
@@ -543,7 +564,7 @@ export default function StudentLifecycle() {
   const [selectedIds, setSelectedIds] = useState(() => new Set());
   const [expandedIds, setExpandedIds] = useState(() => new Set());
 
-  const [confirm, setConfirm] = useState({ open: false, action: null, targetIds: [] });
+  const [confirm, setConfirm] = useState({ open: false, action: null, targetIds: [], nextStatus: null });
   const [confirmPassword, setConfirmPassword] = useState("");
   const [confirmPasswordError, setConfirmPasswordError] = useState("");
   const [confirmShowPassword, setConfirmShowPassword] = useState(false);
@@ -553,8 +574,7 @@ export default function StudentLifecycle() {
 
   const [sheet, setSheet] = useState({ open: false, type: null }); // "course" | "status"
   const [sheetSearch, setSheetSearch] = useState("");
-
-  const [toast, setToast] = useState({ open: false, message: "", tone: "success" });
+  const [confirmNotice, setConfirmNotice] = useState({ open: false, message: "", tone: "success" });
 
   useLockBodyScroll(sheet.open || confirm.open);
 
@@ -706,26 +726,29 @@ export default function StudentLifecycle() {
     });
   }
 
-  function openAction(action, targetIds) {
+  function openAction(action, targetIds, nextStatus = null) {
     setConfirmPassword("");
     setConfirmPasswordError("");
     setConfirmShowPassword(false);
     setConfirmLoading(false);
-    setConfirm({ open: true, action, targetIds });
+    setConfirm({ open: true, action, targetIds, nextStatus });
   }
 
   function closeConfirm() {
     if (confirmLoading) return;
+    setConfirmNotice({ open: false, message: "", tone: "success" });
     setConfirmPassword("");
     setConfirmPasswordError("");
     setConfirmShowPassword(false);
     setConfirmLoading(false);
-    setConfirm({ open: false, action: null, targetIds: [] });
+    setConfirm({ open: false, action: null, targetIds: [], nextStatus: null });
   }
 
   function openToggleStatus(student) {
-    const action = student.status === STATUS.ACTIVE ? "terminate" : "activate";
-    openAction(action, [student.id]);
+    // Preselect a sensible next status, but let admin choose inside the modal.
+    const current = String(student?.status || STATUS.ACTIVE).toLowerCase();
+    const suggested = current === STATUS.ACTIVE ? STATUS.TERMINATED : STATUS.ACTIVE;
+    openAction("setStatus", [student.id], suggested);
   }
 
   async function runAction() {
@@ -738,7 +761,12 @@ export default function StudentLifecycle() {
       return;
     }
 
-    const nextStatus = action === "activate" ? STATUS.ACTIVE : STATUS.TERMINATED;
+    const nextStatus = String(confirm.nextStatus || "").toLowerCase();
+    if (!nextStatus) {
+      setConfirmPasswordError("Please choose a status.");
+      return;
+    }
+
 
     setError("");
     setConfirmPasswordError("");
@@ -747,8 +775,8 @@ export default function StudentLifecycle() {
     try {
       const updates =
         targetIds.length === 1
-          ? [await api.setStatus({ studentId: targetIds[0], nextStatus, adminPassword: pw })]
-          : await api.bulkSetStatus({ studentIds: targetIds, nextStatus, adminPassword: pw });
+          ? [await api.setStatus({ userId: targetIds[0], nextStatus, adminPassword: pw })]
+          : await api.bulkSetStatus({ userIds: targetIds, nextStatus, adminPassword: pw });
 
       const byId = new Map(updates.map((u) => [u.id, u]));
 
@@ -759,17 +787,22 @@ export default function StudentLifecycle() {
         }),
       );
 
-      setSelectedIds(new Set());
-      closeConfirm();
+            setSelectedIds(new Set());
       bumpListAnimation();
 
-      setToast({
+      const label = nextStatus === STATUS.ACTIVE ? "Active" : nextStatus === STATUS.PENDING ? "Pending" : "Terminated";
+      const tone = nextStatus === STATUS.ACTIVE ? "success" : nextStatus === STATUS.PENDING ? "slate" : "danger";
+
+      setConfirmNotice({
         open: true,
-        message: `${action === "activate" ? "Activated" : "Terminated"} ${targetIds.length} ${
-          targetIds.length === 1 ? "student" : "students"
-        }.`,
-        tone: action === "activate" ? "success" : "danger",
+        message: `Set ${label} for ${targetIds.length} ${targetIds.length === 1 ? "student" : "students"}.`,
+        tone,
       });
+
+      // Keep the modal open briefly so the success message appears near the action controls.
+      setTimeout(() => {
+        closeConfirm();
+      }, 900);
     } catch (e) {
       setConfirmPasswordError(e?.message || "Action failed");
     } finally {
@@ -777,14 +810,15 @@ export default function StudentLifecycle() {
     }
   }
 
-  useEffect(() => {
-    if (!toast.open) return undefined;
-    const t = setTimeout(() => setToast((x) => ({ ...x, open: false })), 2200);
-    return () => clearTimeout(t);
-  }, [toast.open]);
-
   const courseLabel = courseFilter === "all" ? "All courses" : courseFilter;
-  const statusLabel = statusFilter === "all" ? "All statuses" : statusFilter === STATUS.ACTIVE ? "Active" : "Terminated";
+  const statusLabel =
+    statusFilter === "all"
+      ? "All statuses"
+      : statusFilter === STATUS.PENDING
+        ? "Pending"
+        : statusFilter === STATUS.ACTIVE
+          ? "Active"
+          : "Terminated";
 
   const sheetTitle = sheet.type === "course" ? "Choose course" : "Choose status";
 
@@ -805,6 +839,7 @@ export default function StudentLifecycle() {
       ? COURSE_OPTIONS
       : [
           { value: "all", label: "All" },
+          { value: STATUS.PENDING, label: "Pending" },
           { value: STATUS.ACTIVE, label: "Active" },
           { value: STATUS.TERMINATED, label: "Terminated" },
         ];
@@ -885,9 +920,10 @@ export default function StudentLifecycle() {
     );
   }
 
-  const confirmTone = confirm.action === "terminate" ? "danger" : "slate";
-  const confirmTitle = confirm.action === "terminate" ? "Terminate student?" : "Activate student?";
-  const confirmLabel = confirm.action === "terminate" ? "Yes, Terminate" : "Yes, Activate";
+  const confirmTone =
+    String(confirm.nextStatus || "").toLowerCase() === STATUS.TERMINATED ? "danger" : "slate";
+  const confirmTitle = "Update student status?";
+  const confirmLabel = "Confirm";
 
   const confirmDescription = useMemo(() => {
     if (!confirm.open) return "";
@@ -1012,6 +1048,7 @@ export default function StudentLifecycle() {
                     className="px-3 py-2 rounded-xl border border-slate-200 bg-white text-sm font-extrabold focus:outline-none focus:ring-2 focus:ring-slate-100"
                   >
                     <option value="all">All statuses</option>
+                    <option value={STATUS.PENDING}>Pending</option>
                     <option value={STATUS.ACTIVE}>Active</option>
                     <option value={STATUS.TERMINATED}>Terminated</option>
                   </select>
@@ -1036,10 +1073,13 @@ export default function StudentLifecycle() {
                   <span className="font-black">{selectedCount}</span> selected
                 </div>
                 <div className="flex items-center gap-2 flex-wrap">
-                  <Button variant="soft" onClick={() => openAction("activate", Array.from(selectedIds))}>
+                  <Button variant="soft" onClick={() => openAction("setStatus", Array.from(selectedIds), STATUS.PENDING)}>
+                    Set Pending
+                  </Button>
+                  <Button variant="soft" onClick={() => openAction("setStatus", Array.from(selectedIds), STATUS.ACTIVE)}>
                     Set Active
                   </Button>
-                  <Button variant="soft" onClick={() => openAction("terminate", Array.from(selectedIds))}>
+                  <Button variant="soft" onClick={() => openAction("setStatus", Array.from(selectedIds), STATUS.TERMINATED)}>
                     Set Terminated
                   </Button>
                 </div>
@@ -1261,10 +1301,13 @@ export default function StudentLifecycle() {
               </div>
 
               <div className="mt-2 flex items-center gap-2">
-                <Button variant="soft" className="flex-1" onClick={() => openAction("activate", Array.from(selectedIds))}>
+                <Button variant="soft" className="flex-1" onClick={() => openAction("setStatus", Array.from(selectedIds), STATUS.PENDING)}>
+                  Set Pending
+                </Button>
+                <Button variant="soft" className="flex-1" onClick={() => openAction("setStatus", Array.from(selectedIds), STATUS.ACTIVE)}>
                   Set Active
                 </Button>
-                <Button variant="soft" className="flex-1" onClick={() => openAction("terminate", Array.from(selectedIds))}>
+                <Button variant="soft" className="flex-1" onClick={() => openAction("setStatus", Array.from(selectedIds), STATUS.TERMINATED)}>
                   Set Terminated
                 </Button>
               </div>
@@ -1282,6 +1325,9 @@ export default function StudentLifecycle() {
         title={confirmTitle}
         description={confirmDescription}
         tone={confirmTone}
+        notice={confirmNotice}
+        statusValue={confirm.nextStatus}
+        onStatusChange={(v) => setConfirm((c) => ({ ...c, nextStatus: v }))}
         onCancel={closeConfirm}
         onConfirm={runAction}
         confirmLabel={confirmLabel}
@@ -1295,8 +1341,6 @@ export default function StudentLifecycle() {
         onToggleShowPassword={() => setConfirmShowPassword((x) => !x)}
         loading={confirmLoading}
       />
-
-      <Toast open={toast.open} message={toast.message} tone={toast.tone} />
     </div>
   );
 }

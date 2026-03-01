@@ -1,5 +1,6 @@
 // File: src/pages/AdminDashboard/Sections/CounselorManagement.jsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { apiFetch } from "../../../api/apiFetch";
 
 /**
  * Counselor Management / Message (Frontend)
@@ -97,44 +98,17 @@ function openPopup(url, name = "cm_gmail_compose") {
   return win;
 }
 
-const initialCounselors = [
-  {
-    _id: "c1",
-    fullName: "Angela Ramos",
-    counselorId: "C-0001",
-    email: "angela.ramos@checkin.edu.ph",
-    createdAt: "2024-08-15T08:10:00.000Z",
-  },
-  {
-    _id: "c2",
-    fullName: "Jerome Villanueva",
-    counselorId: "C-0002",
-    email: "jerome.villanueva@checkin.edu.ph",
-    createdAt: "2024-07-02T10:20:00.000Z",
-  },
-  {
-    _id: "c3",
-    fullName: "Mika Santos",
-    counselorId: "C-0003",
-    email: "mika.santos@checkin.edu.ph",
-    createdAt: "2024-06-10T03:30:00.000Z",
-  },
-  {
-    _id: "c4",
-    fullName: "Paolo Reyes",
-    counselorId: "C-0004",
-    email: "paolo.reyes@checkin.edu.ph",
-    createdAt: "2024-03-11T11:15:00.000Z",
-  },
-];
-
 export default function CounselorManagement() {
-  const [counselors, setCounselors] = useState(initialCounselors);
+  const [counselors, setCounselors] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [loadErr, setLoadErr] = useState("");
 
   // Create form
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [counselorId, setCounselorId] = useState("");
+  const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [formMsg, setFormMsg] = useState({ type: "", text: "" });
 
   // Filters
@@ -165,6 +139,42 @@ export default function CounselorManagement() {
 
   // Animation trigger
   const [animTick, setAnimTick] = useState(0);
+
+  const normalizeFromApi = (c) => ({
+    _id: c?._id || c?.id || "",
+    fullName: String(c?.fullName || c?.name || "").trim(),
+    counselorId: String(c?.counselorId || c?.counselorCode || "").trim(),
+    email: String(c?.email || "").trim(),
+    createdAt: c?.createdAt || c?.accountCreation || null,
+  });
+
+  // Load counselors from backend
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        setLoading(true);
+        setLoadErr("");
+
+        const data = await apiFetch("/api/users/counselors");
+        const items = Array.isArray(data?.items) ? data.items : Array.isArray(data) ? data : [];
+        if (!mounted) return;
+
+        setCounselors(items.map(normalizeFromApi));
+      } catch (err) {
+        if (!mounted) return;
+        // If backend isn't ready yet, keep empty list (no fake counselors).
+        setLoadErr(err?.message || "Failed to load counselors.");
+        setCounselors([]);
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    })();
+    return () => {
+      mounted = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Auto-suggest counselor id (editable)
   useEffect(() => {
@@ -225,12 +235,31 @@ export default function CounselorManagement() {
     }, 2500);
   };
 
-  const handleCreate = (e) => {
+  const handleCreate = async (e) => {
     e.preventDefault();
 
-    const name = String(fullName || "").trim();
-    const em = String(email || "").trim().toLowerCase();
-    const cid = String(counselorId || "").trim().toUpperCase();
+    const stripUnsafe = (v) =>
+      String(v ?? "")
+        .replace(/[\u0000-\u001F\u007F]/g, "")
+        .replace(/[<>`]/g, "")
+        .trim();
+
+    if (counselors.length >= 5) {
+      setFormMsg({ type: "error", text: "Counselor limit reached (5)." });
+      clearFormMsgSoon();
+      return;
+    }
+
+    const name = stripUnsafe(fullName).replace(/\s{2,}/g, " ").slice(0, 80);
+
+    if (!/^[A-Za-z\s]+$/.test(name)) {
+      setFormMsg({ type: "error", text: "Name can only contain letters and spaces." });
+      clearFormMsgSoon();
+      return;
+    }
+    const em = stripUnsafe(email).replace(/\s+/g, "").slice(0, 120).toLowerCase();
+    const cid = stripUnsafe(counselorId).replace(/\s+/g, "").slice(0, 32).toUpperCase();
+    const pw = stripUnsafe(password).slice(0, 72);
 
     if (!name) {
       setFormMsg({ type: "error", text: "Please enter counselor name." });
@@ -244,6 +273,17 @@ export default function CounselorManagement() {
     }
     if (!cid) {
       setFormMsg({ type: "error", text: "Counselor ID is required." });
+      clearFormMsgSoon();
+      return;
+    }
+
+    if (!pw) {
+      setFormMsg({ type: "error", text: "Password is required." });
+      clearFormMsgSoon();
+      return;
+    }
+    if (pw.length < 8) {
+      setFormMsg({ type: "error", text: "Password must be at least 8 characters." });
       clearFormMsgSoon();
       return;
     }
@@ -262,24 +302,27 @@ export default function CounselorManagement() {
       return;
     }
 
-    const newCounselor = {
-      _id: `c_${Date.now()}`,
-      fullName: name,
-      counselorId: cid,
-      email: em,
-      createdAt: new Date().toISOString(),
-    };
+    try {
+      const resp = await apiFetch("/api/users/counselors", {
+        method: "POST",
+        body: JSON.stringify({ fullName: name, email: em, counselorId: cid, password: pw }),
+      });
 
-    setCounselors((prev) => [newCounselor, ...prev]);
-    setFormMsg({ type: "success", text: "Counselor account created." });
-    clearFormMsgSoon();
+      const created = normalizeFromApi(resp?.item || resp?.counselor || resp);
+      setCounselors((prev) => [created, ...prev]);
+      setFormMsg({ type: "success", text: "Counselor account created." });
+      clearFormMsgSoon();
 
-    setFullName("");
-    setEmail("");
-    setCounselorId("");
-    setAnimTick((t) => t + 1);
-
-    containerRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      setFullName("");
+      setEmail("");
+      setCounselorId("");
+      setPassword("");
+      setAnimTick((t) => t + 1);
+      containerRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    } catch (err) {
+      setFormMsg({ type: "error", text: err?.message || "Failed to create counselor." });
+      clearFormMsgSoon();
+    }
   };
 
   const deleteCounselor = (id) => {
@@ -331,14 +374,31 @@ export default function CounselorManagement() {
     }, 80);
   };
 
-  const confirmDelete = () => {
+  const confirmDelete = async () => {
     const pw = String(adminPassword || "").trim();
     if (!pw) {
       setDeleteErr("Admin password is required.");
       return;
     }
-    deleteCounselor(deleteTarget?._id);
-    closeDeletePopup();
+
+    const targetId = deleteTarget?._id;
+    if (!targetId) {
+      setDeleteErr("No counselor selected.");
+      return;
+    }
+
+    try {
+      await apiFetch("/api/users/counselors/" + targetId, {
+        method: "DELETE",
+        body: JSON.stringify({ adminPassword: pw }),
+      });
+      deleteCounselor(targetId);
+      setFormMsg({ type: "success", text: "Counselor deleted." });
+      clearFormMsgSoon();
+      closeDeletePopup();
+    } catch (err) {
+      setDeleteErr(err?.message || "Failed to delete counselor.");
+    }
   };
 
   const openEmailModal = (c) => {
@@ -450,6 +510,40 @@ export default function CounselorManagement() {
           max-width: 100%;
         }
 
+
+        .cm-input--pw{
+          padding-right: 54px;
+        }
+        .cm-passWrap{
+          position: relative;
+          width: 100%;
+          min-width: 0;
+        }
+        .cm-passToggle{
+          position: absolute;
+          right: 10px;
+          top: 50%;
+          transform: translateY(-50%);
+          border: 1px solid #dbe4f0;
+          background: #fff;
+          height: 28px;
+          padding: 0 10px;
+          border-radius: 10px;
+          font-weight: 900;
+          font-size: 12px;
+          color: #0f172a;
+          cursor: pointer;
+        }
+        .cm-passToggle:hover{
+          filter: brightness(0.98);
+        }
+        .cm-hint{
+          margin-top: 6px;
+          font-size: 12px;
+          font-weight: 800;
+          color: #64748b;
+        }
+
         .cm-textarea{
           width:100%;
           min-height: 140px;
@@ -506,7 +600,7 @@ export default function CounselorManagement() {
         .cm-form{
           padding: 12px 14px 14px;
           display:grid;
-          grid-template-columns: 1.2fr 1fr 0.6fr auto;
+          grid-template-columns: 1.2fr 1fr 0.6fr 0.8fr auto;
           gap: 10px;
           align-items:end;
           min-width: 0;
@@ -544,6 +638,21 @@ export default function CounselorManagement() {
           font-weight: 800;
           color:#64748b;
           font-size: 12px;
+        }
+
+        .cm-loadErr{
+          margin-left: auto;
+          padding: 9px 12px;
+          border-radius: 12px;
+          border: 1px solid rgba(239,68,68,0.25);
+          background: rgba(239,68,68,0.10);
+          color:#991b1b;
+          font-weight: 900;
+          font-size: 12px;
+          max-width: 520px;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
         }
 
         .cm-table{
@@ -858,14 +967,20 @@ export default function CounselorManagement() {
         </div>
 
         <form className="cm-form" onSubmit={handleCreate}>
-          <div className="cm-field">
+<div className="cm-field">
             <label>Counselor Name</label>
             <input
               className="cm-input"
               value={fullName}
-              onChange={(e) => setFullName(e.target.value)}
+              onChange={(e) => {
+                const raw = e.target.value || "";
+                const cleaned = raw.replace(/[^A-Za-z\s]/g, "");
+                setFullName(cleaned);
+              }}
               placeholder="e.g. Juan Dela Cruz"
               autoComplete="off"
+              maxLength={80}
+              disabled={loading}
             />
           </div>
 
@@ -878,6 +993,8 @@ export default function CounselorManagement() {
               placeholder="e.g. counselor@checkin.edu.ph"
               autoComplete="off"
               inputMode="email"
+              maxLength={120}
+              disabled={loading}
             />
           </div>
 
@@ -889,10 +1006,37 @@ export default function CounselorManagement() {
               onChange={(e) => setCounselorId(e.target.value)}
               placeholder="e.g. C-0005"
               autoComplete="off"
+              maxLength={32}
+              disabled={loading}
             />
           </div>
 
-          <button className="cm-btn" type="submit">
+          <div className="cm-field">
+            <label>Password</label>
+            <div className="cm-passWrap">
+              <input
+                className="cm-input cm-input--pw"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Set initial password"
+                type={showPassword ? "text" : "password"}
+                autoComplete="new-password"
+                maxLength={72}
+                disabled={loading}
+              />
+              <button
+                type="button"
+                className="cm-passToggle"
+                onClick={() => setShowPassword((v) => !v)}
+                disabled={loading}
+                aria-label={showPassword ? "Hide password" : "Show password"}
+              >
+                {showPassword ? "Hide" : "Show"}
+              </button>
+            </div>
+          </div>
+
+          <button className="cm-btn" type="submit" disabled={loading}>
             Create
           </button>
 
@@ -928,6 +1072,8 @@ export default function CounselorManagement() {
               Page {page} of {totalPages} • Showing {PAGE_SIZE} per page
             </div>
           </div>
+
+          {loadErr ? <div className="cm-loadErr">{loadErr}</div> : null}
         </div>
 
         {/* Desktop table */}

@@ -1156,8 +1156,9 @@ function TermsModal({ open, onClose, onAgree, agreed, setAgreed, loading }) {
 ====================== */
 
 function redirectByRole(navigate, role) {
-  if (role === "Admin") return navigate("/admin");
-  if (role === "Consultant") return navigate("/consultant");
+  const r = String(role || "").trim().toLowerCase();
+  if (r === "admin") return navigate("/admin/dashboard");
+  if (r === "counselor" || r === "consultant") return navigate("/counselor/dashboard");
   return navigate("/");
 }
 

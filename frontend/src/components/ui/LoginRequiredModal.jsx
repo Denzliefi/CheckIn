@@ -19,14 +19,53 @@ function LockIcon({ className = "" }) {
   );
 }
 
+/**
+ * LoginRequiredModal
+ * ✅ Reusable for:
+ * - login-required blocks
+ * - account pending blocks
+ * - account terminated blocks
+ *
+ * Keeps the same UI design, but lets you override text/actions.
+ */
 export default function LoginRequiredModal({
   open,
   onClose,
+
+  // Legacy props (still supported)
   onLogin,
   featureName = "this feature",
+
+  // Content
   title = "LOGIN REQUIRED",
   titleId = "login-required-title",
+  description,
+  subtext,
+
+  // Buttons
+  primaryLabel,
+  secondaryLabel,
+  onPrimary,
+  onSecondary,
+  hideSecondary = false,
 }) {
+  const resolvedDescription =
+    description ?? (
+      <>
+        Please log in to access <span className="font-extrabold">{featureName}</span>.
+      </>
+    );
+
+  const resolvedSubtext =
+    subtext ??
+    "Your activity and progress are saved only when you’re signed in.";
+
+  const primaryText = primaryLabel ?? (onLogin ? "Login" : "Okay");
+  const secondaryText = secondaryLabel ?? "Not now";
+
+  const handlePrimary = onPrimary ?? onLogin ?? onClose;
+  const handleSecondary = onSecondary ?? onClose;
+
   return (
     <AppModal open={open} onClose={onClose} titleId={titleId} maxWidthClass="max-w-[640px]">
       <div className="p-5 sm:p-6 border-b border-black/10">
@@ -35,38 +74,44 @@ export default function LoginRequiredModal({
             <LockIcon className="h-5 w-5 text-black" />
           </div>
 
-          <div>
+          <div className="min-w-0">
             <h2 id={titleId} className="text-[18px] sm:text-[20px] font-extrabold tracking-[0.12em]">
               {title}
             </h2>
+
             <p className="text-[13px] text-black/70 mt-2">
-              Please log in to access <span className="font-extrabold">{featureName}</span>.
+              {resolvedDescription}
             </p>
-            <p className="text-[12px] text-black/55 mt-2">
-              Your activity and progress are saved only when you’re signed in.
-            </p>
+
+            {resolvedSubtext ? (
+              <p className="text-[12px] text-black/55 mt-2">
+                {resolvedSubtext}
+              </p>
+            ) : null}
           </div>
         </div>
       </div>
 
       <div className="p-5 sm:p-6 flex items-center justify-end gap-3">
-        <button
-          type="button"
-          onClick={onClose}
-          className="px-5 py-2 text-[13px] font-extrabold rounded-[12px] border-2 border-black bg-white hover:bg-black/5
+        {!hideSecondary ? (
+          <button
+            type="button"
+            onClick={handleSecondary}
+            className="px-5 py-2 text-[13px] font-extrabold rounded-[12px] border-2 border-black bg-white hover:bg-black/5
                      focus:outline-none focus-visible:ring-2 focus-visible:ring-black/25"
-        >
-          Not now
-        </button>
+          >
+            {secondaryText}
+          </button>
+        ) : null}
 
         <button
           type="button"
-          onClick={onLogin}
+          onClick={handlePrimary}
           className="px-5 py-2 text-[13px] font-extrabold rounded-[12px] border-2 border-black bg-black text-white
                      hover:opacity-90 active:scale-[0.99]
                      focus:outline-none focus-visible:ring-2 focus-visible:ring-black/25"
         >
-          Login
+          {primaryText}
         </button>
       </div>
     </AppModal>
