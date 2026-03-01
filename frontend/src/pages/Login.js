@@ -1339,11 +1339,14 @@ export default function Login() {
         const firebaseUser = await signInWithGoogle();
         const u = firebaseUser?.user || firebaseUser;
 
+        const email = String(u?.email || "").trim().toLowerCase();
+
+        // ✅ For LOGIN: do NOT send/overwrite fullName.
+        // Backend will return the user's stored firstName/lastName/fullName from DB.
         const payload = {
           intent: "login",
           googleId: u?.uid,
-          email: u?.email,
-          fullName: u?.displayName || u?.email?.split("@")?.[0] || "Google User",
+          email,
         };
 
         const res = await fetch(`${API_BASE}/api/auth/google`, {
