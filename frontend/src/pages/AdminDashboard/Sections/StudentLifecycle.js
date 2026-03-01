@@ -313,6 +313,8 @@ function ConfirmModal({
   tone = "slate",
   notice,
   statusValue,
+  disabledStatusValues,
+  disableConfirm,
   onStatusChange,
   onCancel,
   onConfirm,
@@ -328,7 +330,8 @@ function ConfirmModal({
 
   const border = tone === "danger" ? "border-rose-200" : "border-slate-200";
   const bg = tone === "danger" ? "bg-rose-50" : "bg-white";
-  const canConfirm = Boolean((password || "").trim()) && Boolean(statusValue) && !loading;
+  const disabledSet = new Set((disabledStatusValues || []).map((v) => String(v || "").toLowerCase()));
+  const canConfirm = Boolean((password || "").trim()) && Boolean(statusValue) && !loading && !disableConfirm;
 
   return (
     <Portal>
@@ -358,21 +361,28 @@ function ConfirmModal({
                     { value: STATUS.PENDING, label: "Pending" },
                     { value: STATUS.ACTIVE, label: "Active" },
                     { value: STATUS.TERMINATED, label: "Terminated" },
-                  ].map((opt) => (
-                    <button
-                      key={opt.value}
-                      type="button"
-                      disabled={loading}
-                      onClick={() => onStatusChange?.(opt.value)}
-                      className={`h-10 rounded-2xl border px-2 text-sm font-black transition disabled:opacity-60 disabled:cursor-not-allowed ${
-                        String(statusValue || "") === opt.value
-                          ? "border-slate-900 bg-slate-900 text-white"
-                          : "border-slate-200 bg-white text-slate-900 hover:bg-slate-50"
-                      }`}
-                    >
-                      {opt.label}
-                    </button>
-                  ))}
+                  ].map((opt) => {
+                    const isSelected = String(statusValue || "").toLowerCase() === opt.value;
+                    const isDisabled = loading || disabledSet.has(opt.value);
+
+                    const cls = isDisabled
+                      ? "border-slate-200 bg-slate-50 text-slate-400"
+                      : isSelected
+                        ? "border-slate-900 bg-slate-900 text-white"
+                        : "border-slate-200 bg-white text-slate-900 hover:bg-slate-50";
+
+                    return (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        disabled={isDisabled}
+                        onClick={() => onStatusChange?.(opt.value)}
+                        className={`h-10 rounded-2xl border px-2 text-sm font-black transition disabled:opacity-60 disabled:cursor-not-allowed ${cls}`}
+                      >
+                        {opt.label}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
 
@@ -727,6 +737,7 @@ export default function StudentLifecycle() {
   }
 
   function openAction(action, targetIds, nextStatus = null) {
+    setConfirmNotice({ open: false, message: "", tone: "success" });
     setConfirmPassword("");
     setConfirmPasswordError("");
     setConfirmShowPassword(false);
@@ -766,6 +777,20 @@ export default function StudentLifecycle() {
       setConfirmPasswordError("Please choose a status.");
       return;
     }
+    const label =
+      nextStatus === STATUS.ACTIVE ? "Active" : nextStatus === STATUS.PENDING ? "Pending" : "Terminated";
+
+    // Production-safe: don't submit no-op updates (already in that status)
+    const currentById = new Map(students.map((s) => [s.id, String(s.status || "").toLowerCase()]));
+    const effectiveTargetIds = targetIds.filter((id) => currentById.get(id) !== nextStatus);
+
+    if (effectiveTargetIds.length === 0) {
+      setConfirmPasswordError(
+        `No changes to apply. Selected ${targetIds.length === 1 ? "student is" : "students are"} already ${label}.`
+      );
+      return;
+    }
+
 
 
     setError("");
@@ -774,9 +799,9 @@ export default function StudentLifecycle() {
 
     try {
       const updates =
-        targetIds.length === 1
-          ? [await api.setStatus({ userId: targetIds[0], nextStatus, adminPassword: pw })]
-          : await api.bulkSetStatus({ userIds: targetIds, nextStatus, adminPassword: pw });
+        effectiveTargetIds.length === 1
+          ? [await api.setStatus({ userId: effectiveTargetIds[0], nextStatus, adminPassword: pw })]
+          : await api.bulkSetStatus({ userIds: effectiveTargetIds, nextStatus, adminPassword: pw });
 
       const byId = new Map(updates.map((u) => [u.id, u]));
 
@@ -795,7 +820,12 @@ export default function StudentLifecycle() {
 
       setConfirmNotice({
         open: true,
-        message: `Set ${label} for ${targetIds.length} ${targetIds.length === 1 ? "student" : "students"}.`,
+        message: (() => {
+          const updated = effectiveTargetIds.length;
+          const skipped = targetIds.length - effectiveTargetIds.length;
+          const base = `Set ${label} for ${updated} ${updated === 1 ? "student" : "students"}.`;
+          return skipped > 0 ? `${base} (${skipped} already ${label}.)` : base;
+        })(),
         tone,
       });
 
@@ -919,6 +949,26 @@ export default function StudentLifecycle() {
       </div>
     );
   }
+
+
+  const confirmTargetStatuses = useMemo(() => {
+    if (!confirm.open || !Array.isArray(confirm.targetIds) || confirm.targetIds.length === 0) return [];
+    const byId = new Map(students.map((s) => [s.id, String(s.status || "").toLowerCase()]));
+    return confirm.targetIds.map((id) => byId.get(id)).filter(Boolean);
+  }, [confirm.open, confirm.targetIds, students]);
+
+  const confirmDisabledStatusValues = useMemo(() => {
+    const unique = Array.from(new Set(confirmTargetStatuses));
+    // If all selected students share the same current status, disable that status (can't set it again)
+    return unique.length === 1 ? [unique[0]] : [];
+  }, [confirmTargetStatuses]);
+
+  const confirmIsNoop = useMemo(() => {
+    const next = String(confirm.nextStatus || "").toLowerCase();
+    if (!next) return false;
+    if (!confirm.open || confirmTargetStatuses.length === 0) return false;
+    return confirmTargetStatuses.every((s) => s === next);
+  }, [confirm.open, confirm.nextStatus, confirmTargetStatuses]);
 
   const confirmTone =
     String(confirm.nextStatus || "").toLowerCase() === STATUS.TERMINATED ? "danger" : "slate";
@@ -1327,6 +1377,8 @@ export default function StudentLifecycle() {
         tone={confirmTone}
         notice={confirmNotice}
         statusValue={confirm.nextStatus}
+        disabledStatusValues={confirmDisabledStatusValues}
+        disableConfirm={confirmIsNoop}
         onStatusChange={(v) => setConfirm((c) => ({ ...c, nextStatus: v }))}
         onCancel={closeConfirm}
         onConfirm={runAction}
