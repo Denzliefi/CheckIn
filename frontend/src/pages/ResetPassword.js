@@ -75,7 +75,7 @@ export default function ResetPassword() {
   const [confirm, setConfirm] = useState("");
 
   const [loading, setLoading] = useState(false);
-  // view states: checking | form | success | expired
+  // view states: checking | otp | form | success | expired
   const [view, setView] = useState(() => (!token ? "expired" : "checking"));
   const [note, setNote] = useState(() =>
     !token
@@ -83,6 +83,17 @@ export default function ResetPassword() {
       : ""
   );
   const [error, setError] = useState("");
+
+
+  const [otp, setOtp] = useState("");
+  const [otpLoading, setOtpLoading] = useState(false);
+  const [otpError, setOtpError] = useState("");
+  const [otpNote, setOtpNote] = useState("");
+  const [otpVerified, setOtpVerified] = useState(false);
+  const [cooldown, setCooldown] = useState(0);
+
+  const otpCanVerify = !otpLoading && /^[0-9]{6}$/.test(String(otp).trim());
+
 
   // Validate token on page load to avoid showing the form for used/expired links.
   useEffect(() => {
@@ -107,8 +118,19 @@ export default function ResetPassword() {
         if (cancelled) return;
 
         if (data && data.valid) {
-          setView("form");
+          const alreadyVerified = Boolean(data.otpVerified);
+          setOtpVerified(alreadyVerified);
+          if (alreadyVerified) {
+            setView("form");
+            setNote("");
+            return;
+          }
+          setView("otp");
           setNote("");
+          // auto-send OTP once
+          setTimeout(() => {
+            handleResendOtp();
+          }, 50);
           return;
         }
 
@@ -130,7 +152,73 @@ export default function ResetPassword() {
     };
   }, [token]);
 
-  const canSubmit = view === "form" && !!token && password.length >= 8 && password === confirm;
+
+  const handleResendOtp = async () => {
+    if (!token) return;
+    if (cooldown > 0) return;
+
+    setOtpLoading(true);
+    setOtpError("");
+    setOtpNote("");
+
+    try {
+      const data = await apiFetch("/api/auth/reset-password/send-otp", {
+        method: "POST",
+        body: JSON.stringify({ token }),
+      });
+
+      // backend may return a cooldownSeconds value
+      const nextCooldown =
+        data && typeof data.cooldownSeconds === "number" ? data.cooldownSeconds : 60;
+
+      setCooldown(nextCooldown || 60);
+      setOtpNote("We sent a 6-digit code to your email. Please check your inbox.");
+    } catch (err) {
+      setOtpError(err?.message || "Failed to send OTP. Please try again.");
+    } finally {
+      setOtpLoading(false);
+    }
+  };
+
+  const handleVerifyOtp = async (e) => {
+    e.preventDefault();
+    if (!token) return;
+
+    setOtpLoading(true);
+    setOtpError("");
+    setOtpNote("");
+
+    try {
+      await apiFetch("/api/auth/reset-password/verify-otp", {
+        method: "POST",
+        body: JSON.stringify({ token, otp: String(otp).trim() }),
+      });
+
+      setOtpVerified(true);
+      setView("form");
+      setOtpNote("Verified. You can now set a new password.");
+      setOtpError("");
+    } catch (err) {
+      setOtpVerified(false);
+      setOtpError(err?.message || "Invalid code. Please try again.");
+    } finally {
+      setOtpLoading(false);
+    }
+  };
+
+
+
+  
+  // Cooldown countdown for resend
+  useEffect(() => {
+    if (cooldown <= 0) return;
+    const t = setInterval(() => {
+      setCooldown((c) => (c > 0 ? c - 1 : 0));
+    }, 1000);
+    return () => clearInterval(t);
+  }, [cooldown]);
+
+const canSubmit = view === "form" && otpVerified && !!token && password.length >= 8 && password === confirm;
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -141,6 +229,12 @@ export default function ResetPassword() {
     if (!token) {
       setView("expired");
       setNote("Reset link is missing or invalid. Please request a new one.");
+      return;
+    }
+
+    if (!otpVerified) {
+      setView("otp");
+      setOtpError("Please verify the 6-digit code sent to your email first.");
       return;
     }
     if (password.length < 8) {
@@ -229,12 +323,97 @@ export default function ResetPassword() {
             <p className="text-[13px] sm:text-[14px] text-black/60 mt-3">
               {view === "form"
                 ? "Enter a new password for your account."
+                : view === "otp"
+                ? "Enter the 6-digit code we emailed you."
                 : "This reset link can only be used for a short time."}
             </p>
 
             {/* Card */}
             <div className="mt-6 rounded-[18px] bg-white border border-black/10 p-5 sm:p-7 shadow-[0_14px_28px_rgba(0,0,0,0.08)]">
-              {view === "form" ? (
+              
+              {view === "otp" ? (
+                <div className="flex flex-col gap-4">
+                  {otpError ? (
+                    <div className="rounded-[14px] border border-black/10 bg-[#FFECEC] px-4 py-3 text-[13px]">
+                      <span className="font-extrabold">Error:</span> {otpError}
+                    </div>
+                  ) : null}
+
+                  <div className="rounded-[14px] border border-black/10 bg-[#F4FFE7] px-4 py-3 text-[13px]">
+                    <span className="font-extrabold">Code sent!</span>{" "}
+                    {otpNote || "We sent a 6-digit code to your email. Please check your inbox."}
+                  </div>
+
+                  <form onSubmit={handleVerifyOtp} className="flex flex-col gap-3">
+                    <div className="flex flex-col gap-2">
+                      <label className="text-[13px] font-bold text-black">
+                        One-time code (OTP)
+                      </label>
+                      <input
+                        inputMode="numeric"
+                        pattern="\d{6}"
+                        maxLength={6}
+                        placeholder="Enter 6-digit code"
+                        value={otp}
+                        onChange={(e) => setOtp(String(e.target.value || "").replace(/\D/g, "").slice(0, 6))}
+                        className="
+                          w-full rounded-[12px]
+                          bg-[#EEF5FF]
+                          px-4 py-3 text-[14px]
+                          outline-none
+                          border border-black/10
+                          focus:ring-2 focus:ring-black/10
+                        "
+                      />
+                    </div>
+
+                    <button
+                      type="submit"
+                      disabled={!otpCanVerify || otpLoading}
+                      className={`w-full rounded-[12px] py-3 text-[14px] font-extrabold transition
+                        ${
+                          !otpCanVerify || otpLoading
+                            ? "bg-black/20 text-white cursor-not-allowed"
+                            : "bg-black text-white hover:opacity-90"
+                        }`}
+                    >
+                      {otpLoading ? (
+                        <span className="inline-flex items-center gap-2 justify-center">
+                          <Spinner />
+                          Verifying…
+                        </span>
+                      ) : (
+                        "Verify code"
+                      )}
+                    </button>
+
+                    <div className="flex items-center justify-between text-[13px] pt-1">
+                      <Link
+                        to="/login"
+                        className="font-bold underline underline-offset-4"
+                      >
+                        Back to login
+                      </Link>
+
+                      <button
+                        type="button"
+                        onClick={handleResendOtp}
+                        disabled={otpLoading || cooldown > 0}
+                        className={`font-bold underline underline-offset-4 ${
+                          otpLoading || cooldown > 0 ? "text-black/40 cursor-not-allowed" : ""
+                        }`}
+                      >
+                        {cooldown > 0 ? `Resend in ${cooldown}s` : "Send again"}
+                      </button>
+                    </div>
+
+                    <div className="text-[12px] text-black/50">
+                      Tip: Use the most recent code sent to your email.
+                    </div>
+                  </form>
+                </div>
+              ) : view === "form" ? (
+
                 <form onSubmit={handleSubmit} className="flex flex-col gap-4">
                   {error ? (
                     <div className="rounded-[14px] border border-black/10 bg-[#FFECEC] px-4 py-3 text-[13px]">

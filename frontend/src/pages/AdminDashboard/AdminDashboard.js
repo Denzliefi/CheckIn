@@ -1,4 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { logout as doLogout } from "../../utils/auth";
 
 // sections (create these files just like counselor)
 import StudentLifecycle from "./Sections/StudentLifecycle";
@@ -186,6 +188,8 @@ function SidebarTabButton({ tab, activeTab, onClickTab, sidebarCollapsed }) {
 
 export default function AdminDashboard() {
 
+  const navigate = useNavigate();
+
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [activeTab, setActiveTab] = useState("studentLifecycle");
@@ -208,6 +212,14 @@ export default function AdminDashboard() {
   }, [sidebarOpen]);
 
   const onClickTab = (key) => {
+    // ✅ Logout should actually clear auth + redirect
+    if (key === "logout") {
+      doLogout();
+      setSidebarOpen(false);
+      navigate("/login", { replace: true });
+      return;
+    }
+
     setActiveTab(key);
     setSidebarOpen(false);
   };

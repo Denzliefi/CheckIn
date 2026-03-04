@@ -220,8 +220,8 @@ export default function MessagesDrawer({open,
   }, [loggedInEmail]);
 
   // views: mode | email | chat
-  const [view, setView] = useState("mode");
-  const [mode, setMode] = useState(null); // student | anonymous
+  const [view, setView] = useState("chat");
+  const [mode, setMode] = useState("student"); // fixed: student (no identity picker)
   const [studentEmail, setStudentEmail] = useState("");
   const [emailTouched, setEmailTouched] = useState(false);
 
@@ -333,10 +333,6 @@ export default function MessagesDrawer({open,
     return all.some((m) => String(m?.from || "") === "me");
   }, [targetThread]);
 
-  // ✅ Hide identity switch after first message (clean UI) OR if backend locks identity
-  const identityLocked = Boolean(targetThread?.identityLocked) || hasUserSentMessage;
-  const identitySwitchAllowed = view === "chat" && mode && !identityLocked;
-
   // Which identity is locked for this OPEN thread (used to enable "return to chat")
   const lockedMode = useMemo(() => {
     const t = targetThread;
@@ -407,8 +403,8 @@ export default function MessagesDrawer({open,
   }, [sessionKey]);
 
   const resetToStart = useCallback(() => {
-    setView("mode");
-    setMode(null);
+    setView("chat");
+    setMode("student");
     setStudentEmail("");
     setEmailTouched(false);
     setDraft("");
@@ -435,7 +431,6 @@ export default function MessagesDrawer({open,
       setDraft("");
       setProfanityError("");
       setIdentityError("");
-    setIdentityError("");
       setEmojiOpen(false);
       setMenuOpen(false);
 
@@ -469,68 +464,38 @@ export default function MessagesDrawer({open,
     if (!open) return;
 
     const defaultThreadId = initialThreadId || threads?.[0]?.id || "";
-    setActiveId((prev) => prev || defaultThreadId);
-
-    const defaultThread =
-      (defaultThreadId && threads?.find((t) => t.id === defaultThreadId)) ||
-      threads?.[0] ||
-      null;
-
-    const threadHasLockedIdentity = Boolean(defaultThread?.identityLocked);
-    const lockedModeRaw = String(
-      defaultThread?.identityMode || (defaultThread?.anonymous ? "anonymous" : "student") || ""
-    ).toLowerCase();
-    const lockedMode = lockedModeRaw === "anonymous" ? "anonymous" : "student";
-
     const saved = loadSession();
     const now = Date.now();
 
-    // ✅ Requirement #2: do NOT auto-start as Student.
-    // Show identity chooser first, unless the conversation already has a locked identity.
-    if (!saved) {
-      if (threadHasLockedIdentity && defaultThreadId) {
-        startNewChatSession({
-          nextMode: lockedMode,
-          nextStudentEmail: lockedMode === "student" ? loggedInEmail : "",
-          threadId: defaultThreadId,
-        });
-      } else {
-        resetToStart();
-      }
-      return;
+    // If saved session expired, clear it.
+    if (saved?.expiresAtMs && now >= saved.expiresAtMs) {
+      clearSession();
     }
 
-    if (saved.expiresAtMs && now >= saved.expiresAtMs) {
-      resetToStart();
-      onRefreshThreads?.({ reason: "expired" });
-      return;
-    }
+    const nextActiveId = String(saved?.activeId || defaultThreadId || "");
+    setActiveId(nextActiveId);
 
-    let nextView = saved.view || "mode";
-    let nextMode = saved.mode || null;
+    // ✅ No identity picker: always open in chat as Student
+    setView("chat");
+    setMode("student");
+    setStudentEmail(loggedInEmail || saved?.studentEmail || "");
+    setEmailTouched(false);
 
-    // If backend already locked identity, force the mode to match thread identity.
-    if (threadHasLockedIdentity) nextMode = lockedMode;
+    setDraft("");
+    setProfanityError("");
+    setIdentityError("");
+    setEmojiOpen(false);
+    setMenuOpen(false);
 
-    // Never auto-pick a mode. If chat view has no mode, send them to chooser.
-    if (nextView === "chat" && !nextMode) nextView = "mode";
+    setVisibleCount(Number(saved?.visibleCount) || PAGE_SIZE);
 
-    const nextStudentEmail = nextMode === "student" ? loggedInEmail || saved.studentEmail || "" : "";
-
-    applySession({
-      ...saved,
-      view: nextView,
-      mode: nextMode,
-      studentEmail: nextStudentEmail,
-      activeId: saved.activeId || defaultThreadId,
-      visibleCount: saved.visibleCount || PAGE_SIZE,
-      createdAtMs: saved.createdAtMs || now,
-      expiresAtMs: saved.expiresAtMs || now + EXPIRE_MS,
-    });
+    const created = Number(saved?.createdAtMs) || now;
+    const expires = Number(saved?.expiresAtMs) || created + EXPIRE_MS;
+    setCreatedAtMs(created);
+    setExpiresAtMs(expires);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, loggedInEmail]);
-
-  useEffect(() => {
+  }, [open, loggedInEmail, initialThreadId, threads, loadSession, clearSession]);
+useEffect(() => {
     if (!open) return;
     if (!view) return;
 
@@ -739,12 +704,6 @@ export default function MessagesDrawer({open,
     }
   }
 
-  function toggleIdentity() {
-    if (identityLocked) return;
-    const next = mode === "student" ? "anonymous" : "student";
-    chooseMode(next);
-  }
-
   function handleBack() {
     setMenuOpen(false);
     setEmojiOpen(false);
@@ -761,8 +720,8 @@ export default function MessagesDrawer({open,
     }
 
     if (view === "email") {
-      setView("mode");
-      setMode(null);
+      setView("chat");
+    setMode("student");
       setStudentEmail("");
       setEmailTouched(false);
       return;
@@ -837,11 +796,6 @@ export default function MessagesDrawer({open,
     setIdentityError("");
     setDraft("");
     setEmojiOpen(false);
-
-    if (!mode) {
-      setIdentityError("Choose Student or Anonymous first.");
-      return;
-    }
 
     const payload = {
       // ✅ PATCH: threadId may be empty for brand-new sessions.
@@ -988,32 +942,6 @@ export default function MessagesDrawer({open,
               <span style={styles.headerTitle}>
                 {view === "chat" ? "Counselor Chat" : title}
               </span>
-
-              {view === "chat" && mode ? (
-                identitySwitchAllowed ? (
-                  <button
-                    type="button"
-                    onClick={toggleIdentity}
-                    style={{ ...styles.modeBadge, cursor: "pointer" }}
-                    aria-label="Switch identity"
-                    title="Switch identity"
-                  >
-                    {mode === "student" ? "Student" : "Anonymous"}
-                  </button>
-                ) : (
-                  <span
-                    style={{
-                      ...styles.modeBadge,
-                      opacity: 0.75,
-                      cursor: "default",
-                    }}
-                    aria-label="Identity"
-                    title="Identity (locked)"
-                  >
-                    {mode === "student" ? "Student" : "Anonymous"}
-                  </span>
-                )
-              ) : null}
             </div>
 
             {view === "chat" ? (
@@ -1057,21 +985,6 @@ export default function MessagesDrawer({open,
               >
                 {view === "chat" ? (
                   <>
-{identitySwitchAllowed ? (
-                    <button
-                      type="button"
-                      style={styles.menuItem}
-                      onClick={() => {
-                        setMenuOpen(false);
-                        toggleIdentity();
-                      }}
-                      role="menuitem"
-                    >
-                      {mode === "student"
-                        ? "Message anonymously"
-                        : "Use Student identity"}
-                    </button>
-                    ) : null}
 
                     <div style={styles.menuDivider} />
 

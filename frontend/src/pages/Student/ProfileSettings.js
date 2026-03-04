@@ -11,7 +11,7 @@ const TEXT_MAIN = "#0F172A";
 const TEXT_MUTED = "#475569";
 const TEXT_SOFT = "#64748B";
 
-const DEFAULT_CAMPUS = "Arellano University Andres Bonifacio Campus=";
+const DEFAULT_CAMPUS = "Arellano University Andres Bonifacio Campus";
 
 const EMPTY_PROFILE = {
   firstName: "",

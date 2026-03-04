@@ -1,5 +1,6 @@
 // File: src/pages/AdminDashboard/Sections/AdminOverviewAnalytics.jsx
 import React, { useEffect, useMemo, useState } from "react";
+import { getAdminAnalytics } from "./adminApi";
 
 /**
  * Admin Dashboard Analytics (SVG only, no libs)
@@ -39,11 +40,6 @@ const DEFAULT_DATA = {
   requestsDone: 92,
   requestsCancelled: 7,
   requestsNoShows: 4,
-};
-
-const STATUS = {
-  ACTIVE: "active",
-  TERMINATED: "terminated",
 };
 
 function clamp(n, min, max) {
@@ -127,6 +123,84 @@ function Badge({ tone = "gray", children }) {
       {children}
     </div>
   );
+}
+
+function normalizeAnalytics(payload) {
+  const p = payload && typeof payload === "object" ? payload : {};
+
+  const studentsTotal = Number(p.studentsTotal ?? p.students?.total ?? DEFAULT_DATA.studentsTotal);
+  const studentsActive = Number(
+    p.studentsActive ?? p.students?.active ?? p.activeStudents ?? DEFAULT_DATA.studentsActive
+  );
+
+  const counselorsTotal = Number(p.counselorsTotal ?? p.counselors ?? DEFAULT_DATA.counselorsTotal);
+  const counselorsActive = Number(p.counselorsActive ?? DEFAULT_DATA.counselorsActive);
+
+  const requestsPending = Number(p.requestsPending ?? p.requests?.pending ?? DEFAULT_DATA.requestsPending);
+  const requestsApproved = Number(p.requestsApproved ?? p.requests?.approved ?? DEFAULT_DATA.requestsApproved);
+  const requestsCancelled = Number(p.requestsCancelled ?? p.requests?.cancelled ?? DEFAULT_DATA.requestsCancelled);
+  const requestsDone = Number(
+    p.requestsDone ?? p.requestsDisapproved ?? p.requests?.disapproved ?? DEFAULT_DATA.requestsDone
+  );
+  const requestsNoShows = Number(p.requestsNoShows ?? DEFAULT_DATA.requestsNoShows);
+
+  const studentsByCourse = Array.isArray(p.studentsByCourse)
+    ? p.studentsByCourse.map((x) => ({
+        key: String(x?.key ?? x?.course ?? "Unknown"),
+        course: String(x?.course ?? x?.key ?? "Unknown"),
+        count: Math.max(0, Number(x?.count ?? 0)),
+        percentage: Number(x?.percentage ?? 0),
+      }))
+    : DEFAULT_DATA.studentsByCourse;
+
+  return {
+    ...DEFAULT_DATA,
+    ...p,
+    studentsTotal,
+    studentsActive,
+    counselorsTotal,
+    counselorsActive,
+    requestsPending,
+    requestsApproved,
+    requestsCancelled,
+    requestsDone,
+    requestsNoShows,
+    studentsByCourse,
+  };
+}
+
+/**
+ * AssignmentsReassignment (Admin Analytics)
+ * - Keeps the existing UI
+ * - Loads live stats from the backend
+ */
+export default function AssignmentsReassignment() {
+  const [data, setData] = useState(DEFAULT_DATA);
+
+  const fetchAndSet = async () => {
+    const payload = await getAdminAnalytics();
+    setData(normalizeAnalytics(payload));
+  };
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const payload = await getAdminAnalytics();
+        if (!alive) return;
+        setData(normalizeAnalytics(payload));
+      } catch (err) {
+        // Keep the current UI (no redesign). Log for debugging.
+        // eslint-disable-next-line no-console
+        console.error("Failed to load admin analytics:", err);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  return <AdminOverviewAnalytics data={data} onRefresh={fetchAndSet} />;
 }
 
 function MetricCard({ icon, tone, value, label, sub, progressPct }) {
@@ -313,112 +387,6 @@ function MiniPopulationBars({ items, hoveredKey, setHoveredKey, studentsTotal })
   );
 }
 
-/* ===== SINGLE-FILE CONNECTORS (mirrors your other files) ===== */
-function seedStudents() {
-  const now = new Date().toISOString();
-  return [
-    {
-      id: "S-001",
-      studentId: "2021-0001",
-      name: "Alyssa Cruz",
-      course: "Bachelor of Science in Information Technology",
-      campus: "Legarda Campus",
-      status: STATUS.ACTIVE,
-      createdAt: "2024-08-15T10:30:00.000Z",
-      updatedAt: now,
-    },
-    {
-      id: "S-002",
-      studentId: "2020-0321",
-      name: "John Dela Rosa",
-      course: "Bachelor of Science in Business Administration (BSBA)",
-      campus: "Pasay Campus",
-      status: STATUS.TERMINATED,
-      createdAt: "2023-06-10T09:00:00.000Z",
-      updatedAt: now,
-    },
-    {
-      id: "S-003",
-      studentId: "2019-0788",
-      name: "Maria Santos",
-      course: "Bachelor of Arts in Psychology",
-      campus: "Jose Abad Santos Campus",
-      status: STATUS.ACTIVE,
-      createdAt: "2022-01-20T13:45:00.000Z",
-      updatedAt: now,
-    },
-    {
-      id: "S-004",
-      studentId: "2018-0101",
-      name: "Paolo Reyes",
-      course: "Bachelor of Science in Computer Science",
-      campus: "Andres Bonifacio Campus",
-      status: STATUS.ACTIVE,
-      createdAt: "2021-03-11T09:15:00.000Z",
-      updatedAt: now,
-    },
-    {
-      id: "S-005",
-      studentId: "2017-0202",
-      name: "Anne Villanueva",
-      course: "Bachelor of Science in Tourism Management (BSTM)",
-      campus: "Apolinario Mabini Campus",
-      status: STATUS.TERMINATED,
-      createdAt: "2020-07-02T12:00:00.000Z",
-      updatedAt: now,
-    },
-    {
-      id: "S-006",
-      studentId: "2016-0303",
-      name: "Kyle Mendoza",
-      course: "Bachelor of Arts in Political Science",
-      campus: "Elisa Esquerra Campus",
-      status: STATUS.ACTIVE,
-      createdAt: "2019-10-18T10:00:00.000Z",
-      updatedAt: now,
-    },
-  ];
-}
-// 1) FIX: seedCounselors() -> add status so active% + UI line are correct
-function seedCounselors() {
-  return [
-    {
-      _id: "c1",
-      fullName: "Angela Ramos",
-      counselorId: "C-0001",
-      email: "angela.ramos@checkin.edu.ph",
-      status: STATUS.ACTIVE,
-      createdAt: "2024-08-15T08:10:00.000Z",
-    },
-    {
-      _id: "c2",
-      fullName: "Jerome Villanueva",
-      counselorId: "C-0002",
-      email: "jerome.villanueva@checkin.edu.ph",
-      status: STATUS.ACTIVE,
-      createdAt: "2024-07-02T10:20:00.000Z",
-    },
-    {
-      _id: "c3",
-      fullName: "Mika Santos",
-      counselorId: "C-0003",
-      email: "mika.santos@checkin.edu.ph",
-      status: STATUS.ACTIVE,
-      createdAt: "2024-06-10T03:30:00.000Z",
-    },
-    {
-      _id: "c4",
-      fullName: "Paolo Reyes",
-      counselorId: "C-0004",
-      email: "paolo.reyes@checkin.edu.ph",
-      status: STATUS.ACTIVE,
-      createdAt: "2024-03-11T11:15:00.000Z",
-    },
-  ];
-}
-
-// 2) FIX: Counselors MetricCard line -> show active/inactive (not repeating total)
-
 function deriveStudentStats({ students, fallbackTotal, fallbackActive }) {
   if (Array.isArray(students)) {
     const total = students.length;
@@ -452,7 +420,7 @@ function deriveCounselorStats({ counselors, fallbackTotal, fallbackActive }) {
 }
 
 /* MAIN */
-export default function AdminOverviewAnalytics({
+function AdminOverviewAnalytics({
   data = DEFAULT_DATA,
   title = "Admin Dashboard",
   subtitle = "Quick totals + monitoring overview",
@@ -474,9 +442,6 @@ export default function AdminOverviewAnalytics({
   const [lastUpdatedAt, setLastUpdatedAt] = useState(Date.now());
   const [isRefreshing, setIsRefreshing] = useState(false);
 
-  const [studentsLocal, setStudentsLocal] = useState(null);
-  const [counselorsLocal, setCounselorsLocal] = useState(null);
-
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), Math.max(1000, clockTickMs));
     return () => clearInterval(id);
@@ -486,13 +451,11 @@ export default function AdminOverviewAnalytics({
     setLastUpdatedAt(Date.now());
   }, [data, students, counselors]);
 
-  useEffect(() => {
-    if (!Array.isArray(students)) setStudentsLocal(seedStudents());
-    if (!Array.isArray(counselors)) setCounselorsLocal(seedCounselors());
-  }, [students, counselors]);
-
-  const resolvedStudents = Array.isArray(students) ? students : studentsLocal;
-  const resolvedCounselors = Array.isArray(counselors) ? counselors : counselorsLocal;
+  // This dashboard primarily relies on live analytics from the backend.
+  // If arrays are passed in (optional), we can derive totals from them.
+  // Otherwise, fall back to the backend-provided totals already normalized into `dataResolved`.
+  const resolvedStudents = Array.isArray(students) ? students : null;
+  const resolvedCounselors = Array.isArray(counselors) ? counselors : null;
 
   const stats = useMemo(() => {
     const studentStats = deriveStudentStats({
@@ -582,8 +545,6 @@ export default function AdminOverviewAnalytics({
     setNow(t);
 
     try {
-      if (!Array.isArray(students)) setStudentsLocal(seedStudents());
-      if (!Array.isArray(counselors)) setCounselorsLocal(seedCounselors());
       if (typeof onRefresh === "function") await onRefresh();
     } finally {
       window.setTimeout(() => setIsRefreshing(false), 650);

@@ -793,6 +793,11 @@ function ChatBubble({ by, text, participantAvatarUrl = "" }) {
   Mood Tracker (unchanged)
 ----------------------------- */
 function MoodTracker({ moodTracking, day, onPickDay }) {
+  const maxDay = ymd(new Date());
+  // prevent future dates even if typed (or if state is restored)
+  useEffect(() => {
+    if (!isOnOrBefore(String(day || ""), maxDay)) onPickDay(maxDay);
+  }, [day, maxDay, onPickDay]);
   const entries = safeArray(moodTracking?.entries).filter((e) => e?.date);
   const sorted = useMemo(() => [...entries].sort((a, b) => String(a.date).localeCompare(String(b.date))), [entries]);
 
@@ -869,7 +874,12 @@ function MoodTracker({ moodTracking, day, onPickDay }) {
         <input
           type="date"
           value={day}
-          onChange={(e) => onPickDay(e.target.value)}
+          max={maxDay}
+          onChange={(e) => {
+            const next = String(e.target.value || "");
+            // prevent selecting future dates (greys them out via native date input)
+            onPickDay(isOnOrBefore(next, maxDay) ? next : maxDay);
+          }}
           className="px-3 py-2 rounded-xl text-sm font-extrabold border border-slate-200 bg-white text-slate-800 outline-none focus:ring-4 focus:ring-slate-100"
         />
       </div>
@@ -1413,6 +1423,14 @@ export default function Inbox() {
 
   // Real threads mapped into the same UI shape
   const [items, setItems] = useState([]);
+
+  // Keep a ref to the latest items to avoid effect loops (mood tracker fetch updates items)
+  const itemsRef = useRef([]);
+  const moodInflightRef = useRef(new Map());
+
+  useEffect(() => {
+    itemsRef.current = items;
+  }, [items]);
   const [scrollKey, setScrollKey] = useState(0);
   const [selectedId, setSelectedId] = useState("");
   const [tab, setTab] = useState("chat");
@@ -1552,32 +1570,51 @@ export default function Inbox() {
     async (threadId, baseDay = today) => {
       if (!threadId) return;
 
+      // ✅ Read from ref so we don't create a render loop:
+      // loadMoodTracking updates `items`, which would otherwise recreate this callback and re-trigger the effect.
+      const snapshot = itemsRef.current || [];
+      const current = snapshot.find((x) => String(x.id) === String(threadId));
+
       // only load when the UI allows (claimed-by-me & not anonymous)
-      const current = items.find((x) => String(x.id) === String(threadId));
       if (!current || current.anonymous) return;
 
-      const mt = current.moodTracking || {};
-      const existing = safeArray(mt.entries);
+      // Normalize selected day key
+      const parts = parseYmdParts(String(baseDay || ""));
+      const dayKey = parts ? `${parts.y}-${pad2(parts.mo)}-${pad2(parts.d)}` : today;
 
-      // if already loaded recently, and baseDay is within range, skip
+      // Fetch month-to-date window (matches UI behavior: Feb 1 → Feb 28)
+      const from = parts ? `${parts.y}-${pad2(parts.mo)}-01` : addDays(today, -29);
+      const to = dayKey;
+
+      const mt = current.moodTracking || {};
+
       const loadedAt = Number(mt.loadedAt || 0);
       const fresh = Date.now() - loadedAt < 60_000; // 60s cache
-      const has = existing.length > 0;
 
-      // If counselor picks an older date than our earliest entry, refetch a wider window
-      const earliest = has ? existing.reduce((min, e) => (String(e.date) < String(min) ? String(e.date) : String(min)), existing[0].date) : null;
-      const needWider = earliest && String(baseDay) < String(earliest);
+      // Treat empty results as "loaded" too (avoid refetch spam on months with no entries)
+      const hasLoaded = mt.status === "ready" || mt.status === "error";
 
-      if (fresh && has && !needWider) return;
+      const prevRange = mt.range && typeof mt.range === "object" ? mt.range : null;
+      const rangeCovered =
+        prevRange &&
+        typeof prevRange.from === "string" &&
+        typeof prevRange.to === "string" &&
+        isOnOrBefore(prevRange.from, from) &&
+        isOnOrBefore(to, prevRange.to);
 
-      // Fetch a wide window around the selected day
-      const from = addDays(baseDay, -420);
-      const to = addDays(baseDay, 0);
+      if (fresh && hasLoaded && rangeCovered) return;
+
+      const tid = String(threadId);
+      const inflightKey = `${tid}|${from}|${to}`;
+
+      // In-flight de-dupe (prevents StrictMode double-effect + state-update loops)
+      if (moodInflightRef.current.get(tid) === inflightKey) return;
+      moodInflightRef.current.set(tid, inflightKey);
 
       setItems((prev) =>
         prev.map((x) =>
           x.id === threadId
-            ? { ...x, moodTracking: { ...(x.moodTracking || {}), status: "loading", error: "" } }
+            ? { ...x, moodTracking: { ...(x.moodTracking || {}), status: "loading", error: "", range: { from, to } } }
             : x
         )
       );
@@ -1598,29 +1635,45 @@ export default function Inbox() {
           }))
           .filter((e) => !!e.date);
 
+        // If a newer request started, ignore this result
+        if (moodInflightRef.current.get(tid) !== inflightKey) return;
+
+        setItems((prev) =>
+          prev.map((x) =>
+            x.id === threadId
+              ? { ...x, moodTracking: { status: "ready", entries: mapped, error: "", loadedAt: Date.now(), range: { from, to } } }
+              : x
+          )
+        );
+      } catch (e) {
+        if (moodInflightRef.current.get(tid) !== inflightKey) return;
+
         setItems((prev) =>
           prev.map((x) =>
             x.id === threadId
               ? {
                   ...x,
-                  moodTracking: { status: "ready", entries: mapped, error: "", loadedAt: Date.now() },
+                  moodTracking: {
+                    ...(x.moodTracking || {}),
+                    status: "error",
+                    error: e?.message || "Failed to load mood tracker.",
+                    loadedAt: Date.now(),
+                    range: { from, to },
+                  },
                 }
               : x
           )
         );
-      } catch (e) {
-        setItems((prev) =>
-          prev.map((x) =>
-            x.id === threadId
-              ? { ...x, moodTracking: { ...(x.moodTracking || {}), status: "error", error: e?.message || "Failed to load mood tracker.", loadedAt: Date.now() } }
-              : x
-          )
-        );
+      } finally {
+        if (moodInflightRef.current.get(tid) === inflightKey) {
+          moodInflightRef.current.delete(tid);
+        }
       }
     },
-    [items, today]
+    [today]
   );
   // initial load
+
   useEffect(() => {
     refreshThreads();
     // eslint-disable-next-line react-hooks/exhaustive-deps
