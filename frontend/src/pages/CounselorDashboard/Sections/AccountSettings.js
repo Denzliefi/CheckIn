@@ -317,6 +317,56 @@ export default function AccountSettings() {
   const [savedProfile, setSavedProfile] = useState(initialSavedProfile);
   const [draft, setDraft] = useState(initialSavedProfile);
 
+  // ✅ Fetch latest counselorCode from DB (source of truth)
+  useEffect(() => {
+    let alive = true;
+
+    (async () => {
+      try {
+        const me = await apiFetch("/api/users/me");
+        if (!alive || !me) return;
+
+        const counselorCode = String(me?.counselorCode || me?.counselorId || "").trim();
+        const emailFromDb = String(me?.email || "").trim();
+        const fullNameFromDb = String(me?.fullName || "").trim();
+
+        // Only update admin-managed fields (email + counselorId) from DB
+        if (counselorCode) {
+          setSavedProfile((p) => ({ ...p, counselorId: counselorCode }));
+          setDraft((p) => ({ ...p, counselorId: counselorCode }));
+
+          // keep auth/local cache consistent for other UI modules
+          updateAuthUser({ counselorId: counselorCode, counselorCode });
+          const existing = readUser();
+          writeUser({ ...(existing || {}), counselorId: counselorCode, counselorCode });
+        }
+
+        if (emailFromDb) {
+          setSavedProfile((p) => ({ ...p, email: emailFromDb }));
+          setDraft((p) => ({ ...p, email: emailFromDb }));
+          updateAuthUser({ email: emailFromDb });
+          const existing = readUser();
+          writeUser({ ...(existing || {}), email: emailFromDb });
+        }
+
+        if (fullNameFromDb) {
+          // optional: keep fullName in sync if admin updated it
+          setSavedProfile((p) => ({ ...p, fullName: fullNameFromDb }));
+          setDraft((p) => ({ ...p, fullName: fullNameFromDb }));
+          updateAuthUser({ fullName: fullNameFromDb, name: fullNameFromDb });
+          const existing = readUser();
+          writeUser({ ...(existing || {}), fullName: fullNameFromDb, name: fullNameFromDb });
+        }
+      } catch {
+        // ignore: offline / token expired handled elsewhere
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   const msgTimerRef = useRef(null);
   const [saving, setSaving] = useState(false);
   const [savedMsg, setSavedMsg] = useState("");

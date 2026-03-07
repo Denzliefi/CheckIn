@@ -369,6 +369,16 @@ function todayISO_LOCAL() {
   const d = new Date();
   return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 }
+
+// Booking window (UI hint only). Backend is still the source of truth.
+const MEET_BOOKING_WINDOW_DAYS = 30;
+function safeMaxDateISO() {
+  const [y, m, d] = todayISO_PH().split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d, 12));
+  dt.setUTCDate(dt.getUTCDate() + MEET_BOOKING_WINDOW_DAYS);
+  return `${dt.getUTCFullYear()}-${pad2(dt.getUTCMonth() + 1)}-${pad2(dt.getUTCDate())}`;
+}
+
 function safeMinDateISO() {
   const local = todayISO_LOCAL();
   const ph = todayISO_PH();
@@ -392,6 +402,7 @@ function getDayState(iso) {
   if (compareISO(iso, todayISO_PH()) < 0) return { ok: false, label: "Past date (not allowed)" };
   if (isHoliday(iso)) return { ok: false, label: "Holiday (No service)" };
   if (isWeekend(iso)) return { ok: false, label: "Weekend (No service)" };
+  if (compareISO(iso, safeMaxDateISO()) > 0) return { ok: false, label: "Date too far (not allowed)" };
   return { ok: true, label: "Available" };
 }
 function addDaysISO(iso, days) {
@@ -407,7 +418,7 @@ function isoToNice(iso) {
 }
 function findNextWorkingDay(startISO) {
   let cur = startISO;
-  for (let i = 0; i < 90; i++) {
+  for (let i = 0; i < MEET_BOOKING_WINDOW_DAYS; i++) {
     if (getDayState(cur).ok) return cur;
     cur = addDaysISO(cur, 1);
   }
@@ -862,6 +873,7 @@ export default function Request({ onClose }) {
           items.map((c) => ({
             id: String(c.id || c._id || ""),
             name: c.name || c.fullName || "Counselor",
+            code: String(c.counselorCode || c.counselorId || c.counselorID || "").trim(),
           }))
         );
       } else {
@@ -996,7 +1008,8 @@ export default function Request({ onClose }) {
 
   function counselorStatus(onLeave, openCount) {
     if (onLeave) return "On Leave";
-    if (openCount <= 0) return "Fully Booked";
+    // When a counselor has 0 open slots (often due to leave/unavailability blocks), show as Unavailable (not "Fully Booked").
+    if (openCount <= 0) return "Unavailable";
     if (openCount <= 2) return "Limited";
     return "Available";
   }
@@ -1014,7 +1027,7 @@ export default function Request({ onClose }) {
         return { ...c, _openCount: openCount, _status: counselorStatus(false, openCount) };
       })
       .sort((a, b) => {
-        const rank = { Available: 0, Limited: 1, "Fully Booked": 2, Unavailable: 3, "Select date": 4 };
+        const rank = { Available: 0, Limited: 1, Unavailable: 2, "On Leave": 3, "Select date": 4 };
         return (rank[a._status] ?? 9) - (rank[b._status] ?? 9);
       });
   }, [meet.date, counselorsList, availabilityAny, openCountByCounselor]);
@@ -1076,7 +1089,7 @@ export default function Request({ onClose }) {
       let cur = meet.date && compareISO(meet.date, safeMinDateISO()) >= 0 ? meet.date : safeMinDateISO();
       cur = findNextWorkingDay(cur);
 
-      for (let i = 0; i < 90; i++) {
+      for (let i = 0; i < MEET_BOOKING_WINDOW_DAYS; i++) {
         const state = getDayState(cur);
         if (!state.ok) {
           cur = addDaysISO(cur, 1);
@@ -1651,6 +1664,7 @@ export default function Request({ onClose }) {
                       type="date"
                       className={inputClass}
                       min={safeMinDateISO()}
+                      max={safeMaxDateISO()}
                       value={meet.date}
                       onChange={(e) => onDateChange(e.target.value)}
                     />
@@ -1757,7 +1771,7 @@ export default function Request({ onClose }) {
                         !meet.date ||
                         !dayState.ok ||
                         c._status === "Unavailable" ||
-                        c._status === "Fully Booked";
+                        c._status === "On Leave";
 
                       const active = String(meet.counselorId) === String(c.id);
 
@@ -1788,7 +1802,7 @@ export default function Request({ onClose }) {
                                 {c.name}
                               </div>
                               <div className="text-[13.5px] font-[Lora]" style={{ color: TEXT_MUTED }}>
-                                ID: {c.id}
+                                ID: {c.code || "—"}
                               </div>
                               {meet.date && dayState.ok ? (
                                 <div className="text-[13px] font-[Lora] mt-1" style={{ color: TEXT_SOFT }}>

@@ -6,6 +6,7 @@ import { logout as doLogout } from "../../utils/auth";
 import StudentLifecycle from "./Sections/StudentLifecycle";
 import CounselorManagement from "./Sections/CounselorManagement";
 import AssignmentsReassignment from "./Sections/AssignmentsReassignment";
+import AvailabilityRequests from "./Sections/AvailabilityRequests";
 
 /* ===================== THEME ===================== */
 const BRAND = "#B9FF66"; // accent only
@@ -98,6 +99,31 @@ const IconBriefcase = ({ className }) => (
 );
 
 
+const IconCalendar = ({ className }) => (
+  <svg
+    className={className}
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    aria-hidden="true"
+  >
+    <rect x="3" y="4" width="18" height="18" rx="2" />
+    <line x1="16" y1="2" x2="16" y2="6" />
+    <line x1="8" y1="2" x2="8" y2="6" />
+    <line x1="3" y1="10" x2="21" y2="10" />
+    <path d="M8 14h.01" />
+    <path d="M12 14h.01" />
+    <path d="M16 14h.01" />
+    <path d="M8 18h.01" />
+    <path d="M12 18h.01" />
+    <path d="M16 18h.01" />
+  </svg>
+);
+
+
 const IconLogout = ({ className }) => (
   <svg
     className={className}
@@ -119,6 +145,7 @@ const IconLogout = ({ className }) => (
 const MAIN_TABS = [
   { key: "studentLifecycle", label: "Student Lifecycle", Icon: IconUsers },
   { key: "counselorManagement", label: "Counselor Management", Icon: IconBriefcase },
+  { key: "availabilityRequests", label: "Availability Requests", Icon: IconCalendar },
   { key: "assignments", label: "Analytics", Icon: IconShuffle },
 ];
 
@@ -235,7 +262,9 @@ export default function AdminDashboard() {
         return <CounselorManagement />;
       case "assignments":
         return <AssignmentsReassignment />;
-    
+      case "availabilityRequests":
+        return <AvailabilityRequests />;
+
       case "studentLifecycle":
       default:
         return <StudentLifecycle />;

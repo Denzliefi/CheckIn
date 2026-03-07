@@ -1062,6 +1062,11 @@ function ConfirmActionModal({
   reasonHint = "This will be shown to the student under “Counselor reason”.",
   reasonValue = "",
   onReasonChange,
+  showBlockOptions = false,
+  blockDay = false,
+  blockSlot = false,
+  onToggleBlockDay,
+  onToggleBlockSlot,
   error,
   onCancel,
   onConfirm,
@@ -1441,9 +1446,36 @@ const [confirmMeta, setConfirmMeta] = useState({
   reasonPlaceholder: "Write the reason for disapproval…",
   reasonHint: "This will be shown to the student under “Counselor reason”.",
   action: null,
+  showBlockOptions: false,
 });
 
 const [disapproveReasonDraft, setDisapproveReasonDraft] = useState("");
+const [disapproveBlockDay, setDisapproveBlockDay] = useState(false);
+const [disapproveBlockSlot, setDisapproveBlockSlot] = useState(true);
+const disapproveBlockDayRef = useRef(false);
+const disapproveBlockSlotRef = useRef(true);
+
+const setBlockDay = (v) => {
+  const next = !!v;
+  setDisapproveBlockDay(next);
+  disapproveBlockDayRef.current = next;
+  if (next) {
+    // If whole-day is selected, slot-block is implied.
+    setDisapproveBlockSlot(true);
+    disapproveBlockSlotRef.current = true;
+  }
+};
+
+const setBlockSlot = (v) => {
+  const next = !!v;
+  setDisapproveBlockSlot(next);
+  disapproveBlockSlotRef.current = next;
+  if (!next) {
+    setDisapproveBlockDay(false);
+    disapproveBlockDayRef.current = false;
+  }
+};
+
 const disapproveReasonRef = useRef("");
 
 const setDisapproveReason = (v) => {
@@ -1474,6 +1506,8 @@ const closeConfirm = useCallback(() => {
   setConfirmOpen(false);
   setConfirmError("");
   setDisapproveReason("");
+  setBlockDay(false);
+  setBlockSlot(true);
   setConfirmMeta((prev) => ({ ...prev, action: null, requiresReason: false }));
 }, [confirmBusy]);
 
@@ -1745,6 +1779,8 @@ const confirmDisapprove = (r) => {
   if (!r?.id) return;
   const b = summarizeRequestBasics(r);
   setDisapproveReason("");
+  setBlockDay(false);
+  setBlockSlot(true);
   openConfirm({
     title: "Are you sure?",
     description: "Please confirm you want to disapprove this counseling request.",
@@ -1760,7 +1796,8 @@ const confirmDisapprove = (r) => {
     reasonLabel: "Counselor reason",
     reasonPlaceholder: "Write the reason for disapproval…",
     reasonHint: "This will be shown to the student under “Counselor reason”.",
-    action: async () => disapproveRequest(r, disapproveReasonRef.current),
+    showBlockOptions: true,
+    action: async () => disapproveRequest(r, disapproveReasonRef.current, { blockDay: disapproveBlockDayRef.current, blockSlot: disapproveBlockSlotRef.current, blockType: "Unavailable" }),
   });
 };
 
@@ -1905,13 +1942,13 @@ const approveRequest = async (r, opts = {}) => {
   }
 };
 
-const disapproveRequest = async (r, reasonText) => {
+const disapproveRequest = async (r, reasonText, opts = {}) => {
   if (!r?.id) return;
   const reason = String(reasonText || "").trim();
   try {
     await apiFetch(`/api/counseling/admin/requests/${r.id}/disapprove`, {
       method: "PATCH",
-      body: JSON.stringify({ reason: reason || "Disapproved." }),
+      body: JSON.stringify({ reason: reason || "Disapproved.", blockDay: !!opts.blockDay, blockSlot: !!opts.blockSlot, blockType: opts.blockType || "Unavailable" }),
     });
     await refreshAfterAction();
   } catch (e) {
@@ -2091,6 +2128,11 @@ function addMinutesToTime(timeStr, addMins = 60) {
         reasonHint={confirmMeta.reasonHint}
         reasonValue={disapproveReasonDraft}
         onReasonChange={setDisapproveReason}
+        showBlockOptions={!!confirmMeta.showBlockOptions}
+        blockDay={disapproveBlockDay}
+        blockSlot={disapproveBlockSlot}
+        onToggleBlockDay={setBlockDay}
+        onToggleBlockSlot={setBlockSlot}
         error={confirmError}
         onCancel={closeConfirm}
         onConfirm={runConfirmed}

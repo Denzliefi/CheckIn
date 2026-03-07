@@ -8,6 +8,7 @@ import { getCounselorDashboardStats } from "./counselor.api";
 import Inbox from "./Sections/Inbox";
 import MeetRequests from "./Sections/MeetRequests";
 import Calendar from "./Sections/Calendar";
+import Availability from "./Sections/Availability";
 import Phq from "./Sections/Phq";
 import AccountSettings from "./Sections/AccountSettings";
 import Logout from "./Sections/Logout";
@@ -177,6 +178,7 @@ const MAIN_TABS = [
   { key: "inbox", label: "Inbox", Icon: IconInbox },
   { key: "meet", label: "Meet Requests", Icon: IconMeet },
   { key: "calendar", label: "Calendar", Icon: IconCalendar },
+  { key: "availability", label: "Availability", Icon: IconCalendar },
   { key: "phq", label: "PHQ", Icon: IconPHQ },
   { key: "students", label: "Student Accounts", Icon: IconUsers },
 ];
@@ -311,6 +313,8 @@ export default function CounselorDashboard() {
         return <MeetRequests />;
       case "calendar":
         return <Calendar />;
+      case "availability":
+        return <Availability />;
       case "phq":
         return <Phq />;
       case "students":
