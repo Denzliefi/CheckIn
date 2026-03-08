@@ -1,6 +1,6 @@
 // src/pages/Services/SessionType/Request.js
 import React, { useMemo, useState, useEffect, useCallback, useRef } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 
 import MessagesDrawer from "../../../components/Message/MessagesDrawer";
 import FloatingMessagesPill from "../../../components/Message/FloatingMessagesPill";
@@ -371,18 +371,20 @@ function todayISO_LOCAL() {
 }
 
 // Booking window (UI hint only). Backend is still the source of truth.
-const MEET_BOOKING_WINDOW_DAYS = 30;
 function safeMaxDateISO() {
   const [y, m, d] = todayISO_PH().split("-").map(Number);
-  const dt = new Date(Date.UTC(y, m - 1, d, 12));
-  dt.setUTCDate(dt.getUTCDate() + MEET_BOOKING_WINDOW_DAYS);
-  return `${dt.getUTCFullYear()}-${pad2(dt.getUTCMonth() + 1)}-${pad2(dt.getUTCDate())}`;
+  const lastDay = new Date(Date.UTC(y, m, 0, 12));
+  return `${lastDay.getUTCFullYear()}-${pad2(lastDay.getUTCMonth() + 1)}-${pad2(lastDay.getUTCDate())}`;
 }
 
 function safeMinDateISO() {
   const local = todayISO_LOCAL();
   const ph = todayISO_PH();
   return compareISO(local, ph) > 0 ? local : ph;
+}
+function isCurrentMonthPH(iso) {
+  if (!iso) return false;
+  return String(iso).slice(0, 7) === String(todayISO_PH()).slice(0, 7);
 }
 function dayOfWeekFromISO(iso) {
   const [y, m, d] = iso.split("-").map(Number);
@@ -402,7 +404,8 @@ function getDayState(iso) {
   if (compareISO(iso, todayISO_PH()) < 0) return { ok: false, label: "Past date (not allowed)" };
   if (isHoliday(iso)) return { ok: false, label: "Holiday (No service)" };
   if (isWeekend(iso)) return { ok: false, label: "Weekend (No service)" };
-  if (compareISO(iso, safeMaxDateISO()) > 0) return { ok: false, label: "Date too far (not allowed)" };
+  if (!isCurrentMonthPH(iso)) return { ok: false, label: "Current month only" };
+  if (compareISO(iso, safeMaxDateISO()) > 0) return { ok: false, label: "Current month only" };
   return { ok: true, label: "Available" };
 }
 function addDaysISO(iso, days) {
@@ -418,12 +421,41 @@ function isoToNice(iso) {
 }
 function findNextWorkingDay(startISO) {
   let cur = startISO;
-  for (let i = 0; i < MEET_BOOKING_WINDOW_DAYS; i++) {
+  for (let i = 0; i < 31; i++) {
     if (getDayState(cur).ok) return cur;
     cur = addDaysISO(cur, 1);
   }
   return startISO;
 }
+function getPHWeekRangeLocal(yyyyMmDd) {
+  const d = new Date(`${yyyyMmDd}T00:00:00+08:00`);
+  if (Number.isNaN(d.getTime())) return { weekStart: yyyyMmDd, weekEnd: yyyyMmDd };
+  const dow = d.getUTCDay();
+  const diffToMon = (dow + 6) % 7;
+  const monday = new Date(d);
+  monday.setUTCDate(monday.getUTCDate() - diffToMon);
+  const sunday = new Date(monday);
+  sunday.setUTCDate(sunday.getUTCDate() + 6);
+  const toPH = (dt) => dt.toLocaleDateString("en-CA", { timeZone: "Asia/Manila" });
+  return { weekStart: toPH(monday), weekEnd: toPH(sunday) };
+}
+
+
+function getStudentWeeklyRescheduleUsage(items, targetDateISO, currentRequestId = "") {
+  const list = Array.isArray(items) ? items : [];
+  const dateISO = String(targetDateISO || "").trim();
+  if (!dateISO) return false;
+  const { weekStart, weekEnd } = getPHWeekRangeLocal(dateISO);
+  return list.some((r) => {
+    if (!r) return false;
+    if (String(r.type || "") !== "MEET") return false;
+    if (String(r.rescheduleInitiator || "") !== "Student") return false;
+    const d = String(r.date || "").trim();
+    if (!d || d < weekStart || d > weekEnd) return false;
+    return true;
+  });
+}
+
 function getReviewInfoPH() {
   const today = todayISO_PH();
   const ds = getDayState(today);
@@ -454,6 +486,7 @@ function getReviewInfoPH() {
 /* ===================== COMPONENT ===================== */
 export default function Request({ onClose }) {
   const navigate = useNavigate();
+  const location = useLocation();
 
   // ✅ Restored identity for drawer to skip email UI
   const [userIdentity, setUserIdentity] = useState(() => readLoggedInIdentity());
@@ -507,6 +540,9 @@ export default function Request({ onClose }) {
     }
   });
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
+  const [summaryRequest, setSummaryRequest] = useState(null);
+  const [studentRescheduleUsed, setStudentRescheduleUsed] = useState(false);
+  const lastSummaryRef = useRef(null);
 
   // ✅ Pending lock enforced by backend
   const [pendingLocked, setPendingLocked] = useState(false);
@@ -517,27 +553,51 @@ export default function Request({ onClose }) {
       const data = await apiFetch("/api/counseling/requests?type=MEET");
       const items = Array.isArray(data?.items) ? data.items : [];
 
+      const today = todayISO_PH();
+      const nowT = nowHHMM_PH();
+
       const active = items.find((r) => {
         if (!r) return false;
         const type = String(r.type || "");
         if (type !== "MEET") return false;
-        const status = String(r.status || "");
-        const isActive = status === "Pending" || status === "Approved";
-        const notCompleted = !r.completedAt;
-        return isActive && notCompleted;
-      });
 
-      if (active) {
+        const status = String(r.status || "");
+        const isActiveStatus = status === "Pending" || status === "Approved" || status === "Rescheduled";
+        const notCompleted = !r.completedAt;
+        if (!isActiveStatus || !notCompleted) return false;
+
+        const d = String(r.date || "").trim();
+        const t = String(r.time || "").trim();
+
+        // If schedule is missing, treat as active for safety.
+        if (!d) return true;
+
+        // Only FUTURE sessions block. Past sessions should not lock booking.
+        const cmp = compareISO(d, today);
+        if (cmp > 0) return true;
+        if (cmp < 0) return false;
+
+        // Same day: compare times (24h HH:MM)
+        const t24 = to24h(t);
+        if (!t24) return true; // unknown time -> be safe
+        return t24 >= nowT;
+      });
+if (active) {
         setPendingLocked(true);
-        setPendingLockReason("You have an active request. Please wait for it to be processed.");
-        setCurrentRequest((prev) => (prev && String(prev.id) === String(active.id) ? prev : active));
+        setPendingLockReason("You already have an active upcoming request. You can review it below until the scheduled session passes.");
+        setCurrentRequest((prev) => (prev && String(prev.id) === String(active.id) ? { ...prev, ...active } : active));
+        setStudentRescheduleUsed(
+          getStudentWeeklyRescheduleUsage(items, String(active.date || "").trim(), String(active.id || ""))
+        );
       } else {
         setPendingLocked(false);
         setPendingLockReason("");
+        setStudentRescheduleUsed(false);
       }
     } catch {
       setPendingLocked(false);
       setPendingLockReason("");
+      setStudentRescheduleUsed(false);
     }
   }, []);
 
@@ -943,11 +1003,49 @@ export default function Request({ onClose }) {
     const id = setInterval(() => setReviewInfo(getReviewInfoPH()), 60_000);
     return () => clearInterval(id);
   }, []);
+  const rescheduleId = useMemo(() => new URLSearchParams(location.search).get("reschedule") || "", [location.search]);
+  const isRescheduleFlow = !!rescheduleId;
+
+  useEffect(() => {
+    const bootReschedule = async () => {
+      if (!rescheduleId) return;
+      try {
+        const data = await apiFetch(`/api/counseling/requests/${rescheduleId}`);
+        if (!data?.id || String(data.type || "") !== "MEET") return;
+        setMeetError("");
+        setMeetSuccess("");
+        setCurrentRequest(data);
+        setSummaryRequest(data);
+        setStudentRescheduleUsed(String(data?.rescheduleInitiator || "") === "Student");
+        setMeet((prev) => ({
+          ...prev,
+          sessionType: data.sessionType || prev.sessionType,
+          reason: data.reason || prev.reason,
+          counselorId: data.counselorId?._id ? String(data.counselorId._id) : String(data.counselorId || prev.counselorId || ""),
+          date: data.date || prev.date,
+          time: normalizeTo24h(data.time || prev.time || ""),
+          notes: "",
+        }));
+        setStep(3);
+      } catch (e) {
+        setMeetError(e?.message || "Failed to load request for rescheduling.");
+      }
+    };
+    bootReschedule();
+  }, [rescheduleId]);
 
   // Keep pending lock fresh
   useEffect(() => {
     refreshPendingLock();
   }, [refreshPendingLock]);
+
+  useEffect(() => {
+    const candidate = summaryRequest || currentRequest;
+    if (!candidate) return;
+    if (candidate.sessionType || candidate.reason || candidate.date || candidate.time || candidate.notes) {
+      lastSummaryRef.current = candidate;
+    }
+  }, [summaryRequest, currentRequest]);
 
   // Backward compatibility: store legacy currentRequest into shared list once
   useEffect(() => {
@@ -1089,7 +1187,7 @@ export default function Request({ onClose }) {
       let cur = meet.date && compareISO(meet.date, safeMinDateISO()) >= 0 ? meet.date : safeMinDateISO();
       cur = findNextWorkingDay(cur);
 
-      for (let i = 0; i < MEET_BOOKING_WINDOW_DAYS; i++) {
+      for (let i = 0; i < 31; i++) {
         const state = getDayState(cur);
         if (!state.ok) {
           cur = addDaysISO(cur, 1);
@@ -1109,7 +1207,7 @@ export default function Request({ onClose }) {
         cur = addDaysISO(cur, 1);
       }
 
-      setMeetError("No available dates found in the next 90 days. Please try again later.");
+      setMeetError("No available dates found within the current month. Please try again later.");
     } catch (e) {
       setMeetError(e?.message || "Failed to find the next available date.");
     } finally {
@@ -1200,19 +1298,19 @@ export default function Request({ onClose }) {
 
   // Hard lock: if pendingLocked and user is in booking steps, push to success view
   useEffect(() => {
-    if (!pendingLocked) return;
+    if (!pendingLocked || isRescheduleFlow) return;
     if (step >= 1 && step <= 5) {
       setMeetError("");
-      setMeetSuccess("You already have a pending request. Cancel it first before booking a new one.");
+      setMeetSuccess("Your active request is shown below. You can book another session once the scheduled meeting has passed.");
       setStep(6);
     }
-  }, [pendingLocked, step]);
+  }, [pendingLocked, step, isRescheduleFlow]);
 
   const goNext = () => {
     clearMeetFeedback();
 
-    if (pendingLocked) {
-      setMeetSuccess("You already have a pending request. Cancel it first before booking a new one.");
+    if (pendingLocked && !isRescheduleFlow) {
+      setMeetSuccess("Your active request is shown below. You can book another session once the scheduled meeting has passed.");
       return setStep(6);
     }
 
@@ -1234,8 +1332,8 @@ export default function Request({ onClose }) {
     clearMeetFeedback();
     if (meetSubmitting) return;
 
-    if (pendingLocked) {
-      setMeetError(pendingLockReason || "You already have an active request. Please wait for it to be processed.");
+    if (pendingLocked && !isRescheduleFlow) {
+      setMeetError(pendingLockReason || "You already have an active upcoming request. Please wait until the scheduled meeting has passed or cancel it if needed.");
       return;
     }
 
@@ -1294,29 +1392,54 @@ export default function Request({ onClose }) {
       };
       if (assigned?.id) payload.counselorId = assigned.id;
 
-      const created = await apiFetch("/api/counseling/requests/meet", {
-        method: "POST",
-        body: JSON.stringify(payload),
-      });
+      const created = isRescheduleFlow && currentRequest?.id
+        ? await apiFetch(`/api/counseling/requests/${currentRequest.id}/reschedule`, {
+            method: "PATCH",
+            body: JSON.stringify(payload),
+          })
+        : await apiFetch("/api/counseling/requests/meet", {
+            method: "POST",
+            body: JSON.stringify(payload),
+          });
 
       const createdCounselorId = created?.counselorId?._id
         ? String(created.counselorId._id)
         : String(created?.counselorId || "");
 
+      const matchedCounselor = createdCounselorId
+        ? counselorsList.find((c) => String(c.id) === createdCounselorId)
+        : assigned || null;
+
       const createdCounselorName =
         created?.counselorName ||
-        (createdCounselorId ? counselorsList.find((c) => String(c.id) === createdCounselorId)?.name : "") ||
+        matchedCounselor?.name ||
         assigned?.name ||
         "";
 
-      const createdForUI =
-        createdCounselorName && !created?.counselorName
-          ? { ...created, counselorName: createdCounselorName, counselorId: createdCounselorId || created?.counselorId }
-          : created;
+      const createdCounselorCode =
+        String(created?.counselorCode || matchedCounselor?.code || assigned?.code || "").trim();
 
-      setMeetSuccess("Request submitted!");
+      const createdForUI = {
+        ...created,
+        counselorId: createdCounselorId || created?.counselorId,
+        counselorName: createdCounselorName || created?.counselorName || "",
+        counselorCode: createdCounselorCode,
+      };
+
+      setMeetSuccess(
+        isRescheduleFlow
+          ? "Reschedule request sent. Your reschedule request is pending counselor approval."
+          : "Request submitted!"
+      );
       setCurrentRequest(createdForUI);
+      setSummaryRequest(createdForUI);
+      setStudentRescheduleUsed(
+        isRescheduleFlow
+          ? true
+          : getStudentWeeklyRescheduleUsage([createdForUI], String(createdForUI?.date || meet.date || "").trim(), String(createdForUI?.id || ""))
+      );
       setStep(6);
+      if (isRescheduleFlow) navigate("/services/counseling/request", { replace: true });
 
       // Keep legacy ViewRequest local cache in sync (safe fallback)
       upsertRequest({
@@ -1346,7 +1469,21 @@ export default function Request({ onClose }) {
     "w-full min-h-[70vh] flex items-center justify-center px-4 pt-8 " +
     (pillUnlocked && termsAccepted ? "pb-24" : "pb-8");
 
-  const displayReq = currentRequest || null;
+  const displayReq = summaryRequest || currentRequest || null;
+  const displaySummary =
+    displayReq && (displayReq.sessionType || displayReq.reason || displayReq.date || displayReq.time || displayReq.notes)
+      ? displayReq
+      : lastSummaryRef.current || null;
+  const canStudentRescheduleCurrent =
+    !!displayReq &&
+    ["Pending", "Approved", "Rescheduled"].includes(String(displayReq.status || "")) &&
+    !studentRescheduleUsed &&
+    !isRescheduleFlow;
+  const beginStudentReschedule = useCallback(() => {
+    if (!displayReq?.id || !canStudentRescheduleCurrent) return;
+    navigate(`/services/counseling/request?reschedule=${displayReq.id}`);
+  }, [navigate, displayReq, canStudentRescheduleCurrent]);
+
   const isOverlayOpen = showTerms || showCancelConfirm;
 
   return (
@@ -1419,9 +1556,14 @@ export default function Request({ onClose }) {
 
                   patchRequest(displayReq.id, { status: "Canceled", canceledAt: new Date().toISOString() });
 
+                  const canceledSnapshot = displayReq
+                    ? { ...displayReq, status: "Canceled", canceledAt: new Date().toISOString(), updatedAt: new Date().toISOString() }
+                    : null;
+
                   setCurrentRequest((prev) =>
                     prev ? { ...prev, status: "Canceled", canceledAt: Date.now(), updatedAt: Date.now() } : prev
                   );
+                  setSummaryRequest(canceledSnapshot);
 
                   setMeetSuccess("Request canceled.");
                   setStep(6);
@@ -1513,10 +1655,10 @@ export default function Request({ onClose }) {
                     <div className="flex items-start justify-between gap-3">
                       <div>
                         <div className="font-[Nunito] font-extrabold text-[16.5px]" style={{ color: TEXT_MAIN }}>
-                          You already have a pending request
+                          You already have an active request
                         </div>
                         <div className="mt-1 font-[Lora] text-[15px]" style={{ color: TEXT_MUTED }}>
-                          Please cancel it first before booking a new session.
+                          You can review its status here. You can book another session once this schedule has passed or the request is cancelled.
                         </div>
                       </div>
                       <button type="button" onClick={() => setStep(6)} className={miniBtn}>
@@ -1539,13 +1681,13 @@ export default function Request({ onClose }) {
                   <BigChoiceCard
                     accent={LOGIN_PRIMARY}
                     title="Book a Session"
-                    subtitle={pendingLocked ? "Disabled while a request is pending" : "Face-to Face or Online step-by-step booking"}
+                    subtitle={pendingLocked ? "Disabled while an active request is still upcoming" : "Face-to Face or Online step-by-step booking"}
                     icon={<CalendarIcon accent={LOGIN_PRIMARY} />}
                     disabled={!termsAccepted || pendingLocked}
                     onClick={() =>
                       requireTermsOr(() => {
                         if (pendingLocked) {
-                          setMeetSuccess("You already have a pending request. Cancel it first before booking a new one.");
+                          setMeetSuccess("Your active request is shown below. You can book another session once the scheduled meeting has passed.");
                           setStep(6);
                           return;
                         }
@@ -1619,7 +1761,7 @@ export default function Request({ onClose }) {
                   rightLabel="Continue"
                   onLeft={goBack}
                   onRight={goNext}
-                  rightDisabled={!canContinue || pendingLocked}
+                  rightDisabled={!canContinue || (pendingLocked && !isRescheduleFlow)}
                 />
               </LessonCard>
             ) : null}
@@ -1643,7 +1785,7 @@ export default function Request({ onClose }) {
                   rightLabel="Continue"
                   onLeft={goBack}
                   onRight={goNext}
-                  rightDisabled={!canContinue || pendingLocked}
+                  rightDisabled={!canContinue || (pendingLocked && !isRescheduleFlow)}
                 />
               </LessonCard>
             ) : null}
@@ -1734,7 +1876,7 @@ export default function Request({ onClose }) {
                   rightLabel="Continue"
                   onLeft={goBack}
                   onRight={goNext}
-                  rightDisabled={!canContinue || pendingLocked}
+                  rightDisabled={!canContinue || (pendingLocked && !isRescheduleFlow)}
                 />
               </LessonCard>
             ) : null}
@@ -1903,7 +2045,7 @@ export default function Request({ onClose }) {
                   rightLabel="Continue"
                   onLeft={goBack}
                   onRight={goNext}
-                  rightDisabled={!canContinue || pendingLocked}
+                  rightDisabled={!canContinue || (pendingLocked && !isRescheduleFlow)}
                 />
               </LessonCard>
             ) : null}
@@ -1953,11 +2095,11 @@ export default function Request({ onClose }) {
                   <button
                     type="button"
                     onClick={submitMeet}
-                    disabled={pendingLocked || meetSubmitting}
+                    disabled={(pendingLocked && !isRescheduleFlow) || meetSubmitting}
                     className={[
                       primaryBtn,
                       tapClass,
-                      pendingLocked || meetSubmitting ? "opacity-60 cursor-not-allowed" : "",
+                      (pendingLocked && !isRescheduleFlow) || meetSubmitting ? "opacity-60 cursor-not-allowed" : "",
                     ].join(" ")}
                     style={{ backgroundColor: LOGIN_PRIMARY }}
                   >
@@ -1986,15 +2128,30 @@ export default function Request({ onClose }) {
 
                   <div className="relative">
                     <div className="flex items-start justify-between gap-4">
-                      <div>
+                      <div className="pr-24 sm:pr-28">
                         <div className="font-[Nunito] text-[28px] md:text-[34px] font-extrabold" style={{ color: TEXT_MAIN }}>
-                          {displayReq?.status === "Canceled" ? "Request canceled ✅" : "Request sent"}
+                          {displayReq?.status === "Canceled"
+                            ? "Request canceled"
+                            : displayReq?.status === "Approved"
+                            ? "Request approved"
+                            : displayReq?.status === "Rescheduled"
+                            ? "Request rescheduled"
+                            : displayReq?.status === "Pending" && String(displayReq?.rescheduleInitiator || "") === "Student"
+                            ? "Reschedule request sent"
+                            : "Request sent"}
                         </div>
                         <div className="mt-2 font-[Lora] text-[15.5px]" style={{ color: TEXT_MUTED }}>
-                          {meetSuccess || "You’ll receive a confirmation once approved."}
+                          {meetSuccess ||
+                            (displayReq?.status === "Approved"
+                              ? "Your request has been approved and will stay here until the session passes."
+                              : displayReq?.status === "Rescheduled"
+                              ? "Your request has been rescheduled. The updated schedule is shown below."
+                              : displayReq?.status === "Pending" && String(displayReq?.rescheduleInitiator || "") === "Student"
+                              ? "Your reschedule request is pending counselor approval."
+                              : "You’ll receive a confirmation once approved.")}
                         </div>
                       </div>
-                      <div className="hidden md:block">
+                      <div className="absolute right-0 top-0 z-10">
                         <Badge text="Nice work!" accent={LOGIN_PRIMARY} />
                       </div>
                     </div>
@@ -2005,15 +2162,18 @@ export default function Request({ onClose }) {
                       </div>
 
                       <div className="mt-2 font-[Lora] text-[15px]" style={{ color: TEXT_MUTED }}>
-                        {(displayReq?.sessionType || meet.sessionType || "—")} •{" "}
-                        {(displayReq?.reason || meet.reason || "—")} •{" "}
-                        {displayReq?.date ? isoToNice(displayReq.date) : meet.date ? isoToNice(meet.date) : "—"} •{" "}
-                        {displayReq?.time || meet.time ? formatTime12(displayReq?.time || meet.time) : "—"}
+                        {(displaySummary?.sessionType || meet.sessionType || "—")} •{" "}
+                        {(displaySummary?.reason || meet.reason || "—")} •{" "}
+                        {displaySummary?.date ? isoToNice(displaySummary.date) : meet.date ? isoToNice(meet.date) : "—"} •{" "}
+                        {displaySummary?.time || meet.time ? formatTime12(displaySummary?.time || meet.time) : "—"}
                       </div>
 
-                      {displayReq?.counselorName ? (
+                      {displaySummary?.counselorName ? (
                         <div className="mt-2 text-[14px] font-[Lora]" style={{ color: TEXT_SOFT }}>
-                          Counselor: {displayReq.counselorName} ({displayReq.counselorId})
+                          Counselor: {displaySummary.counselorName}
+                          {String(displaySummary?.counselorCode || "").trim()
+                            ? ` (${String(displaySummary.counselorCode).trim()})`
+                            : ""}
                         </div>
                       ) : null}
 
@@ -2023,9 +2183,9 @@ export default function Request({ onClose }) {
                         </div>
                       ) : null}
 
-                      {displayReq?.notes?.trim() || meet.notes?.trim() ? (
+                      {displaySummary?.notes?.trim() || meet.notes?.trim() ? (
                         <div className="mt-2 text-[14px] font-[Lora]" style={{ color: TEXT_SOFT }}>
-                          Notes: {displayReq?.notes || meet.notes}
+                          Notes: {displaySummary?.notes || meet.notes}
                         </div>
                       ) : null}
                     </div>
@@ -2043,12 +2203,26 @@ export default function Request({ onClose }) {
 
                         <button
                           type="button"
-                          disabled={!currentRequest || String(currentRequest.status) !== "Pending"}
+                          disabled={!canStudentRescheduleCurrent}
+                          onClick={beginStudentReschedule}
+                          title={studentRescheduleUsed ? "You already used your one reschedule for this week." : ""}
+                          className={[
+                            ghostBtn,
+                            tapClass,
+                            !canStudentRescheduleCurrent ? "opacity-60 cursor-not-allowed" : "",
+                          ].join(" ")}
+                        >
+                          Reschedule
+                        </button>
+
+                        <button
+                          type="button"
+                          disabled={!currentRequest || !["Pending", "Approved", "Rescheduled"].includes(String(currentRequest.status || ""))}
                           onClick={() => setShowCancelConfirm(true)}
                           className={[
                             ghostBtn,
                             tapClass,
-                            !currentRequest || String(currentRequest.status) !== "Pending"
+                            !currentRequest || !["Pending", "Approved", "Rescheduled"].includes(String(currentRequest.status || ""))
                               ? "opacity-60 cursor-not-allowed"
                               : "",
                           ].join(" ")}

@@ -90,6 +90,8 @@ const STATUS = {
   DISAPPROVED: "Disapproved",
   CANCELED: "Canceled",
   RESCHEDULED: "Rescheduled",
+  COMPLETED: "Completed",
+  NO_SHOW: "No Show",
 };
 
 const SORT = {
@@ -158,6 +160,18 @@ function nowStamp() {
   const pad = (n) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
+
+function todayISO() {
+  try {
+    // "en-CA" yields YYYY-MM-DD in most modern browsers
+    return new Date().toLocaleDateString("en-CA");
+  } catch {
+    const d = new Date();
+    const pad = (n) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  }
+}
+
 
 // ✅ Normalize backend timestamps (ISO strings like 2026-02-26T03:06:33.725Z)
 // into a readable local format: "Feb 26, 2026 • 03:06 AM"
@@ -375,6 +389,8 @@ function normalizeRequestsWithCounselors(list, counselorDirectory) {
 /* ===================== BACKEND BRIDGE ===================== */
 function normalizeStatusFromApi(raw) {
   const s = String(raw || "").trim().toLowerCase();
+  if (s.includes("no show")) return STATUS.NO_SHOW;
+  if (s.includes("complete")) return STATUS.COMPLETED;
   if (s.includes("cancel")) return STATUS.CANCELED;
   if (s.includes("resched")) return STATUS.RESCHEDULED;
   if (s.includes("disapprove")) return STATUS.DISAPPROVED;
@@ -449,6 +465,13 @@ function normalizeApiMeetRequest(raw, counselorDirectory) {
     id,
     status,
     disapprovalReason: String(raw.disapprovalReason || "").trim(),
+    rescheduleNote: String(raw.rescheduleNote || "").trim(),
+    approvalBlocked: !!raw.approvalBlocked,
+    approvalBlockReason: String(raw.approvalBlockReason || "").trim(),
+    approvalBlockType: String(raw.approvalBlockType || "").trim(),
+    scheduleConflict: !!raw.scheduleConflict,
+    scheduleConflictReason: String(raw.scheduleConflictReason || "").trim(),
+    scheduleConflictType: String(raw.scheduleConflictType || "").trim(),
     date,
     time,
     mode,
@@ -491,145 +514,6 @@ function isTwoHoursBeforeSession(dateStr, timeStr) {
   const startMs = toSessionStartMs(dateStr, timeStr);
   if (!startMs) return true;
   return Date.now() <= startMs - 2 * 60 * 60 * 1000;
-}
-
-/* ===================== EMAIL (GMAIL COMPOSE) ===================== */
-function buildRescheduleEmailContent({
-  studentName,
-  oldDate,
-  oldTime,
-  oldMode,
-  newDate,
-  newTime,
-  newMode,
-  counselorName,
-  counselorCampus,
-  studentCampus,
-}) {
-  const name = String(studentName || "").trim() || "Student";
-  const subject = "Rescheduled Counseling Appointment";
-
-  const { campus, office } = getOfficeMeta(counselorCampus, studentCampus);
-  const isF2F = String(newMode || "").toLowerCase().includes("in-person");
-
-  const lines = [
-    `Hi ${name},`,
-    "I hope you’re doing well.",
-    "",
-    "This is to confirm that your counseling appointment has been rescheduled.",
-    "",
-    "New appointment",
-    `• Date: ${newDate}`,
-    `• Time: ${newTime}`,
-    `• Mode: ${isF2F ? "Face-to-Face (In-person)" : "Online"}`,
-  ];
-
-  if (isF2F) {
-    lines.push(`• Campus: ${campus}`, `• Office: ${office}`, "• Please arrive 5–10 minutes early.");
-  } else {
-    lines.push("• Tip: Please ensure you have a stable internet connection.");
-  }
-
-  lines.push(
-    "",
-    "Previous appointment",
-    `• Date: ${oldDate}`,
-    `• Time: ${oldTime}`,
-    `• Mode: ${String(oldMode || "").toLowerCase().includes("in-person") ? "Face-to-Face (In-person)" : oldMode}`,
-    "",
-    "If this schedule doesn’t work for you, please reply to this email so we can arrange another available time.",
-    "",
-    "Thank you,",
-    counselorName ? `${counselorName}` : "Guidance Counselor",
-    "Guidance & Counseling Office"
-  );
-
-  return { subject, body: lines.join("\n") };
-}
-
-
-function buildApprovalEmailContent({
-  studentName,
-  date,
-  time,
-  mode,
-  meetLink,
-  counselorName,
-  counselorCampus,
-  studentCampus,
-  reason,
-}) {
-  const name = String(studentName || "").trim() || "Student";
-  const subject = "Approved Counseling Appointment";
-
-  const isF2F = String(mode || "").toLowerCase().includes("in-person");
-  const lines = [
-    `Hi ${name},`,
-    "I hope you’re doing well.",
-    "",
-    "Your counseling appointment has been approved. Please see the details below:",
-    "",
-    "Appointment details",
-    `• Date: ${date || "—"}`,
-    `• Time: ${time || "—"}`,
-    `• Mode: ${isF2F ? "Face-to-Face (In-person)" : "Online"}`,
-  ];
-
-  if (reason) lines.push(`• Reason: ${reason}`);
-
-  if (isF2F) {
-    const { campus, office } = getOfficeMeta(counselorCampus, studentCampus);
-    lines.push(`• Campus: ${campus}`, `• Office: ${office}`, "• Please arrive 5–10 minutes early.");
-  } else {
-    const link = String(meetLink || "").trim();
-    lines.push("");
-    lines.push("Google Meet link");
-    lines.push(`• ${link || "Link will be provided shortly."}`);
-    lines.push("", "• Tip: Please ensure you have a stable internet connection.");
-  }
-
-  lines.push(
-    "",
-    "If you have any questions or need to adjust your schedule, please reply to this email as soon as possible.",
-    "",
-    "Thank you,",
-    counselorName ? `${counselorName}` : "Guidance Counselor",
-    "Guidance & Counseling Office"
-  );
-
-  return { subject, body: lines.join("\n") };
-}
-
-function buildGmailComposeUrl({ to, subject, body }) {
-  const email = String(to || "").trim();
-  if (!email) return "";
-  const qs = new URLSearchParams({
-    view: "cm",
-    fs: "1",
-    to: email,
-    su: subject || "",
-    body: body || "",
-    tf: "1",
-  });
-  return `https://mail.google.com/mail/?${qs.toString()}`;
-}
-
-function buildMailtoUrl({ to, subject, body }) {
-  const email = String(to || "").trim();
-  if (!email) return "";
-  return `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent(subject || "")}&body=${encodeURIComponent(body || "")}`;
-}
-
-function openGmailComposeOrMailto({ to, subject, body }) {
-  const gmailUrl = buildGmailComposeUrl({ to, subject, body });
-  const mailtoUrl = buildMailtoUrl({ to, subject, body });
-  if (!isBrowser()) return;
-
-  if (gmailUrl) {
-    const win = window.open(gmailUrl, "_blank", "noopener,noreferrer");
-    if (win) return;
-  }
-  if (mailtoUrl) window.location.href = mailtoUrl;
 }
 
 /* ===================== MOBILE SHEET UTIL ===================== */
@@ -1165,125 +1049,6 @@ function ConfirmActionModal({
 
 
 
-function MeetLinkBeforeApproveModal({
-  open,
-  busy,
-  requestSummaryLines = [],
-  meetLink,
-  emailTo,
-  emailOpened,
-  error,
-  onMeetLinkChange,
-  onOpenEmail,
-  onCancel,
-  onProceed,
-}) {
-  const isMobile = useIsMobileSm();
-  useBodyScrollLock(open);
-
-  useEffect(() => {
-    if (!open) return undefined;
-    const onKey = (e) => {
-      if (e.key === "Escape") onCancel?.();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onCancel]);
-
-  if (!open || typeof document === "undefined") return null;
-
-  const card = (
-    <div
-      className={[
-        "pointer-events-auto bg-white shadow-2xl border border-slate-200",
-        "w-full sm:w-[600px]",
-        "rounded-2xl overflow-hidden",
-      ].join(" ")}
-      role="dialog"
-      aria-modal="true"
-      aria-label="Send meeting link"
-      onPointerDown={(e) => e.stopPropagation()}
-    >
-      <div className="px-4 sm:px-6 py-5">
-        <div className="text-base sm:text-lg font-semibold text-slate-900">Send meeting link first</div>
-        <div className="mt-1 text-sm font-medium text-slate-600">
-          For <b>Online</b> sessions, please send the Google Meet link to the student before approving.
-        </div>
-
-        <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-          {Array.isArray(requestSummaryLines) && requestSummaryLines.length ? (
-            <ul className="list-disc pl-5 space-y-1 text-sm font-medium text-slate-700">
-              {requestSummaryLines.map((line, i) => (
-                <li key={i} className="break-words">{line}</li>
-              ))}
-            </ul>
-          ) : (
-            <div className="text-sm font-medium text-slate-700">No details available.</div>
-          )}
-        </div>
-
-        <div className="mt-4 space-y-2">
-          <div className="text-xs font-bold text-slate-500">Student email</div>
-          <div className="text-sm font-extrabold text-slate-800 break-words">{emailTo || "—"}</div>
-        </div>
-
-        <div className="mt-4 space-y-2">
-          <div className="text-xs font-bold text-slate-500">Google Meet link</div>
-          <input
-            value={meetLink}
-            onChange={(e) => onMeetLinkChange?.(e.target.value)}
-            placeholder="https://meet.google.com/xxx-xxxx-xxx"
-            className="w-full h-11 rounded-2xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-800 outline-none focus:ring-4 focus:ring-slate-100"
-          />
-          <div className="text-[11px] font-bold text-slate-500">
-            {emailOpened ? "✅ Email draft opened. Please send it, then continue." : "Open the email draft to send the link."}
-          </div>
-        </div>
-        {error ? <div className="mt-3 text-sm font-medium text-red-600">{error}</div> : null}
-
-        <div className="mt-6 flex flex-col sm:flex-row justify-end gap-2">
-          <button
-            type="button"
-            onClick={onCancel}
-            disabled={busy}
-            className="order-3 sm:order-1 h-11 px-4 rounded-xl text-sm font-medium border border-slate-200 bg-white hover:bg-slate-50 disabled:opacity-60 transition-all outline-none focus:outline-none focus:ring-0 touch-manipulation"
-          >
-            Cancel
-          </button>
-
-          <button
-            type="button"
-            onClick={onOpenEmail}
-            disabled={busy}
-            className="order-2 sm:order-2 h-11 px-4 rounded-xl text-sm font-medium transition-all disabled:opacity-60 outline-none focus:outline-none focus:ring-0 touch-manipulation bg-slate-50 text-slate-900 border border-slate-200 hover:bg-slate-100"
-          >
-            {busy ? "Please wait..." : "Open Email Draft"}
-          </button>
-
-          <button
-            type="button"
-            onClick={onProceed}
-            disabled={busy}
-            className="order-1 sm:order-3 h-11 px-4 rounded-xl text-sm font-medium transition-all disabled:opacity-60 outline-none focus:outline-none focus:ring-0 touch-manipulation bg-slate-900 text-white hover:bg-slate-800"
-          >
-            {busy ? "Please wait..." : "Proceed to Approve"}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-
-  return createPortal(
-    <div className="fixed inset-0 z-[10010]" role="presentation">
-      <button type="button" className="absolute inset-0 bg-black/40" aria-label="Close" onClick={onCancel} />
-      <div className={["absolute inset-0 flex justify-center pointer-events-none", isMobile ? "items-end p-0" : "items-center p-6"].join(" ")}>
-        {isMobile ? <div className="pointer-events-auto w-full max-w-[680px] rounded-t-3xl overflow-hidden">{card}</div> : card}
-      </div>
-    </div>,
-    document.body
-  );
-}
-
 function Card({ title, children, className = "" }) {
   return (
     <div className={["rounded-2xl border border-slate-200 bg-white p-4 sm:p-5 shadow-sm", className].join(" ")}>
@@ -1485,10 +1250,6 @@ const setDisapproveReason = (v) => {
 };
 
 
-const [meetLinkFlowOpen, setMeetLinkFlowOpen] = useState(false);
-const [meetLinkFlowBusy, setMeetLinkFlowBusy] = useState(false);
-const [meetLinkFlowError, setMeetLinkFlowError] = useState("");
-const [meetLinkEmailOpened, setMeetLinkEmailOpened] = useState(false);
 
 const openConfirm = useCallback((meta) => {
   setConfirmError("");
@@ -1547,6 +1308,12 @@ const runConfirmed = useCallback(async () => {
   useEffect(() => {
     return () => {
       if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (meetLinkModalAlertTimerRef.current) clearTimeout(meetLinkModalAlertTimerRef.current);
     };
   }, []);
 
@@ -1653,16 +1420,12 @@ useEffect(() => {
     if (!selected) setOpenReschedule(false);
   }, [selected]);
 
-useEffect(() => {
-  if (!selected) {
-    setMeetLinkFlowOpen(false);
-    setMeetLinkFlowError("");
-    setMeetLinkEmailOpened(false);
-  }
-}, [selected]);
 
 
-    const myRequests = useMemo(() => requests, [requests]);
+    const myRequests = useMemo(
+    () => requests.filter((r) => ![STATUS.COMPLETED, STATUS.NO_SHOW].includes(String(r?.status || ""))),
+    [requests]
+  );
 
   const counts = useMemo(() => {
     const count = (s) => myRequests.filter((x) => x.status === s).length;
@@ -1749,17 +1512,32 @@ const summarizeRequestBasics = (r) => {
   return { name, sid, when, mode, reason };
 };
 
+const getApproveBlockMessage = (r) => {
+  const base = String(r?.approvalBlockReason || "").trim();
+  return base || "Counselor is unavailable for the selected date/time.";
+};
+
+const getScheduleConflictMessage = (r) => {
+  const base = String(r?.scheduleConflictReason || "").trim();
+  return base || "This appointment now overlaps an approved leave or unavailable block.";
+};
+
 const confirmApprove = (r) => {
   if (!r?.id) return;
-
-  // ✅ Online flow: require sending meeting link before approving
-  const isOnline = !String(r?.mode || "").toLowerCase().includes("in-person");
-  if (isOnline) {
-    openMeetLinkFlow(r);
+  if (r?.approvalBlocked) {
+    doToast("amber", getApproveBlockMessage(r));
     return;
   }
 
   const b = summarizeRequestBasics(r);
+  const isOnline = !String(r?.mode || "").toLowerCase().includes("in-person");
+  const link = isOnline ? String((selected?.id === r.id ? meetLinkDraft : r?.meetLink) || "").trim() : "";
+
+  if (isOnline && !link) {
+    showMeetLinkModalAlert("Please paste the Google Meet link before approving this online request.");
+    return;
+  }
+
   openConfirm({
     title: "Are you sure?",
     description: "Please confirm you want to approve this counseling request.",
@@ -1769,6 +1547,7 @@ const confirmApprove = (r) => {
       `Schedule: ${b.when}`,
       `Mode: ${b.mode}`,
       `Reason: ${b.reason}`,
+      ...(isOnline ? [`Meeting link: ${link}`] : []),
     ],
     confirmText: "Continue",
     action: async () => approveRequest(r),
@@ -1822,6 +1601,7 @@ const confirmReschedule = () => {
       `Student: ${b.name} (${b.sid})`,
       `From: ${selected.date} • ${selected.time} • ${b.mode}`,
       `To: ${nextDate} • ${nextTime} • ${nextModeLabel}`,
+      `Counselor reason: ${String(reschedReasonDraft || "").trim() || "—"}`,
     ],
     confirmText: "Continue",
     action: async () => confirmRescheduleAndEmail(),
@@ -1830,97 +1610,13 @@ const confirmReschedule = () => {
 
 
 
-const openMeetLinkFlow = (r) => {
-  if (!r?.id) return;
-  // ensure we're working with the same selected request
-  setMeetLinkFlowError("");
-  setMeetLinkEmailOpened(false);
-  setMeetLinkFlowOpen(true);
-  setMeetLinkDraft(String(r.meetLink || ""));
-};
-
-const closeMeetLinkFlow = () => {
-  if (meetLinkFlowBusy) return;
-  setMeetLinkFlowOpen(false);
-  setMeetLinkFlowError("");
-  setMeetLinkEmailOpened(false);
-};
-
-const openApprovalEmailDraft = () => {
-  if (!selected?.id) return;
-  const link = String(meetLinkDraft || "").trim();
-  if (!link) {
-    setMeetLinkFlowError("Please paste the Google Meet link first.");
-    return;
-  }
-  if (!/^https?:\/\//i.test(link)) {
-    setMeetLinkFlowError("Please enter a valid link (must start with http/https).");
-    return;
-  }
-
-  const to = String(selected.student?.email || "").trim();
-  if (!to) {
-    setMeetLinkFlowError("Student email is missing.");
-    return;
-  }
-
-  const { subject, body } = buildApprovalEmailContent({
-    studentName: selected.student?.name,
-    date: selected.date,
-    time: selected.time,
-    mode: selected.mode,
-    meetLink: link,
-    counselorName: selected.counselor?.name,
-    counselorCampus: selected.counselor?.campus,
-    studentCampus: selected.student?.campus,
-    reason: selected.reason,
-  });
-
-  openGmailComposeOrMailto({ to, subject, body });
-  setMeetLinkEmailOpened(true);
-  setMeetLinkFlowError("");
-};
-
-const proceedApproveOnline = () => {
-  if (!selected?.id) return;
-
-  const link = String(meetLinkDraft || "").trim();
-  if (!link) {
-    setMeetLinkFlowError("Meet link is required for Online sessions.");
-    return;
-  }
-  if (!meetLinkEmailOpened) {
-    setMeetLinkFlowError("Please click “Open Email Draft” to send the meeting link first.");
-    return;
-  }
-
-  // Close the link step, then show final confirmation
-  setMeetLinkFlowOpen(false);
-  setMeetLinkFlowError("");
-
-  const b = summarizeRequestBasics(selected);
-  openConfirm({
-    title: "Are you sure?",
-    description: "Please confirm the details are correct before approving.",
-    summaryLines: [
-      `Status: "${selected.status}" → "${STATUS.APPROVED}"`,
-      `Student: ${b.name} (${b.sid})`,
-      `Schedule: ${b.when}`,
-      `Mode: ${b.mode}`,
-      `Reason: ${b.reason}`,
-      `Meeting link: ${link}`,
-    ],
-    confirmText: "Continue",
-    action: async () => approveRequest(selected, { meetingLink: link }),
-  });
-};
 
 const refreshAfterAction = async () => {
   await fetchMeetRequests();
   dispatchMeetRequestsUpdated();
 };
 
-const approveRequest = async (r, opts = {}) => {
+const approveRequest = async (r) => {
   if (!r?.id) return;
   syncCalendarSelectedDate(r.date); // ✅ Calendar auto-select this date
   try {
@@ -1928,8 +1624,12 @@ const approveRequest = async (r, opts = {}) => {
 
     const isOnline = !String(r?.mode || "").toLowerCase().includes("in-person");
     if (isOnline) {
-      const link = String(opts.meetingLink ?? meetLinkDraft ?? "").trim();
-      if (link) payload.meetingLink = link;
+      const link = String((selected?.id === r.id ? meetLinkDraft : (r?.meetLink || r?.meetingLink)) || "").trim();
+      if (!link) {
+        showMeetLinkModalAlert("Please paste the Google Meet link before approving this online request.");
+        return;
+      }
+      payload.meetingLink = link;
     }
 
     await apiFetch(`/api/counseling/admin/requests/${r.id}/approve`, {
@@ -1982,9 +1682,25 @@ function addMinutesToTime(timeStr, addMins = 60) {
 
 
   const [meetLinkDraft, setMeetLinkDraft] = useState("");
+  const [meetLinkModalAlert, setMeetLinkModalAlert] = useState("");
+  const meetLinkModalAlertTimerRef = useRef(null);
+
+  const showMeetLinkModalAlert = useCallback((message) => {
+    const msg = String(message || "").trim();
+    setMeetLinkModalAlert(msg);
+    if (meetLinkModalAlertTimerRef.current) clearTimeout(meetLinkModalAlertTimerRef.current);
+    if (!msg) return;
+    meetLinkModalAlertTimerRef.current = setTimeout(() => {
+      setMeetLinkModalAlert("");
+      meetLinkModalAlertTimerRef.current = null;
+    }, 2200);
+  }, []);
   const [reschedDateDraft, setReschedDateDraft] = useState("");
   const [reschedTimeDraft, setReschedTimeDraft] = useState(SAMPLE_TIMES[0]);
   const [reschedModeDraft, setReschedModeDraft] = useState(MODES[0]);
+  const [reschedReasonDraft, setReschedReasonDraft] = useState("");
+
+  const [reschedAvailabilityError, setReschedAvailabilityError] = useState("");
 
   useEffect(() => {
     if (!selected) return;
@@ -1992,11 +1708,59 @@ function addMinutesToTime(timeStr, addMins = 60) {
     setReschedDateDraft(String(selected.date || ""));
     setReschedTimeDraft(String(selected.time || SAMPLE_TIMES[0]));
     setReschedModeDraft(String(selected.mode || MODES[0]));
+    setReschedReasonDraft(String(selected.rescheduleNote || ""));
+    setMeetLinkModalAlert("");
   }, [selected]);
 
-    const canApproveDecline = selected?.status === STATUS.PENDING;
+  // ✅ Validate reschedule slot against counselor availability (leave/unavailable + bookings)
+  useEffect(() => {
+    let alive = true;
+
+    (async () => {
+      setReschedAvailabilityError("");
+      if (!openReschedule) return;
+      if (!selected?.id) return;
+
+      const dateISO = String(reschedDateDraft || "").trim();
+      const time12 = String(reschedTimeDraft || "").trim();
+      const counselorObjId = String(selected?.counselor?.counselorId || "").trim();
+
+      if (!dateISO || !time12 || !counselorObjId) return;
+
+      const t24 = time12To24(time12);
+      if (!t24) return;
+
+      try {
+        const data = await apiFetch(
+          `/api/counseling/availability?date=${encodeURIComponent(dateISO)}&counselorId=${encodeURIComponent(counselorObjId)}`
+        );
+        if (!alive) return;
+
+        const slots = Array.isArray(data?.slots) ? data.slots : [];
+        const slot = slots.find((s) => String(s?.time || "") === t24);
+
+        if (slot && slot.enabled === false) {
+          const reason = String(slot.reason || "").trim();
+          setReschedAvailabilityError(reason ? `Unavailable: ${reason}` : "Selected slot is unavailable.");
+        }
+      } catch (e) {
+        if (!alive) return;
+        // keep it minimal; backend is the real source of truth
+        setReschedAvailabilityError(e?.message ? String(e.message) : "Unable to validate availability.");
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, [openReschedule, selected?.id, selected?.counselor?.counselorId, reschedDateDraft, reschedTimeDraft]);
+
+
+    const canApproveDecline =
+    selected?.status === STATUS.PENDING ||
+    (selected?.status === STATUS.RESCHEDULED && selected?.rescheduleInitiator === "Student");
   const canReschedule = selected?.status !== STATUS.CANCELED && selected?.status !== STATUS.DISAPPROVED;
-    const canEditMeetLink = selected?.mode === "Online" && (selected?.status === STATUS.APPROVED || selected?.status === STATUS.RESCHEDULED);
+  const canSaveMeetLink = selected?.mode === "Online" && canApproveDecline;
 
   // Office stays dynamic-ish (for legacy data), but campus label in UI is static.
   const officeMeta = useMemo(() => getOfficeMeta(selected?.counselor?.campus, selected?.student?.campus), [selected]);
@@ -2015,11 +1779,13 @@ function addMinutesToTime(timeStr, addMins = 60) {
     if (!selected) return "";
     if (!reschedDateDraft) return "Please choose a new date.";
     if (!reschedTimeDraft) return "Please choose a new time.";
+    if (!String(reschedReasonDraft || "").trim()) return "Please enter the counselor reason.";
+    if (reschedAvailabilityError) return reschedAvailabilityError;
     if (!newScheduleOk) return "Invalid new schedule: must be at least 2 hours from now.";
     return "";
-  }, [selected, reschedDateDraft, reschedTimeDraft, newScheduleOk]);
+  }, [selected, reschedDateDraft, reschedTimeDraft, reschedReasonDraft, reschedModeDraft, meetLinkDraft, reschedAvailabilityError, newScheduleOk]);
 
-  const saveMeetLink = async () => {
+const saveMeetLink = async () => {
   if (!selected?.id) return;
   const link = String(meetLinkDraft || "").trim();
   try {
@@ -2057,17 +1823,20 @@ function addMinutesToTime(timeStr, addMins = 60) {
 
   syncCalendarSelectedDate(nextDate); // ✅ Calendar auto-select new date
 
-  const oldDate = selected.date;
-  const oldTime = selected.time;
-  const oldMode = selected.mode;
   try {
+    const payload = {
+      date: nextDate,
+      time: nextTime,
+      sessionType: nextMode,
+      note: String(reschedReasonDraft || "").trim(),
+    };
+    if (nextMode === "Online") {
+      payload.meetingLink = String(meetLinkDraft || "").trim();
+    }
+
     await apiFetch(`/api/counseling/admin/requests/${selected.id}/reschedule`, {
       method: "PATCH",
-      body: JSON.stringify({
-        date: nextDate,
-        time: nextTime,
-        sessionType: nextMode,
-      }),
+      body: JSON.stringify(payload),
     });
 
     setOpenReschedule(false);
@@ -2077,23 +1846,6 @@ function addMinutesToTime(timeStr, addMins = 60) {
     return;
   }
 
-  const to = selected.student?.email;
-  if (!String(to || "").trim()) return;
-
-  const { subject, body } = buildRescheduleEmailContent({
-    studentName: normalizeStudent(selected.student, 0)?.name,
-    oldDate,
-    oldTime,
-    oldMode,
-    newDate: nextDate,
-    newTime: nextTime12,
-    newMode: nextMode,
-    counselorName: selected.counselor?.name,
-    counselorCampus: selected.counselor?.campus,
-    studentCampus: selected.student?.campus,
-  });
-
-  openGmailComposeOrMailto({ to, subject, body });
 };
 
   const emptyHint = q.trim() ? "Try a different keyword." : tab !== "All" ? "No items in this tab." : "No requests yet.";
@@ -2137,32 +1889,6 @@ function addMinutesToTime(timeStr, addMins = 60) {
         onCancel={closeConfirm}
         onConfirm={runConfirmed}
       />
-<MeetLinkBeforeApproveModal
-  open={meetLinkFlowOpen}
-  busy={meetLinkFlowBusy}
-  requestSummaryLines={[
-    `Request: #${selected?.id || "—"}`,
-    `Student: ${selected?.student?.name || "—"} (${selected?.student?.studentId || "—"})`,
-    `Schedule: ${selected?.date || "—"} • ${selected?.time || "—"}`,
-    `Reason: ${selected?.reason || "—"}`,
-  ]}
-  meetLink={meetLinkDraft}
-  emailTo={String(selected?.student?.email || "").trim()}
-  emailOpened={meetLinkEmailOpened}
-  error={meetLinkFlowError}
-  onMeetLinkChange={(v) => setMeetLinkDraft(v)}
-  onOpenEmail={() => {
-    setMeetLinkFlowBusy(true);
-    try {
-      openApprovalEmailDraft();
-    } finally {
-      setMeetLinkFlowBusy(false);
-    }
-  }}
-  onCancel={closeMeetLinkFlow}
-  onProceed={proceedApproveOnline}
-/>
-
 
 
       <section className="rounded-3xl border border-slate-200 bg-white shadow-sm flex flex-col">
@@ -2386,18 +2112,19 @@ function addMinutesToTime(timeStr, addMins = 60) {
                 <Card title="Meet link" className="lg:col-span-2">
                   {selected.mode !== "Online" ? (
                     <div className="text-sm font-semibold text-slate-700">Face-to-Face request (no Meet link needed).</div>
-                  ) : !canEditMeetLink ? (
-                    <div className="text-sm font-semibold text-slate-700">For Online sessions, click Approve to send the Google Meet link first. After approval, you can still edit it here.</div>
                   ) : (
                     <div className="space-y-3">
                       <input
                         value={meetLinkDraft}
-                        onChange={(e) => setMeetLinkDraft(e.target.value)}
+                        onChange={(e) => {
+                          setMeetLinkDraft(e.target.value);
+                          if (meetLinkModalAlert) setMeetLinkModalAlert("");
+                        }}
                         placeholder="https://meet.google.com/xxx-xxxx-xxx"
                         className="w-full h-11 rounded-2xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-800 outline-none focus:ring-4 focus:ring-slate-100"
                       />
                       <div className="flex items-center gap-2 flex-wrap">
-                        <Button onClick={saveMeetLink}>Save</Button>
+                        {canSaveMeetLink ? <Button onClick={saveMeetLink}>Save</Button> : null}
 
                         {selected.meetLink ? (
                           <>
@@ -2410,9 +2137,16 @@ function addMinutesToTime(timeStr, addMins = 60) {
                               </Button>
                             </a>
                           </>
-                        ) : (
+                        ) : canSaveMeetLink ? (
                           <div className="text-xs font-bold text-slate-500">No link yet.</div>
-                        )}
+                        ) : null}
+                      </div>
+                      <div className="text-xs font-bold text-slate-500">
+                        {canSaveMeetLink
+                          ? "Paste the Google Meet link here and click Save before approving this online request."
+                          : selected.meetLink
+                            ? "Saved Google Meet link."
+                            : "Google Meet link not yet provided."}
                       </div>
                     </div>
                   )}
@@ -2421,6 +2155,21 @@ function addMinutesToTime(timeStr, addMins = 60) {
             </div>
 
            <div className="shrink-0 border-t border-slate-200 bg-white px-4 sm:px-6 py-4 pb-[calc(env(safe-area-inset-bottom)+16px)]">
+  {selected?.scheduleConflict ? (
+    <div className="mb-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-extrabold text-rose-900">
+      Leave conflict: {getScheduleConflictMessage(selected)}
+    </div>
+  ) : null}
+  {selected?.approvalBlocked ? (
+    <div className="mb-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-extrabold text-amber-900">
+      Approve is disabled: {getApproveBlockMessage(selected)}
+    </div>
+  ) : null}
+  {meetLinkModalAlert ? (
+    <div className="mb-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-extrabold text-amber-900">
+      {meetLinkModalAlert}
+    </div>
+  ) : null}
   <div className="flex w-full flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:justify-end sm:gap-2">
     {/* Primary actions */}
     {canApproveDecline ? (
@@ -2428,8 +2177,10 @@ function addMinutesToTime(timeStr, addMins = 60) {
         <Button
           className="w-full sm:w-auto sm:order-1"
           onClick={() => confirmApprove(selected)}
+          disabled={!!selected?.approvalBlocked}
+          title={selected?.approvalBlocked ? getApproveBlockMessage(selected) : ""}
         >
-          Approve
+          {selected?.approvalBlocked ? "Approve unavailable" : "Approve"}
         </Button>
 
         {canReschedule ? (
@@ -2507,6 +2258,7 @@ function addMinutesToTime(timeStr, addMins = 60) {
                     value={reschedDateDraft}
                     onChange={(e) => setReschedDateDraft(e.target.value)}
                     type="date"
+                    min={todayISO()}
                     className="w-full h-11 rounded-2xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-800 outline-none focus:ring-4 focus:ring-slate-100"
                   />
                 </div>
@@ -2540,7 +2292,34 @@ function addMinutesToTime(timeStr, addMins = 60) {
                     ))}
                   </select>
                 </div>
+
+                {reschedModeDraft === "Online" ? (
+                  <div className="space-y-1 sm:col-span-2">
+                    <div className="text-xs font-bold text-slate-500">Meeting link</div>
+                    <input
+                      value={meetLinkDraft}
+                      onChange={(e) => setMeetLinkDraft(e.target.value)}
+                      placeholder="https://meet.google.com/xxx-xxxx-xxx"
+                      className="w-full h-11 rounded-2xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-800 outline-none focus:ring-4 focus:ring-slate-100"
+                    />
+                    <div className="mt-1 text-[11px] font-bold text-slate-500">This will be included in the reschedule email for the online session.</div>
+                  </div>
+                ) : null}
+
+                <div className="space-y-1 sm:col-span-2">
+                  <div className="text-xs font-bold text-slate-500">Counselor reason</div>
+                  <textarea
+                    value={reschedReasonDraft}
+                    onChange={(e) => setReschedReasonDraft(e.target.value)}
+                    rows={4}
+                    maxLength={600}
+                    placeholder="Write the reason for rescheduling..."
+                    className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-800 outline-none focus:ring-4 focus:ring-slate-100 resize-none"
+                  />
+                  <div className="mt-1 text-[11px] font-bold text-slate-500">This will be shown to the student under “Counselor reason”.</div>
+                </div>
               </div>
+
             </div>
 
             <div className="shrink-0 px-4 sm:px-6 py-4 border-t border-slate-200 bg-white">
@@ -2549,7 +2328,7 @@ function addMinutesToTime(timeStr, addMins = 60) {
                   Back
                 </Button>
                 <Button className="w-full sm:w-auto order-1 sm:order-2" onClick={confirmReschedule} disabled={!!reschedError}>
-                  Reschedule & Email Student
+                  Reschedule
                 </Button>
               </div>
             </div>

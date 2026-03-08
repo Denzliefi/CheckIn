@@ -52,10 +52,12 @@ function useMediaQuery(query) {
 function normalizeStatus(raw) {
   if (!raw) return "Pending";
   const s = String(raw).trim().toLowerCase();
+  if (s.includes("no show") || s.includes("noshow")) return "No Show";
   if (s.includes("cancel")) return "Canceled"; // handles Cancelled/CancelledAt
   if (s.includes("resched")) return "Rescheduled";
   if (s.includes("disapprove")) return "Disapproved";
   if (s.includes("approve")) return "Approved";
+  if (s.includes("complete")) return "Completed";
   if (s.includes("pending")) return "Pending";
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
@@ -101,6 +103,9 @@ function normalizeRequest(raw) {
     readByStudentAt: raw.readByStudentAt || "",
     cancelledAt: raw.cancelledAt || raw.canceledAt || "",
     completedAt: raw.completedAt || "",
+    noShowAt: raw.noShowAt || "",
+    rescheduleInitiator: raw.rescheduleInitiator || "",
+    rescheduleNote: raw.rescheduleNote || "",
     createdAt,
     updatedAt,
   };
@@ -138,14 +143,31 @@ function formatTime(iso) {
 
 function isPastMeeting(item) {
   if (!item || item.type !== "MEET") return false;
-  if (item.completedAt) return true;
+  if (item.completedAt || item.noShowAt || item.status === "No Show") return true;
   if (!item.date) return false;
-  const dt = parseDateOnly(item.date);
+
+  // Become "Past" as soon as the scheduled PH time passes (not the next day).
+  // date is YYYY-MM-DD, time is usually "HH:MM" (24h). We treat missing/invalid time as date-only.
+  const d = String(item.date || "").trim();
+  const tRaw = String(item.time || "").trim();
+
+  // Validate "HH:MM" (24h). If invalid, fall back to date-only.
+  const t = /^\d{1,2}:\d{2}$/.test(tRaw) ? tRaw.padStart(5, "0") : "";
+
+  if (d && t) {
+    const iso = `${d}T${t}:00+08:00`; // Asia/Manila
+    const ms = new Date(iso).getTime();
+    if (Number.isFinite(ms)) return ms < Date.now();
+  }
+
+  // Fallback: date-only (past day)
+  const dt = parseDateOnly(d);
   if (!dt) return false;
   const now = new Date();
   const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   return dt < startOfToday;
 }
+
 
 
 /* ===================== CANCEL RULES (Option B) ===================== */
@@ -192,6 +214,10 @@ function statusBadge(status) {
       return { bg: "rgba(239,68,68,0.14)", text: "#991B1B", label: "Disapproved" };
     case "Canceled":
       return { bg: "rgba(148,163,184,0.20)", text: "#334155", label: "Canceled" };
+    case "Completed":
+      return { bg: "rgba(16,185,129,0.14)", text: "#065F46", label: "Completed" };
+    case "No Show":
+      return { bg: "rgba(244,114,182,0.14)", text: "#9D174D", label: "No Show" };
     default:
       return { bg: "rgba(245,158,11,0.18)", text: "#7C2D12", label: "Pending" };
   }
@@ -207,12 +233,37 @@ function previewText(r) {
 }
 
 function canShowMeetingLink(item) {
-  return item?.type === "MEET" && item?.status === "Approved" && !!item?.meetingLink;
+  return item?.type === "MEET" && item?.sessionType === "Online" && (item?.status === "Approved" || item?.status === "Rescheduled") && !!item?.meetingLink;
 }
 
 function clamp(n, a, b) {
   return Math.max(a, Math.min(b, n));
 }
+
+function getPHWeekRange(yyyyMmDd) {
+  const d = new Date(`${yyyyMmDd}T00:00:00+08:00`);
+  if (Number.isNaN(d.getTime())) return { weekStart: yyyyMmDd, weekEnd: yyyyMmDd };
+  const dow = d.getUTCDay();
+  const diffToMon = (dow + 6) % 7;
+  const monday = new Date(d);
+  monday.setUTCDate(monday.getUTCDate() - diffToMon);
+  const sunday = new Date(monday);
+  sunday.setUTCDate(sunday.getUTCDate() + 6);
+  const toPH = (dt) => dt.toLocaleDateString("en-CA", { timeZone: "Asia/Manila" });
+  return { weekStart: toPH(monday), weekEnd: toPH(sunday) };
+}
+
+function hasStudentWeeklyReschedule(items, item) {
+  const date = String(item?.date || "").trim();
+  if (!date) return false;
+  const { weekStart, weekEnd } = getPHWeekRange(date);
+  return (Array.isArray(items) ? items : []).some((r) => {
+    const d = String(r?.date || "").trim();
+    if (!d) return false;
+    return String(r?.type || "") === "MEET" && String(r?.rescheduleInitiator || "") === "Student" && d >= weekStart && d <= weekEnd;
+  });
+}
+
 
 function buildPageModel(page, totalPages) {
   const p = clamp(page, 1, totalPages);
@@ -468,7 +519,9 @@ export default function ViewRequest() {
             onSelect={(req) => setSelectedId(req.id)}
             selectedId={selectedId}
             onCancel={(id) => cancelRequest(id)}
+            onReschedule={(req) => navigate(`/services/counseling/request?reschedule=${req.id}`)}
             busyId={busyId}
+            allItems={allRequests}
           />
 
           <Pagination page={safePage} totalPages={totalPages} onChange={(p) => setPage(clamp(p, 1, totalPages))} />
@@ -479,6 +532,10 @@ export default function ViewRequest() {
             <DetailsCard
               item={selected}
               counselorName={selected.counselorName || counselorMap[selected.counselorId] || "Any"}
+              onReschedule={() => navigate(`/services/counseling/request?reschedule=${selected.id}`)}
+              onCancel={() => cancelRequest(selected.id)}
+              cancelDisabled={busyId === selected.id}
+              rescheduleDisabled={hasStudentWeeklyReschedule(allRequests, selected)}
             />
           </CenterModal>
         )}
@@ -601,7 +658,9 @@ function ListView({
   onSelect,
   selectedId,
   onCancel,
+  onReschedule,
   busyId,
+  allItems,
 }) {
   const isEmpty = !loading && requests.length === 0;
 
@@ -682,7 +741,9 @@ function ListView({
               onClick={() => onSelect(req)}
               selected={selectedId === req.id}
               onCancel={() => onCancel(req.id)}
+              onReschedule={() => onReschedule(req)}
               cancelDisabled={busyId === req.id}
+              rescheduleDisabled={hasStudentWeeklyReschedule(allItems, req)}
             />
           ))}
         </div>
@@ -691,11 +752,13 @@ function ListView({
   );
 }
 
-function RequestRow({ request, onClick, selected, onCancel, cancelDisabled }) {
+function RequestRow({ request, onClick, selected, onCancel, onReschedule, cancelDisabled, rescheduleDisabled }) {
   const badge = statusBadge(request.status || "Pending");
-  const showCancel = request.status === "Pending" || request.status === "Approved" || request.status === "Rescheduled";
+  const isPast = isPastMeeting(request);
+  const showCancel = (request.status === "Pending" || request.status === "Approved" || request.status === "Rescheduled") && !isPast;
   const gate = cancelGate(request);
   const canCancel = gate.ok;
+  const canReschedule = !isPast && !rescheduleDisabled;
 
   return (
     <div
@@ -728,7 +791,16 @@ function RequestRow({ request, onClick, selected, onCancel, cancelDisabled }) {
       </button>
 
       {showCancel && (
-        <div className="mt-3">
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={onReschedule}
+            disabled={!canReschedule}
+            title={isPast ? "This session has already passed." : (rescheduleDisabled ? "You already used your one reschedule for this week." : "")}
+            className="cc-focus cc-clickable px-4 py-2 rounded-xl border border-gray-300 text-sm font-extrabold bg-white hover:bg-gray-50 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            Reschedule
+          </button>
           <button
             type="button"
             onClick={onCancel}
@@ -791,7 +863,7 @@ function Pagination({ page, totalPages, onChange }) {
 }
 
 /* ===================== DETAILS ===================== */
-function DetailsCard({ item, counselorName }) {
+function DetailsCard({ item, counselorName, onReschedule, onCancel, cancelDisabled, rescheduleDisabled }) {
   const isMeet = item.type === "MEET";
   const badge = statusBadge(item.status || "Pending");
   const [toast, setToast] = useState("");
@@ -838,9 +910,9 @@ function DetailsCard({ item, counselorName }) {
               <KeyValue label="Counselor" value={counselorName || "Any"} />
 
 
-              {item.status === "Disapproved" && (
-                <KeyValue label="Counselor reason" value={item.disapprovalReason || "—"} />
-              )}
+              {item.sessionType === "In-person" && (item.status === "Approved" || item.status === "Rescheduled") ? (
+                <KeyValue label="Location" value={"Guidance Counselor's office"} />
+              ) : null}
               {canShowMeetingLink(item) ? (
                 <div className="mt-2 rounded-xl border border-gray-200 bg-white p-3">
                   <div className="text-sm font-extrabold text-gray-700">Online link</div>
@@ -867,7 +939,7 @@ function DetailsCard({ item, counselorName }) {
                     </button>
                   </div>
                 </div>
-              ) : item.status === "Pending" ? (
+              ) : item.status === "Pending" && item.sessionType === "Online" ? (
                 <KeyValue label="Online link" value="Available after approval." />
               ) : null}
             </>
@@ -879,9 +951,6 @@ function DetailsCard({ item, counselorName }) {
                 value={item.counselorReply ? counselorName || "Assigned" : "Assigned when replied"}
               />
 
-              {item.status === "Disapproved" && (
-                <KeyValue label="Counselor reason" value={item.disapprovalReason || "—"} />
-              )}
             </>
           )}
 
@@ -904,6 +973,35 @@ function DetailsCard({ item, counselorName }) {
             </div>
           )}
         </Section>
+        {isMeet && ((item.status === "Rescheduled" && item.rescheduleNote) || (item.status === "Disapproved" && item.disapprovalReason)) ? (
+          <Section title="Counselor Reason">
+            <div className="text-sm text-gray-800 whitespace-pre-wrap leading-relaxed">
+              {item.status === "Rescheduled" ? item.rescheduleNote || "—" : item.disapprovalReason || "—"}
+            </div>
+          </Section>
+        ) : null}
+        {((item.status === "Pending" || item.status === "Approved" || item.status === "Rescheduled") && !isPastMeeting(item)) ? (
+          <div className="flex flex-wrap gap-2 pt-1">
+            <button
+              type="button"
+              onClick={onReschedule}
+              disabled={rescheduleDisabled}
+              title={rescheduleDisabled ? "You already used your one reschedule for this week." : ""}
+              className="cc-focus cc-clickable inline-flex items-center justify-center px-4 py-2 rounded-xl text-sm font-extrabold border border-gray-300 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Reschedule
+            </button>
+            <button
+              type="button"
+              onClick={onCancel}
+              disabled={cancelDisabled || !cancelGate(item).ok}
+              title={!cancelGate(item).ok ? cancelGate(item).reason : ""}
+              className="cc-focus cc-clickable inline-flex items-center justify-center px-4 py-2 rounded-xl text-sm font-extrabold border border-gray-300 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {cancelDisabled ? "Cancelling…" : !cancelGate(item).ok ? "Cancel (locked)" : "Cancel"}
+            </button>
+          </div>
+        ) : null}
       </div>
     </div>
   );

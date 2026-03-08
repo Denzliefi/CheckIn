@@ -585,6 +585,110 @@ function ConfirmRejectModal({
 }
 
 
+function ConflictPreviewModal({ open, busy = false, data = null, error = "", onCancel, onConfirm }) {
+  const isMobile = useIsMobileSm();
+  useBodyScrollLock(open);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onKey = (e) => {
+      if (e.key === "Escape") onCancel?.();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, onCancel]);
+
+  if (!open || !isBrowser()) return null;
+
+  const conflicts = Array.isArray(data?.conflicts) ? data.conflicts : [];
+  const summary = data?.summary || {};
+
+  const card = (
+    <div
+      className={[
+        "pointer-events-auto bg-white shadow-2xl border border-slate-200",
+        "w-full sm:w-[720px]",
+        isMobile ? "rounded-t-3xl" : "rounded-2xl",
+        "overflow-hidden",
+      ].join(" ")}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Leave conflicts detected"
+      onPointerDown={(e) => e.stopPropagation()}
+    >
+      <div className="px-4 sm:px-6 py-5">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="text-base sm:text-lg font-semibold text-slate-900">Leave conflicts detected</div>
+            <div className="mt-1 text-sm font-medium text-slate-600 break-words">
+              Approving this leave will overlap existing approved or rescheduled counseling sessions.
+            </div>
+          </div>
+          <button type="button" onClick={onCancel} disabled={busy} className="shrink-0 h-9 px-3 rounded-xl border border-slate-200 bg-white text-slate-800 text-sm font-medium hover:bg-slate-50 disabled:opacity-60">
+            Close
+          </button>
+        </div>
+
+        <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+            <div className="text-xs font-bold text-slate-500">Date affected</div>
+            <div className="mt-1 text-sm font-extrabold text-slate-800">{summary.leaveDate || "—"}</div>
+          </div>
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+            <div className="text-xs font-bold text-slate-500">Leave time</div>
+            <div className="mt-1 text-sm font-extrabold text-slate-800">{summary.leaveTimeRange || "—"}</div>
+          </div>
+          <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
+            <div className="text-xs font-bold text-amber-700">Affected appointments</div>
+            <div className="mt-1 text-sm font-extrabold text-amber-900">{conflicts.length}</div>
+          </div>
+        </div>
+
+        <div className="mt-4 rounded-2xl border border-slate-200 overflow-hidden">
+          <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 text-sm font-extrabold text-slate-800">
+            Conflicting bookings
+          </div>
+          <div className="max-h-[280px] overflow-auto">
+            {conflicts.length ? conflicts.map((row) => (
+              <div key={row.id} className="grid grid-cols-[90px_1fr] sm:grid-cols-[110px_1.4fr_120px_120px] gap-3 px-4 py-3 border-b border-slate-100 last:border-b-0 text-sm">
+                <div className="font-extrabold text-slate-800">{row.time || "—"}</div>
+                <div>
+                  <div className="font-extrabold text-slate-800 break-words">{row.studentName || "Student"}</div>
+                  <div className="text-xs font-bold text-slate-500 break-words">{row.reason || "—"}</div>
+                </div>
+                <div className="text-xs sm:text-sm font-extrabold text-slate-700">{row.status || "—"}</div>
+                <div className="text-xs sm:text-sm font-extrabold text-slate-700">{row.sessionType || "—"}</div>
+              </div>
+            )) : <div className="px-4 py-5 text-sm font-bold text-slate-500">No conflicts found.</div>}
+          </div>
+        </div>
+
+        {error ? <div className="mt-3 text-sm font-extrabold text-rose-700">{error}</div> : null}
+        <div className="mt-3 text-[12px] font-bold text-slate-500">Only conflicting bookings are shown here to keep the decision quick and readable.</div>
+
+        <div className="mt-6 flex flex-col sm:flex-row justify-end gap-2">
+          <button type="button" onClick={onCancel} disabled={busy} className="order-2 sm:order-1 h-11 px-4 rounded-xl text-sm font-medium border border-slate-200 bg-white hover:bg-slate-50 disabled:opacity-60 transition-all">
+            Cancel
+          </button>
+          <button type="button" onClick={onConfirm} disabled={busy} className="order-1 sm:order-2 h-11 px-4 rounded-xl text-sm font-medium transition-all disabled:opacity-60 bg-slate-900 text-white hover:opacity-90">
+            {busy ? "Please wait..." : "Approve anyway"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
+  return createPortal(
+    <div className="fixed inset-0 z-[10030]" role="presentation">
+      <button type="button" className="absolute inset-0 bg-black/40" aria-label="Close" onClick={onCancel} />
+      <div className={["absolute inset-0 flex justify-center pointer-events-none", isMobile ? "items-end p-0" : "items-center p-6"].join(" ")}>
+        {card}
+      </div>
+    </div>,
+    document.body
+  );
+}
+
 export default function AvailabilityRequests() {
   const PAGE_SIZE = 6;
 
@@ -611,6 +715,10 @@ export default function AvailabilityRequests() {
   const [cancelRejectReason, setCancelRejectReason] = useState("");
   const [cancelRejectBusy, setCancelRejectBusy] = useState(false);
   const [cancelRejectError, setCancelRejectError] = useState("");
+  const [approveConflictOpen, setApproveConflictOpen] = useState(false);
+  const [approveConflictData, setApproveConflictData] = useState(null);
+  const [approveConflictBusy, setApproveConflictBusy] = useState(false);
+  const [approveConflictError, setApproveConflictError] = useState("");
   const [page, setPage] = useState(1);
 
   const loadCounselors = useCallback(async () => {
@@ -745,21 +853,49 @@ export default function AvailabilityRequests() {
       setCancelRejectReason("");
       setCancelRejectBusy(false);
       setCancelRejectError("");
+      setApproveConflictOpen(false);
+      setApproveConflictData(null);
+      setApproveConflictBusy(false);
+      setApproveConflictError("");
 }
   }, [selectedId, selected]);
 
-  const approve = async (id) => {
+  const approve = async (id, force = false) => {
     if (!id) return;
     setErr("");
     setMsg({ tone: "", text: "" });
     try {
-      await apiFetch(`/api/counseling/admin/blocks/${id}/approve`, { method: "PATCH" });
+      await apiFetch(`/api/counseling/admin/blocks/${id}/approve`, {
+        method: "PATCH",
+        body: JSON.stringify(force ? { force: true } : {}),
+      });
       setMsg({ tone: "green", text: "Request approved." });
       setRejectConfirmOpen(false);
       setRejectReason("");
+      setApproveConflictOpen(false);
+      setApproveConflictData(null);
       await loadBlocks();
     } catch (e) {
       setErr(e?.message || "Failed to approve request.");
+      throw e;
+    }
+  };
+
+  const previewApprove = async (id) => {
+    if (!id) return;
+    setErr("");
+    setMsg({ tone: "", text: "" });
+    setApproveConflictError("");
+    try {
+      const data = await apiFetch(`/api/counseling/admin/blocks/${id}/approve-preview`);
+      if (data?.hasConflicts) {
+        setApproveConflictData(data);
+        setApproveConflictOpen(true);
+        return;
+      }
+      await approve(id, false);
+    } catch (e) {
+      setErr(e?.message || "Failed to check leave conflicts.");
     }
   };
 
@@ -951,6 +1087,31 @@ export default function AvailabilityRequests() {
         onConfirm={() => confirmRejectCancel(String(selected?._id || selected?.id || ""))}
       />
 
+
+      <ConflictPreviewModal
+        open={approveConflictOpen}
+        busy={approveConflictBusy}
+        data={approveConflictData}
+        error={approveConflictError}
+        onCancel={() => {
+          if (approveConflictBusy) return;
+          setApproveConflictOpen(false);
+          setApproveConflictError("");
+        }}
+        onConfirm={async () => {
+          const id = String(selected?._id || selected?.id || approveConflictData?.block?.id || "");
+          if (!id) return;
+          setApproveConflictBusy(true);
+          setApproveConflictError("");
+          try {
+            await approve(id, true);
+          } catch (e) {
+            setApproveConflictError(e?.message || "Failed to approve request.");
+          } finally {
+            setApproveConflictBusy(false);
+          }
+        }}
+      />
 
       <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-4 sm:p-6">
         <div className="flex items-start justify-between gap-3 flex-wrap">
@@ -1233,7 +1394,7 @@ export default function AvailabilityRequests() {
                         >
                           Reject
                         </MRButton>
-                        <MRButton className="w-full sm:w-auto order-1 sm:order-3" onClick={() => approve(id)} disabled={loading}>
+                        <MRButton className="w-full sm:w-auto order-1 sm:order-3" onClick={() => previewApprove(id)} disabled={loading}>
                           Approve
                         </MRButton>
                       </>

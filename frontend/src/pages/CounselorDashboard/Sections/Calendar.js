@@ -34,6 +34,7 @@ const STATUS = {
 };
 
 const ALLOWED_CALENDAR_STATUSES = new Set([STATUS.APPROVED, STATUS.RESCHEDULED]);
+const HISTORY_CALENDAR_STATUSES = new Set(["Completed", "No Show"]);
 
 /* ===================== STORAGE HELPERS ===================== */
 function isBrowser() {
@@ -161,6 +162,7 @@ function isPastSession(dateISO, endHHMM) {
   return dt.getTime() < Date.now();
 }
 
+
 /**
  * Pagination window of 5 pages
  */
@@ -201,16 +203,17 @@ function addMinutesHHMM(hhmm, deltaMin) {
 }
 
 /**
- * Bridge: MeetRequests (storage) -> Calendar sessions
- * Only Approved & Rescheduled requests are included.
+ * Bridge: requests -> Calendar sessions
+ * - active mode includes only Approved & Rescheduled
+ * - history mode includes only Completed & No Show
  */
-function mapMeetRequestsToSessions(requests) {
+function mapMeetRequestsToSessions(requests, mode = "active") {
   const list = coerceArray(requests);
 
   return list
     .filter((r) => {
       const st = String(r?.status || "").trim();
-      return ALLOWED_CALENDAR_STATUSES.has(st);
+      return mode === "history" ? HISTORY_CALENDAR_STATUSES.has(st) : ALLOWED_CALENDAR_STATUSES.has(st);
     })
     .map((r) => {
       const date = String(r?.date || "").trim();
@@ -218,7 +221,7 @@ function mapMeetRequestsToSessions(requests) {
       const end = start ? addMinutesHHMM(start, 60) : "";
 
       const sessionType = String(r?.sessionType || r?.mode || "").toLowerCase();
-      const mode = sessionType.includes("online") ? "Online" : "Face-to-Face";
+      const modeLabel = sessionType.includes("online") ? "Online" : "Face-to-Face";
 
       const studentObj =
         r?.userId && typeof r.userId === "object"
@@ -237,11 +240,15 @@ function mapMeetRequestsToSessions(requests) {
       const course = studentObj ? String(studentObj.course || studentObj.courses || studentObj.program || "").trim() : "";
 
       const meetingLink =
-        mode === "Online"
+        modeLabel === "Online"
           ? String(r?.meetingLink || r?.meetingUrl || r?.onlineMeetingLink || r?.meetLink || "").trim()
           : "";
 
-      const done = !!r?.completedAt || String(r?.status || "").toLowerCase().includes("completed");
+      const done =
+        !!r?.completedAt ||
+        !!r?.noShowAt ||
+        String(r?.status || "").toLowerCase().includes("completed") ||
+        String(r?.status || "").toLowerCase().includes("no show");
 
       return {
         id: String(r?.id || r?._id || "").trim(),
@@ -249,14 +256,16 @@ function mapMeetRequestsToSessions(requests) {
         date,
         start,
         end,
-        mode,
-        studentName,
-        studentId,
+        mode: modeLabel,
+        studentName: studentName || "Student",
+        studentId: studentId || "—",
         course,
         reason: String(r?.reason || r?.topic || "").trim(),
         studentNotes: String(r?.notes || r?.message || ""),
         meetingLink,
         done,
+        completedAt: r?.completedAt || "",
+        noShowAt: r?.noShowAt || "",
       };
     })
     .filter((x) => x.id && isISODate(x.date) && x.start && x.end);
@@ -403,7 +412,7 @@ function ResponsiveModal({ title, onClose, children, fullScreenOnMobile = true }
 }
 
 /* ===================== DETAILS CONTENT ===================== */
-function DetailsContent({ item }) {
+function DetailsContent({ item, onComplete, onNoShow, actionBusy = false }) {
   const when = `${formatDateLong(item.date)} • ${formatRange(item.start, item.end)}`;
 
   return (
@@ -463,6 +472,27 @@ function DetailsContent({ item }) {
         )}
 
         <div className="text-xs font-semibold text-slate-400">Session ID: #{item.id}</div>
+
+        {!item.done ? (
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={onComplete}
+              disabled={actionBusy}
+              className="cc-focus cc-clickable inline-flex items-center justify-center px-4 py-2 rounded-xl text-sm font-extrabold border border-slate-200 bg-white hover:bg-slate-50 disabled:opacity-50"
+            >
+              {actionBusy ? "Please wait…" : "Completed"}
+            </button>
+            <button
+              type="button"
+              onClick={onNoShow}
+              disabled={actionBusy}
+              className="cc-focus cc-clickable inline-flex items-center justify-center px-4 py-2 rounded-xl text-sm font-extrabold border border-slate-200 bg-white hover:bg-slate-50 disabled:opacity-50"
+            >
+              No Show
+            </button>
+          </div>
+        ) : null}
       </div>
     </div>
   );
@@ -481,15 +511,20 @@ export default function Calendar() {
   const [search, setSearch] = useState("");
 
   const [meetRequests, setMeetRequests] = useState([]);
-
+  const [historyRequests, setHistoryRequests] = useState([]);
 
   const fetchMeetRequests = useCallback(async () => {
     try {
       const data = await apiFetch("/api/counseling/requests?type=MEET");
       const items = Array.isArray(data?.items) ? data.items : [];
+
       setMeetRequests(items);
+      setHistoryRequests(
+        items.filter((item) => HISTORY_CALENDAR_STATUSES.has(String(item?.status || "").trim()))
+      );
     } catch {
       setMeetRequests([]);
+      setHistoryRequests([]);
     }
   }, []);
 
@@ -529,6 +564,7 @@ export default function Calendar() {
   }, [fetchMeetRequests]);
 
   const [selectedId, setSelectedId] = useState(null);
+  const [actionBusy, setActionBusy] = useState(false);
   const detailsOpen = !!selectedId;
   useBodyScrollLock(detailsOpen);
 
@@ -536,13 +572,13 @@ export default function Calendar() {
   const prevPageRef = useRef(1);
   const [pageAnim, setPageAnim] = useState("");
 
-  const rawSessions = useMemo(() => mapMeetRequestsToSessions(meetRequests), [meetRequests]);
+  const activeRawSessions = useMemo(() => mapMeetRequestsToSessions(meetRequests, "active"), [meetRequests]);
+  const historyRawSessions = useMemo(() => mapMeetRequestsToSessions(historyRequests, "history"), [historyRequests]);
 
-  const cleaned = useMemo(() => {
-    return rawSessions
+  const cleanedActive = useMemo(() => {
+    return activeRawSessions
       .filter((s) => {
-        if (!s?.studentName || !s?.studentId) return false;
-        if (!isISODate(s.date)) return false;
+                if (!isISODate(s.date)) return false;
         if (!s.start || !s.end) return false;
         if (!isWithinWorkHours(s.start, s.end)) return false;
         if (isLunchSlot(s.start)) return false;
@@ -554,19 +590,27 @@ export default function Calendar() {
         return true;
       })
       .map((s) => ({ ...s, _hay: buildHaystack(s) }));
-  }, [rawSessions]);
+  }, [activeRawSessions]);
 
-  const effective = useMemo(
-    () =>
-      cleaned.map((s) => ({
-        ...s,
-        _effectiveDone: s.done || isPastSession(s.date, s.end),
-      })),
-    [cleaned, nowTick]
-  );
+  const cleanedHistory = useMemo(() => {
+    return historyRawSessions
+      .filter((s) => {
+                if (!isISODate(s.date)) return false;
+        if (!s.start || !s.end) return false;
+        if (!isWithinWorkHours(s.start, s.end)) return false;
+        if (isLunchSlot(s.start)) return false;
+
+        const dur = minFromHHMM(s.end) - minFromHHMM(s.start);
+        if (dur !== 60) return false;
+
+        if (s.mode !== "Online" && s.mode !== "Face-to-Face") return false;
+        return true;
+      })
+      .map((s) => ({ ...s, _hay: buildHaystack(s) }));
+  }, [historyRawSessions]);
 
   const currentListAll = useMemo(() => {
-    const base = effective.filter((s) => (view === "history" ? s._effectiveDone : !s._effectiveDone));
+    const base = view === "history" ? cleanedHistory : cleanedActive;
 
     const dayList = base
       .filter((s) => s.date === selectedDate)
@@ -575,9 +619,26 @@ export default function Calendar() {
     const q = search.trim().toLowerCase();
     if (!q) return dayList;
     return dayList.filter((s) => (s._hay || "").includes(q));
-  }, [effective, view, selectedDate, search]);
+  }, [cleanedActive, cleanedHistory, view, selectedDate, search]);
 
   useEffect(() => setPage(1), [selectedDate, view, search]);
+
+  useEffect(() => {
+    const base = view === "history" ? cleanedHistory : cleanedActive;
+    if (!base.length) return;
+
+    const hasCurrentDate = base.some((s) => s.date === selectedDate);
+    if (hasCurrentDate) return;
+
+    const dates = Array.from(new Set(base.map((s) => s.date).filter(isISODate))).sort();
+    if (!dates.length) return;
+
+    const nextDate = view === "history" ? dates[dates.length - 1] : dates[0];
+    if (nextDate && nextDate !== selectedDate) {
+      setSelectedDate(nextDate);
+      lsSet(CALENDAR_SELECTED_DATE_KEY, nextDate);
+    }
+  }, [view, cleanedActive, cleanedHistory, selectedDate]);
 
   const totalPages = Math.max(1, Math.ceil(currentListAll.length / PAGE_SIZE));
   const safePage = clamp(page, 1, totalPages);
@@ -602,9 +663,9 @@ export default function Calendar() {
   const pageWindow = useMemo(() => buildPageWindow5(safePage, totalPages), [safePage, totalPages]);
 
   const selected = useMemo(() => {
-    const pool = effective.filter((s) => (view === "history" ? s._effectiveDone : !s._effectiveDone));
+    const pool = view === "history" ? cleanedHistory : cleanedActive;
     return pool.find((x) => x.id === selectedId) || null;
-  }, [effective, view, selectedId]);
+  }, [cleanedActive, cleanedHistory, view, selectedId]);
 
   useEffect(() => {
     if (!selectedId) return;
@@ -614,8 +675,25 @@ export default function Calendar() {
   const openDetails = useCallback((item) => setSelectedId(item.id), []);
   const closeDetails = useCallback(() => setSelectedId(null), []);
 
+  const markSession = useCallback(async (item, kind) => {
+    if (!item?.id) return;
+    setActionBusy(true);
+    try {
+      await apiFetch(`/api/counseling/admin/requests/${item.id}/${kind === "complete" ? "complete" : "no-show"}`, { method: "PATCH" });
+      if (isISODate(item?.date)) {
+        setSelectedDate(item.date);
+        lsSet(CALENDAR_SELECTED_DATE_KEY, item.date);
+      }
+      await fetchMeetRequests();
+      if (isBrowser()) window.dispatchEvent(new Event(MEET_REQUESTS_UPDATED_EVENT));
+      closeDetails();
+    } finally {
+      setActionBusy(false);
+    }
+  }, [fetchMeetRequests, closeDetails]);
+
   const historyActive = view === "history";
-  const hasSessions = rawSessions.length > 0;
+  const hasSessions = (view === "history" ? cleanedHistory : cleanedActive).length > 0;
 
   return (
     <div className="space-y-4 w-full px-3 sm:px-0 max-w-none">
@@ -834,7 +912,7 @@ export default function Calendar() {
 
       {selected ? (
         <ResponsiveModal title="Session details" onClose={closeDetails} fullScreenOnMobile>
-          <DetailsContent item={selected} />
+          <DetailsContent item={selected} onComplete={() => markSession(selected, "complete")} onNoShow={() => markSession(selected, "no-show")} actionBusy={actionBusy} />
         </ResponsiveModal>
       ) : null}
     </div>
