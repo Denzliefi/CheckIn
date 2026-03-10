@@ -6,7 +6,7 @@ import { apiFetch } from "../../../api/apiFetch";
 const STATUS = {
   PENDING: "pending",
   ACTIVE: "active",
-  TERMINATED: "terminated",
+  DISABLED: "disabled",
 };
 
 const DESKTOP_PAGE_SIZE = 5;
@@ -31,6 +31,11 @@ const COURSES = [
 
 function normalize(text) {
   return (text || "").toString().trim().toLowerCase();
+}
+
+function normalizeStudentStatus(value) {
+  const status = normalize(value);
+  return status === "terminated" ? "disabled" : status;
 }
 
 // ✅ Format exactly like: Aug 15,2024
@@ -76,7 +81,7 @@ function normalizeStudentFromApi(u) {
     name,
     course: u?.course || "",
     campus: u?.campus || "",
-    status: String(u?.status || "active").toLowerCase(),
+    status: normalizeStudentStatus(u?.status || "active"),
     createdAt,
     updatedAt: u?.updatedAt || null,
   };
@@ -99,7 +104,7 @@ const api = {
 
     return {
       id: String(data?.id || userId),
-      status: String(data?.status || nextStatus).toLowerCase(),
+      status: normalizeStudentStatus(data?.status || nextStatus),
       updatedAt: data?.updatedAt || new Date().toISOString(),
     };
   },
@@ -116,13 +121,13 @@ const api = {
     if (items.length) {
       return items.map((x) => ({
         id: String(x?.id),
-        status: String(x?.status || nextStatus).toLowerCase(),
+        status: normalizeStudentStatus(x?.status || nextStatus),
         updatedAt: x?.updatedAt || updatedAt,
       }));
     }
 
     // fallback
-    return userIds.map((id) => ({ id: String(id), status: nextStatus, updatedAt }));
+    return userIds.map((id) => ({ id: String(id), status: normalizeStudentStatus(nextStatus), updatedAt }));
   },
 };
 
@@ -229,7 +234,7 @@ function StatusPillButton({ status, onClick, disabled }) {
     ) : s === STATUS.PENDING ? (
       <Pill tone="amber">Pending</Pill>
     ) : (
-      <Pill tone="rose">Terminated</Pill>
+      <Pill tone="rose">Disabled</Pill>
     );
 
   return (
@@ -360,7 +365,7 @@ function ConfirmModal({
                   {[
                     { value: STATUS.PENDING, label: "Pending" },
                     { value: STATUS.ACTIVE, label: "Active" },
-                    { value: STATUS.TERMINATED, label: "Terminated" },
+                    { value: STATUS.DISABLED, label: "Disabled" },
                   ].map((opt) => {
                     const isSelected = String(statusValue || "").toLowerCase() === opt.value;
                     const isDisabled = loading || disabledSet.has(opt.value);
@@ -758,7 +763,7 @@ export default function StudentLifecycle() {
   function openToggleStatus(student) {
     // Preselect a sensible next status, but let admin choose inside the modal.
     const current = String(student?.status || STATUS.ACTIVE).toLowerCase();
-    const suggested = current === STATUS.ACTIVE ? STATUS.TERMINATED : STATUS.ACTIVE;
+    const suggested = current === STATUS.ACTIVE ? STATUS.DISABLED : STATUS.ACTIVE;
     openAction("setStatus", [student.id], suggested);
   }
 
@@ -778,7 +783,7 @@ export default function StudentLifecycle() {
       return;
     }
     const label =
-      nextStatus === STATUS.ACTIVE ? "Active" : nextStatus === STATUS.PENDING ? "Pending" : "Terminated";
+      nextStatus === STATUS.ACTIVE ? "Active" : nextStatus === STATUS.PENDING ? "Pending" : "Disabled";
 
     // Production-safe: don't submit no-op updates (already in that status)
     const currentById = new Map(students.map((s) => [s.id, String(s.status || "").toLowerCase()]));
@@ -815,7 +820,7 @@ export default function StudentLifecycle() {
             setSelectedIds(new Set());
       bumpListAnimation();
 
-      const label = nextStatus === STATUS.ACTIVE ? "Active" : nextStatus === STATUS.PENDING ? "Pending" : "Terminated";
+      const label = nextStatus === STATUS.ACTIVE ? "Active" : nextStatus === STATUS.PENDING ? "Pending" : "Disabled";
       const tone = nextStatus === STATUS.ACTIVE ? "success" : nextStatus === STATUS.PENDING ? "slate" : "danger";
 
       setConfirmNotice({
@@ -848,7 +853,7 @@ export default function StudentLifecycle() {
         ? "Pending"
         : statusFilter === STATUS.ACTIVE
           ? "Active"
-          : "Terminated";
+          : "Disabled";
 
   const sheetTitle = sheet.type === "course" ? "Choose course" : "Choose status";
 
@@ -871,7 +876,7 @@ export default function StudentLifecycle() {
           { value: "all", label: "All" },
           { value: STATUS.PENDING, label: "Pending" },
           { value: STATUS.ACTIVE, label: "Active" },
-          { value: STATUS.TERMINATED, label: "Terminated" },
+          { value: STATUS.DISABLED, label: "Disabled" },
         ];
 
     const current = isCourse ? courseFilter : statusFilter;
@@ -971,7 +976,7 @@ export default function StudentLifecycle() {
   }, [confirm.open, confirm.nextStatus, confirmTargetStatuses]);
 
   const confirmTone =
-    String(confirm.nextStatus || "").toLowerCase() === STATUS.TERMINATED ? "danger" : "slate";
+    normalizeStudentStatus(confirm.nextStatus || "") === STATUS.DISABLED ? "danger" : "slate";
   const confirmTitle = "Update student status?";
   const confirmLabel = "Confirm";
 
@@ -1100,7 +1105,7 @@ export default function StudentLifecycle() {
                     <option value="all">All statuses</option>
                     <option value={STATUS.PENDING}>Pending</option>
                     <option value={STATUS.ACTIVE}>Active</option>
-                    <option value={STATUS.TERMINATED}>Terminated</option>
+                    <option value={STATUS.DISABLED}>Disabled</option>
                   </select>
 
                   {hasActiveFilters ? (
@@ -1130,7 +1135,7 @@ export default function StudentLifecycle() {
                     Set Active
                   </Button>
                   <Button variant="soft" onClick={() => openAction("setStatus", Array.from(selectedIds), STATUS.TERMINATED)}>
-                    Set Terminated
+                    Set Disabled
                   </Button>
                 </div>
               </div>
@@ -1358,7 +1363,7 @@ export default function StudentLifecycle() {
                   Set Active
                 </Button>
                 <Button variant="soft" className="flex-1" onClick={() => openAction("setStatus", Array.from(selectedIds), STATUS.TERMINATED)}>
-                  Set Terminated
+                  Set Disabled
                 </Button>
               </div>
             </div>

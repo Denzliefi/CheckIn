@@ -123,7 +123,7 @@ export default function Footer() {
           `}
           style={{ transitionDelay: visible ? "650ms" : "0ms" }}
         >
-          © 2024 All Rights Reserved
+          © 2026 All Rights Reserved
           <br />
           Arellano University – Andres Bonifacio Campus
         </p>

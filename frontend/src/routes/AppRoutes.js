@@ -5,6 +5,7 @@ import LandingPage from "../pages/LandingPage";
 import Login from "../pages/Login";
 import Signup from "../pages/Signup";
 import ForgotPassword from "../pages/ForgotPassword";
+import LoginOtp from "../pages/LoginOtp";
 import ResetPassword from "../pages/ResetPassword";
 import AboutUs from "../pages/AboutUs";
 import PrivacyPolicy from "../pages/PrivacyPolicy";
@@ -33,13 +34,16 @@ export default function AppRoutes() {
       <ScrollToTop />
 
       <Routes>
-        {/* PUBLIC (outside MainLayout) */}
-        <Route path="/counselor/dashboard" element={<CounselorDashboard />} />
+        {/* ✅ COUNSELOR DASHBOARD (protected) */}
+        <Route element={<RequireRole allowedRoles={["Counselor"]} />}>
+          <Route path="/counselor/dashboard" element={<CounselorDashboard />} />
+        </Route>
 
         <Route element={<MainLayout />}>
           <Route path="/login" element={<Login />} />
           <Route path="/sign-up" element={<Signup />} />
           <Route path="/forgotpassword" element={<ForgotPassword />} />
+          <Route path="/login-otp" element={<LoginOtp />} />
           <Route path="/reset-password" element={<ResetPassword />} />
           <Route path="/unauthorized" element={<Unauthorized />} />
         </Route>

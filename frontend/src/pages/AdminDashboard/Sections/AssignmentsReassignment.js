@@ -39,6 +39,7 @@ const DEFAULT_DATA = {
   requestsApproved: 18,
   requestsDone: 92,
   requestsCancelled: 7,
+  requestsCompleted: 0,
   requestsNoShows: 4,
 };
 
@@ -142,7 +143,12 @@ function normalizeAnalytics(payload) {
   const requestsDone = Number(
     p.requestsDone ?? p.requestsDisapproved ?? p.requests?.disapproved ?? DEFAULT_DATA.requestsDone
   );
-  const requestsNoShows = Number(p.requestsNoShows ?? DEFAULT_DATA.requestsNoShows);
+  const requestsCompleted = Number(
+    p.requestsCompleted ?? p.requests?.completed ?? DEFAULT_DATA.requestsCompleted
+  );
+  const requestsNoShows = Number(
+    p.requestsNoShows ?? p.requests?.noShows ?? DEFAULT_DATA.requestsNoShows
+  );
 
   const studentsByCourse = Array.isArray(p.studentsByCourse)
     ? p.studentsByCourse.map((x) => ({
@@ -164,6 +170,7 @@ function normalizeAnalytics(payload) {
     requestsApproved,
     requestsCancelled,
     requestsDone,
+    requestsCompleted,
     requestsNoShows,
     studentsByCourse,
   };
@@ -474,9 +481,10 @@ function AdminOverviewAnalytics({
     const approved = Number(data?.requestsApproved ?? 0);
     const disapproved = Number(data?.requestsDone ?? 0);
     const cancelled = Number(data?.requestsCancelled ?? 0);
+    const completed = Number(data?.requestsCompleted ?? 0);
     const noShows = Number(data?.requestsNoShows ?? 0);
 
-    const totalRequests = pending + approved + disapproved + cancelled;
+    const totalRequests = pending + approved + disapproved + cancelled + completed + noShows;
 
     const rawCourses = Array.isArray(data?.studentsByCourse)
       ? data.studentsByCourse.map((x) => ({
@@ -496,6 +504,8 @@ function AdminOverviewAnalytics({
       { label: "Approved", value: approved, color: theme, opacity: 0.48 },
       { label: "Disapproved", value: disapproved, color: theme, opacity: 0.78 },
       { label: "Cancelled", value: cancelled, color: theme, opacity: 0.22 },
+      { label: "Completed", value: completed, color: theme, opacity: 0.62 },
+      { label: "No Show", value: noShows, color: theme, opacity: 0.9 },
     ];
     const donutLegend = donutSegments.map((s) => ({ label: s.label, value: s.value, color: s.color }));
 
@@ -514,6 +524,7 @@ function AdminOverviewAnalytics({
       approved,
       disapproved,
       cancelled,
+      completed,
       noShows,
       totalRequests,
 
@@ -633,9 +644,6 @@ function AdminOverviewAnalytics({
               <div className="aol-graph-title">Requests status</div>
               <div className="aol-graph-sub">Hover previews. Tap/click locks selection.</div>
             </div>
-            <Pill>
-              No-shows: <b style={{ color: "#111827" }}>{fmtInt(stats.noShows)}</b>
-            </Pill>
           </div>
 
           <div className="aol-graph-body">

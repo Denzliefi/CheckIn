@@ -4,6 +4,7 @@ import { useSyncExternalStore } from "react";
 export const TOKEN_KEY = "token";
 export const ROLE_KEY = "role";
 export const USER_KEY = "user";
+export const PENDING_LOGIN_KEY = "pendingLogin";
 
 // ✅ PATCH: legacy/alternate token keys used across older builds
 export const LEGACY_TOKEN_KEYS = ["checkin:token", "authToken"];
@@ -59,6 +60,32 @@ export function getUser() {
 
 export function isAuthenticated() {
   return !!getToken();
+}
+
+export function getPendingLogin() {
+  if (!isBrowser()) return null;
+  try {
+    const raw = window.sessionStorage.getItem(PENDING_LOGIN_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function setPendingLogin(data) {
+  if (!isBrowser()) return;
+  try {
+    window.sessionStorage.setItem(PENDING_LOGIN_KEY, JSON.stringify(data ?? null));
+  } catch {}
+  emitAuthChanged();
+}
+
+export function clearPendingLogin({ notify = true } = {}) {
+  if (!isBrowser()) return;
+  try {
+    window.sessionStorage.removeItem(PENDING_LOGIN_KEY);
+  } catch {}
+  if (notify) emitAuthChanged();
 }
 
 /* ===========================
@@ -147,6 +174,7 @@ export function setAuth({ token, user, rememberMe = true }) {
   storage.setItem(USER_KEY, JSON.stringify(user ?? null));
   storage.setItem(ROLE_KEY, user?.role ?? "");
 
+  clearPendingLogin({ notify: false });
   emitAuthChanged();
 }
 
@@ -203,6 +231,7 @@ export function clearAuth({ notify = true } = {}) {
   window.sessionStorage.removeItem(TOKEN_KEY);
   window.sessionStorage.removeItem(USER_KEY);
   window.sessionStorage.removeItem(ROLE_KEY);
+  window.sessionStorage.removeItem(PENDING_LOGIN_KEY);
 
   // ✅ PATCH: remove legacy token keys
   for (const k of LEGACY_TOKEN_KEYS) window.sessionStorage.removeItem(k);

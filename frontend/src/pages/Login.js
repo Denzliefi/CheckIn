@@ -8,7 +8,7 @@ import PrimaryButton from "../components/PrimaryButton";
 import GoogleButton from "../components/GoogleButton";
 
 import { signInWithGoogle } from "../auth";
-import { getToken, getUser, setAuth } from "../utils/auth";
+import { getToken, getUser, setAuth, setPendingLogin } from "../utils/auth";
 
 import poster1 from "../assets/poster1.png";
 import poster2 from "../assets/poster2.png";
@@ -1306,6 +1306,19 @@ export default function Login() {
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data?.message || "Login failed");
 
+        if (data?.otpRequired && data?.pendingToken) {
+          const pending = {
+            pendingToken: data.pendingToken,
+            email: data.email || form.emailOrUsername.trim(),
+            resendIn: Number(data.resendIn || 0),
+            expiresIn: Number(data.expiresIn || 0),
+            rememberMe,
+          };
+          setPendingLogin(pending);
+          navigate("/login-otp", { state: pending });
+          return;
+        }
+
         setAuth({ token: data.token, user: data.user, rememberMe });
         redirectByRole(navigate, data.user?.role);
       } catch (err) {
@@ -1358,6 +1371,19 @@ export default function Login() {
 
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data?.message || "Google login failed");
+
+        if (data?.otpRequired && data?.pendingToken) {
+          const pending = {
+            pendingToken: data.pendingToken,
+            email: data.email || email,
+            resendIn: Number(data.resendIn || 0),
+            expiresIn: Number(data.expiresIn || 0),
+            rememberMe,
+          };
+          setPendingLogin(pending);
+          navigate("/login-otp", { state: pending });
+          return;
+        }
 
         setAuth({ token: data.token, user: data.user, rememberMe });
         redirectByRole(navigate, data.user?.role);

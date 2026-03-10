@@ -1,6 +1,5 @@
 // src/pages/CounselorDashboard/CounselorDashboard.jsx
 import React, { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
 
 import { getCounselorDashboardStats } from "./counselor.api";
 
@@ -16,20 +15,6 @@ import StudentAccounts from "./Sections/StudentAccounts";
 
 /* ===================== THEME ===================== */
 const BRAND = "#B9FF66"; // accent only
-
-/* ===================== ENV HELPERS ===================== */
-function isProductionEnv() {
-  if (typeof process !== "undefined" && process?.env?.NODE_ENV) {
-    return process.env.NODE_ENV === "production";
-  }
-  try {
-    // eslint-disable-next-line no-new-func
-    const meta = new Function("return import.meta")();
-    return Boolean(meta?.env?.PROD);
-  } catch {
-    return false;
-  }
-}
 
 /* ===================== SVG ICONS ===================== */
 const IconMenu = ({ className }) => (
@@ -251,17 +236,10 @@ function SidebarTabButton({ tab, activeTab, onClickTab, sidebarCollapsed }) {
 }
 
 export default function CounselorDashboard() {
-  const navigate = useNavigate();
-
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [activeTab, setActiveTab] = useState("inbox");
 
-  useEffect(() => {
-    const role = (localStorage.getItem("role") || "").trim().toLowerCase();
-    const isProd = isProductionEnv();
-    if (isProd && role !== "counselor") navigate("/unauthorized", { replace: true });
-  }, [navigate]);
 
   useEffect(() => {
     let mounted = true;

@@ -24,7 +24,7 @@ function LockIcon({ className = "" }) {
  * ✅ Reusable for:
  * - login-required blocks
  * - account pending blocks
- * - account terminated blocks
+ * - account disabled blocks
  *
  * Keeps the same UI design, but lets you override text/actions.
  */
@@ -41,6 +41,7 @@ export default function LoginRequiredModal({
   titleId = "login-required-title",
   description,
   subtext,
+  asideContent,
 
   // Buttons
   primaryLabel,
@@ -67,28 +68,37 @@ export default function LoginRequiredModal({
   const handleSecondary = onSecondary ?? onClose;
 
   return (
-    <AppModal open={open} onClose={onClose} titleId={titleId} maxWidthClass="max-w-[640px]">
+    <AppModal
+      open={open}
+      onClose={onClose}
+      titleId={titleId}
+      maxWidthClass={asideContent ? "max-w-[760px]" : "max-w-[640px]"}
+    >
       <div className="p-5 sm:p-6 border-b border-black/10">
-        <div className="flex items-start gap-3">
-          <div className="h-10 w-10 rounded-[14px] border-2 border-black bg-[#B9FF66]/70 flex items-center justify-center">
-            <LockIcon className="h-5 w-5 text-black" />
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0 flex items-start gap-3">
+            <div className="h-10 w-10 rounded-[14px] border-2 border-black bg-[#B9FF66]/70 flex items-center justify-center shrink-0">
+              <LockIcon className="h-5 w-5 text-black" />
+            </div>
+
+            <div className="min-w-0">
+              <h2 id={titleId} className="text-[18px] sm:text-[20px] font-extrabold tracking-[0.12em]">
+                {title}
+              </h2>
+
+              <div className="text-[13px] text-black/70 mt-2 leading-relaxed">
+                {resolvedDescription}
+              </div>
+
+              {resolvedSubtext ? (
+                <p className="text-[12px] text-black/55 mt-2">
+                  {resolvedSubtext}
+                </p>
+              ) : null}
+            </div>
           </div>
 
-          <div className="min-w-0">
-            <h2 id={titleId} className="text-[18px] sm:text-[20px] font-extrabold tracking-[0.12em]">
-              {title}
-            </h2>
-
-            <p className="text-[13px] text-black/70 mt-2">
-              {resolvedDescription}
-            </p>
-
-            {resolvedSubtext ? (
-              <p className="text-[12px] text-black/55 mt-2">
-                {resolvedSubtext}
-              </p>
-            ) : null}
-          </div>
+          {asideContent ? <div className="sm:pl-3">{asideContent}</div> : null}
         </div>
       </div>
 
