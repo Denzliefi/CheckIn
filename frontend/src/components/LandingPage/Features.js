@@ -154,7 +154,7 @@ export default function Features() {
           <FeatureCard
             variant="green"
             topLabel="Emergency"
-            line2="24/7 Hotline"
+            line2="Emergency Hotline"
             desc="Immediate, life-saving support available instantly at your fingertips."
             img={hotlineImg}
             delay={300}

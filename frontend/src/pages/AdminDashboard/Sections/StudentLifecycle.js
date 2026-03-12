@@ -12,6 +12,13 @@ const STATUS = {
 const DESKTOP_PAGE_SIZE = 5;
 const MOBILE_PAGE_SIZE = 3; // ✅ mobile shows 3 only
 
+const STUDENT_RESPONSE_FORM_URL =
+  "https://docs.google.com/forms/d/1lOPh1Y1HWAZmj0koIp5HrUDjbuRfy9fRMptPcaDTL-g/edit?fbclid=IwY2xjawQfP2JleHRuA2FlbQIxMABicmlkETExNnhzUTg2blc4RWhiR1l3c3J0YwZhcHBfaWQQMjIyMDM5MTc4ODIwMDg5MgABHqRS_NoOIQi9Pxm5rs8s2hMxS8y09pIKA40gRCf0SnOU1dNqKMGXuOw2LFLl_aem_PiGiewQ3e7qhfMzcYS3dDQ";
+const STUDENT_ID_SUBMISSIONS_URL =
+  "https://drive.google.com/drive/folders/1amLr3f3WOYm87jfpIsJtBuPOG769mPKuOjz7sd6ndT7BBpBk80-wF3fn_Gb0pBfJbagkilWD";
+const CERTIFICATE_OF_REGISTRATION_SUBMISSIONS_URL =
+  "https://drive.google.com/drive/folders/1Ff5h_8uX9bk9Ely6I8MIEIuFd8RMygv0bjeB5J2XGkmzKfnU73yyhD75WAbTRnOC_imUtdn8";
+
 const COURSES = [
   "Bachelor of Science in Nursing",
   "Bachelor of Elementary Education (SPED)",
@@ -252,6 +259,19 @@ function StatusPillButton({ status, onClick, disabled }) {
     >
       {pill}
     </button>
+  );
+}
+
+function ExternalActionButton({ href, children, className = "" }) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      className={`inline-flex h-[42px] min-w-[190px] items-center justify-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-extrabold text-slate-900 transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-100 ${className}`}
+    >
+      <span className="truncate">{children}</span>
+    </a>
   );
 }
 
@@ -855,6 +875,21 @@ export default function StudentLifecycle() {
           ? "Active"
           : "Disabled";
 
+  const resourceLinks = [
+    {
+      label: "Student Responses",
+      href: STUDENT_RESPONSE_FORM_URL,
+    },
+    {
+      label: "Student ID Submissions",
+      href: STUDENT_ID_SUBMISSIONS_URL,
+    },
+    {
+      label: "Registration Certificates",
+      href: CERTIFICATE_OF_REGISTRATION_SUBMISSIONS_URL,
+    },
+  ];
+
   const sheetTitle = sheet.type === "course" ? "Choose course" : "Choose status";
 
   function setSheetValue(value) {
@@ -1049,43 +1084,53 @@ export default function StudentLifecycle() {
 
               {/* Mobile chips */}
               {isMobile ? (
-                <div className="flex flex-wrap gap-2">
-                  <FilterChip
-                    label="Course"
-                    value={courseLabel}
-                    active={courseFilter !== "all"}
-                    onClick={() => openSheet("course")}
-                    className={isUltraNarrow ? "w-full" : "flex-1 min-w-[160px]"}
-                  />
-                  <FilterChip
-                    label="Status"
-                    value={statusLabel}
-                    active={statusFilter !== "all"}
-                    onClick={() => openSheet("status")}
-                    className={isUltraNarrow ? "w-full" : "flex-1 min-w-[160px]"}
-                  />
+                <div className="space-y-2">
+                  <div className="flex flex-wrap gap-2">
+                    <FilterChip
+                      label="Course"
+                      value={courseLabel}
+                      active={courseFilter !== "all"}
+                      onClick={() => openSheet("course")}
+                      className={isUltraNarrow ? "w-full" : "flex-1 min-w-[160px]"}
+                    />
+                    <FilterChip
+                      label="Status"
+                      value={statusLabel}
+                      active={statusFilter !== "all"}
+                      onClick={() => openSheet("status")}
+                      className={isUltraNarrow ? "w-full" : "flex-1 min-w-[160px]"}
+                    />
 
-                  {hasActiveFilters ? (
-                    <button
-                      type="button"
-                      onClick={resetFilters}
-                      className={`rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-black text-slate-700 hover:bg-slate-50 ${
-                        isUltraNarrow ? "w-full" : "flex-1 min-w-[160px]"
-                      }`}
-                    >
-                      Clear filters
-                    </button>
-                  ) : null}
+                    {hasActiveFilters ? (
+                      <button
+                        type="button"
+                        onClick={resetFilters}
+                        className={`rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-black text-slate-700 hover:bg-slate-50 ${
+                          isUltraNarrow ? "w-full" : "flex-1 min-w-[160px]"
+                        }`}
+                      >
+                        Clear filters
+                      </button>
+                    ) : null}
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                    {resourceLinks.map((link) => (
+                      <ExternalActionButton key={link.label} href={link.href} className="w-full min-w-0 justify-center text-center">
+                        {link.label}
+                      </ExternalActionButton>
+                    ))}
+                  </div>
                 </div>
               ) : (
-                <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
+                <div className="flex flex-wrap gap-2 items-center">
                   <select
                     value={courseFilter}
                     onChange={(e) => {
                       setCourseFilter(e.target.value);
                       setPage(1);
                     }}
-                    className="px-3 py-2 rounded-xl border border-slate-200 bg-white text-sm font-extrabold focus:outline-none focus:ring-2 focus:ring-slate-100"
+                    className="h-[42px] min-w-[190px] px-3 rounded-xl border border-slate-200 bg-white text-sm font-extrabold focus:outline-none focus:ring-2 focus:ring-slate-100"
                   >
                     {COURSE_OPTIONS.map((opt) => (
                       <option key={opt.value} value={opt.value}>
@@ -1100,7 +1145,7 @@ export default function StudentLifecycle() {
                       setStatusFilter(e.target.value);
                       setPage(1);
                     }}
-                    className="px-3 py-2 rounded-xl border border-slate-200 bg-white text-sm font-extrabold focus:outline-none focus:ring-2 focus:ring-slate-100"
+                    className="h-[42px] min-w-[190px] px-3 rounded-xl border border-slate-200 bg-white text-sm font-extrabold focus:outline-none focus:ring-2 focus:ring-slate-100"
                   >
                     <option value="all">All statuses</option>
                     <option value={STATUS.PENDING}>Pending</option>
@@ -1108,11 +1153,17 @@ export default function StudentLifecycle() {
                     <option value={STATUS.DISABLED}>Disabled</option>
                   </select>
 
+                  {resourceLinks.map((link) => (
+                    <ExternalActionButton key={link.label} href={link.href}>
+                      {link.label}
+                    </ExternalActionButton>
+                  ))}
+
                   {hasActiveFilters ? (
                     <button
                       type="button"
                       onClick={resetFilters}
-                      className="text-sm font-black text-slate-600 hover:text-slate-900 underline underline-offset-4 w-fit"
+                      className="h-[42px] text-sm font-black text-slate-600 hover:text-slate-900 underline underline-offset-4 w-fit"
                     >
                       Clear filters
                     </button>
