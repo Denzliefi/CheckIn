@@ -95,6 +95,26 @@ function formatDateLong(iso) {
   });
 }
 
+function dateTimeToPHISO(value) {
+  if (!value) return "";
+  const dt = new Date(value);
+  if (Number.isNaN(dt.getTime())) return "";
+
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Manila",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(dt);
+
+  const year = parts.find((p) => p.type === "year")?.value;
+  const month = parts.find((p) => p.type === "month")?.value;
+  const day = parts.find((p) => p.type === "day")?.value;
+
+  if (!year || !month || !day) return "";
+  return `${year}-${month}-${day}`;
+}
+
 function minFromHHMM(hhmm) {
   const [h, m] = String(hhmm || "00:00").split(":").map(Number);
   return h * 60 + m;
@@ -216,7 +236,14 @@ function mapMeetRequestsToSessions(requests, mode = "active") {
       return mode === "history" ? HISTORY_CALENDAR_STATUSES.has(st) : ALLOWED_CALENDAR_STATUSES.has(st);
     })
     .map((r) => {
-      const date = String(r?.date || "").trim();
+      const status = String(r?.status || "").trim();
+      const historyDate =
+        status === "Completed"
+          ? dateTimeToPHISO(r?.completedAt)
+          : status === "No Show"
+          ? dateTimeToPHISO(r?.noShowAt)
+          : "";
+      const date = mode === "history" ? historyDate || String(r?.date || "").trim() : String(r?.date || "").trim();
       const start = parseTime12ToHHMM(r?.time);
       const end = start ? addMinutesHHMM(start, 60) : "";
 
@@ -252,7 +279,7 @@ function mapMeetRequestsToSessions(requests, mode = "active") {
 
       return {
         id: String(r?.id || r?._id || "").trim(),
-        status: String(r?.status || "").trim(),
+        status,
         date,
         start,
         end,
@@ -679,10 +706,15 @@ export default function Calendar() {
     if (!item?.id) return;
     setActionBusy(true);
     try {
-      await apiFetch(`/api/counseling/admin/requests/${item.id}/${kind === "complete" ? "complete" : "no-show"}`, { method: "PATCH" });
-      if (isISODate(item?.date)) {
-        setSelectedDate(item.date);
-        lsSet(CALENDAR_SELECTED_DATE_KEY, item.date);
+      const updated = await apiFetch(`/api/counseling/admin/requests/${item.id}/${kind === "complete" ? "complete" : "no-show"}`, { method: "PATCH" });
+      const markedDate =
+        kind === "complete"
+          ? dateTimeToPHISO(updated?.completedAt)
+          : dateTimeToPHISO(updated?.noShowAt);
+
+      if (isISODate(markedDate)) {
+        setSelectedDate(markedDate);
+        lsSet(CALENDAR_SELECTED_DATE_KEY, markedDate);
       }
       await fetchMeetRequests();
       if (isBrowser()) window.dispatchEvent(new Event(MEET_REQUESTS_UPDATED_EVENT));
@@ -704,7 +736,9 @@ export default function Calendar() {
           <div>
             <h2 className="text-lg sm:text-2xl font-black tracking-tight text-slate-900">Calendar / Schedule</h2>
             <p className="mt-1 text-sm sm:text-base font-medium text-slate-600">
-              {historyActive ? "History" : "Sessions"} • Approved/Rescheduled only • 8:00 AM – 5:00 PM • 1 hour • 12:00 NN unavailable
+              {historyActive
+                ? "History • Completed/No Show by marked date"
+                : "Sessions • Approved/Rescheduled only"} • 8:00 AM – 5:00 PM • 1 hour • 12:00 NN unavailable
             </p>
           </div>
         </div>
@@ -790,9 +824,11 @@ export default function Calendar() {
           {currentListAll.length === 0 ? (
             <div className="text-sm font-semibold text-slate-500">
               {!hasSessions
-                ? "No Approved/Rescheduled meet requests yet."
+                ? historyActive
+                  ? "No completed or no-show requests yet."
+                  : "No Approved/Rescheduled meet requests yet."
                 : historyActive
-                ? "No history sessions for this date."
+                ? "No completed or no-show requests were marked on this date."
                 : "No sessions scheduled for this date."}
             </div>
           ) : (
