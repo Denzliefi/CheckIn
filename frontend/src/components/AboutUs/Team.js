@@ -5,6 +5,7 @@ import johnImg from "../../assets/b.png";
 import jeremyImg from "../../assets/j.png";
 import gerryImg from "../../assets/g.png";
 import kenjiImg from "../../assets/k.png";
+import  rexImg from "../../assets/r.png";
 
 /** Fade-up on scroll (runs once) */
 function useInView(options = { threshold: 0.2 }) {
@@ -82,6 +83,7 @@ export default function Team() {
     { first: "Jeremy", last: "Bisnar", img: jeremyImg },
     { first: "Gerry", last: "Monin Jr.", img: gerryImg },
     { first: "Kenji", last: "Pascual", img: kenjiImg },
+    { first: "Rexavier", last: "Cenon", img: rexImg },
   ];
 
   const [titleRef, titleInView] = useInView({ threshold: 0.2 });
@@ -112,7 +114,7 @@ export default function Team() {
 
         {/* Team grid */}
         <div className="relative">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-10 lg:gap-12">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-10 lg:gap-12">
             {team.map((m, i) => (
               <TeamMember
                 key={m.first}
